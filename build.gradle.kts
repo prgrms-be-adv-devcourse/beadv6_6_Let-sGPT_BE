@@ -2,7 +2,7 @@ plugins {
     id("java")
 }
 
-group = "letsgpt.io"
+group = "com.letsgpt"
 version = "1.0-SNAPSHOT"
 
 repositories {
