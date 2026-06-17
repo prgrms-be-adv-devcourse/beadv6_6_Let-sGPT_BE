@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/openat   # 로컬 도커 DB
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+
+services:
+  order:
+    url: http://localhost:9120                     # 타모듈 localhost
+  product:
+    url: http://localhost:9110
+  payment:
+    url: http://localhost:9130
+  settlement:
+    url: http://localhost:9140

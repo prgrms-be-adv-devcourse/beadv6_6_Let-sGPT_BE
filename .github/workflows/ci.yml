@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [dev]
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # GHCR push 권한 (GITHUB_TOKEN으로 자동 인증)
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [member, order, payment, product, settlement]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      # member/order/payment/product/settlement는 루트 멀티모듈 빌드의 서브프로젝트라
+      # 각자 gradlew가 없으므로 루트 wrapper로 해당 서브프로젝트만 빌드
+      - name: Build ${{ matrix.service }}
+        run: ./gradlew :${{ matrix.service }}:build
+
+      - uses: docker/setup-buildx-action@v3
+
+      # GHCR 로그인
+      # username: 워크플로를 실행한 GitHub 계정명 (개인 토큰 불필요)
+      # password: GITHUB_TOKEN - 저장소에 자동으로 주입되는 토큰, 별도 설정 없음
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR 이미지 이름은 소문자만 허용 → 저장소 경로를 소문자로 변환
+      - name: Set lowercase image name
+        run: |
+          echo "IMAGE_NAME=$(echo '${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.service }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max

@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/openat     # Compose 서비스명
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+
+services:
+  member:
+    url: http://member:9100                         # Compose DNS
+  product:
+    url: http://product:9110
+  order:
+    url: http://order:9120
+  payment:
+    url: http://payment:9130

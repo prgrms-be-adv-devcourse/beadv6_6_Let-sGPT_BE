@@ -1,0 +1,21 @@
+server:
+  port: 9110
+
+
+spring:
+  profiles:
+    active: local
+  application:
+    name: product-service
+  jpa:
+    properties:
+      hibernate:
+        default_schema: product # 스키마 분리
+    hibernate:
+      ddl-auto: validate
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
