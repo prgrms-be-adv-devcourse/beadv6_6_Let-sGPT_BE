@@ -6,7 +6,7 @@ plugins {
     java
 }
 tasks.jar { enabled = false }
-group = "com.letsgpt"
+group = "com.openat"
 version = "1.0-SNAPSHOT"
 
 subprojects {
@@ -14,7 +14,7 @@ subprojects {
     apply(plugin = "org.springframework.boot")
     apply(plugin = "io.spring.dependency-management")
 
-    group = "com.letsgpt"
+    group = "com.openat"
     version = "0.0.1-SNAPSHOT"
 
     java {
@@ -57,5 +57,7 @@ subprojects {
 
     tasks.withType<Test> {
         useJUnitPlatform()
+        // dotenv 플러그인이 루트 .env를 찾도록 테스트 작업 디렉터리를 루트로 고정
+        workingDir = rootProject.projectDir
     }
 }
