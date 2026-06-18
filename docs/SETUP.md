@@ -45,6 +45,11 @@ docker compose up -d postgres kafka redis
 5개 모듈을 한 번에 컨테이너로 띄워서 통합 테스트할 때 사용. 직접 빌드하지 않고
 GHCR에 올라온 이미지를 받아서 실행한다.
 
+> 예전에는 별도의 `dev` 프로필(`application-dev.yml`)로 분리돼 있었지만,
+> "GHCR 이미지를 받아 docker compose로 5개 모듈을 한 번에 띄운다"는 실행 방식 자체가
+> 로컬(`docker-compose.full.yml`)과 EC2 배포(`docker-compose.dev.yml`)에서 동일해서
+> `compose` 프로필 하나로 합쳤다. 차이는 값의 출처뿐: 로컬은 `.env`, EC2 배포는 GitHub Secrets.
+
 ```bash
 # 1) 내가 수정한 코드를 dev 브랜치에 push
 #    -> ci.yml이 5개 모듈을 빌드해 ghcr.io/.../{module}:latest 로 푸시함
@@ -61,14 +66,31 @@ docker compose -f docker-compose.full.yml up
   `:latest` → `:${commit-sha}`로 바꿔서 실행.
 - `postgres`/`kafka`/`redis`는 빌드 없이 공개 이미지를 그대로 사용.
 
-## 3. 인프라 통합 테스트 (EC2 배포, `dev` 프로필)
+## 3. 인프라 통합 테스트 (EC2 배포, `compose` 프로필)
 
 `dev` 브랜치 push 시 CI가 이미지를 GHCR에 올리고, 이후 배포 워크플로(`deploy.yml`, 구현 예정)가
 EC2에서 `docker compose pull && up`을 수행. 비밀값은 `.env` 대신 GitHub Secrets로 주입됨.
 
+## 4. CI 빌드 (`ci.yml`)
+
+`dev`(또는 `main`) 브랜치 push 시 어떤 모듈 폴더가 바뀌었는지 `dorny/paths-filter`로 감지해서
+**변경된 모듈만** `./gradlew :모듈:build`로 빌드한다 (`common/`이나 루트 빌드 설정이 바뀌면
+영향 범위가 전체라 5개 모듈 다 빌드). 안 바뀐 모듈은 빌드 자체를 스킵.
+
+- CI는 **컴파일 + 패키징 검증만** 한다. 아직 테스트 코드가 없어서(`src/test` 비어있음) DB/Kafka/Redis에
+  실제로 접속하는 일이 없고, `CI_VARS`의 `DB_HOST`/`KAFKA_BROKER`/`REDIS_HOST` 등은 단지
+  `application-compose.yml`의 `${...}` placeholder가 안 풀려서 빌드가 깨지는 것만 막는 더미값이다.
+  그래서 postgres/kafka/redis 컨테이너를 CI에 띄우지 않는다.
+- **실제 인프라 연동(DB 쿼리, Kafka 발행/구독, Redis 캐시 등)이 제대로 동작하는지는 2번(Local Full Stack)에서
+  GHCR 이미지를 받아 실제 postgres/kafka/redis와 함께 띄워서 수동으로 확인한다.** CI에서 같은 걸 또
+  컨테이너로 검증하면 2번과 중복되면서 빌드만 느려지므로 의도적으로 안 한다.
+- 나중에 테스트 코드를 추가할 때는, CI에서 실제 컨테이너를 띄우는 대신 H2(인메모리 DB) +
+  Kafka/Redis 클라이언트 모킹으로 단위/슬라이스 테스트를 돌리는 걸 권장 — 인프라 디테일(실제 Postgres
+  전용 SQL, 실제 직렬화 등)은 어차피 2번에서 잡으므로, CI는 빠르게 로직만 검증하는 역할로 남긴다.
+
 ## 참고
 
-- DB 자격증명·이미지 경로(`DB_USER`, `DB_PASSWORD`, `DB_NAME`, `GITHUB_REPOSITORY`)는
-  compose 파일이 직접 참조하므로 팀원 전체가 같은 `.env`를 가져야 함.
+- DB 자격증명·이미지 경로(`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `GITHUB_REPOSITORY`)와
+  `KAFKA_BROKER`, `REDIS_HOST`, `REDIS_PORT`는 compose 파일이 직접 참조하므로 팀원 전체가 같은 `.env`를 가져야 함.
 - `PG_SECRET_KEY`(결제), `JWT_SECRET`(회원)은 기능 구현 시 `.env`에 값 채우고
   해당 서비스의 `environment:` 블록에 매핑 추가 필요.

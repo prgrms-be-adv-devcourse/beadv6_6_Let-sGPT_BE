@@ -61,7 +61,11 @@ services:
       - "9100:9100"
     environment:
       SPRING_PROFILES_ACTIVE: compose
-      DB_HOST: postgres
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
@@ -76,9 +80,14 @@ services:
       - "9110:9110"
     environment:
       SPRING_PROFILES_ACTIVE: compose
-      DB_HOST: postgres
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,7 +104,14 @@ services:
       - "9120:9120"
     environment:
       SPRING_PROFILES_ACTIVE: compose
-      DB_HOST: postgres
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,7 +119,6 @@ services:
         condition: service_started
       redis:
         condition: service_started
-
 
   payment:
     image: ghcr.io/${GITHUB_REPOSITORY}/payment:latest
@@ -113,7 +128,12 @@ services:
       - "9130:9130"
     environment:
       SPRING_PROFILES_ACTIVE: compose
-      DB_HOST: postgres
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BROKER: ${KAFKA_BROKER}
     depends_on:
       postgres:
         condition: service_healthy
@@ -128,7 +148,11 @@ services:
       - "9140:9140"
     environment:
       SPRING_PROFILES_ACTIVE: compose
-      DB_HOST: postgres
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy

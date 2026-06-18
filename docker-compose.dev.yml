@@ -67,8 +67,8 @@ services:
       - "9100:9100"
     environment:
       JAVA_TOOL_OPTIONS: "-Xms300m -Xmx400m"
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
-      DB_HOST: postgres
+      SPRING_PROFILES_ACTIVE: compose
+      DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
@@ -89,15 +89,15 @@ services:
       - "9110:9110"
     environment:
       JAVA_TOOL_OPTIONS: "-Xms400m -Xmx500m"
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
-      DB_HOST: postgres
+      SPRING_PROFILES_ACTIVE: compose
+      DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      KAFKA_BROKER: kafka:9092
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,15 +118,15 @@ services:
       - "9120:9120"
     environment:
       JAVA_TOOL_OPTIONS: "-Xms400m -Xmx500m"
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
-      DB_HOST: postgres
+      SPRING_PROFILES_ACTIVE: compose
+      DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      KAFKA_BROKER: kafka:9092
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
     depends_on:
       postgres:
         condition: service_healthy
@@ -147,13 +147,13 @@ services:
       - "9130:9130"
     environment:
       JAVA_TOOL_OPTIONS: "-Xms400m -Xmx500m"
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
-      DB_HOST: postgres
+      SPRING_PROFILES_ACTIVE: compose
+      DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      KAFKA_BROKER: kafka:9092
+      KAFKA_BROKER: ${KAFKA_BROKER}
     depends_on:
       postgres:
         condition: service_healthy
@@ -172,8 +172,8 @@ services:
       - "9140:9140"
     environment:
       JAVA_TOOL_OPTIONS: "-Xms300m -Xmx400m"
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
-      DB_HOST: postgres
+      SPRING_PROFILES_ACTIVE: compose
+      DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}

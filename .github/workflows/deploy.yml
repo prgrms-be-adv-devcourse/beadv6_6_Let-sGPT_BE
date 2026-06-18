@@ -1,0 +1,55 @@
+name: CD
+
+# CI(이미지 빌드/푸시)가 main 브랜치(머지)에서 성공적으로 끝났을 때만 배포 트리거.
+# dev는 각자 로컬 스택(1번)에서 돌리고, EC2 배포는 main 머지 시점에만 일어난다.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ENV_SECRETS(JSON) → .env 파일로 변환. EC2의 docker-compose.dev.yml이
+      # ${DB_HOST} 등을 이 .env로 채운다. 평문 파일은 이 잡 안에서만 생성/전송되고
+      # 러너는 매번 새로 떠서 종료 시 폐기된다.
+      - name: Render .env from ENV_SECRETS
+        env:
+          ENV_SECRETS: ${{ secrets.ENV_SECRETS }}
+        run: echo "$ENV_SECRETS" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
+
+      - name: Ensure deploy dir exists on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: mkdir -p ~/openat
+
+      # 배포 명세서(docker-compose.dev.yml)와 .env를 EC2로 동기화
+      - name: Sync deploy spec to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "docker-compose.dev.yml,.env"
+          target: "~/openat"
+
+      # GHCR에서 방금 푸시된 latest 이미지를 받아 스택 재기동
+      - name: Pull images & restart stack
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/openat
+            docker compose -f docker-compose.dev.yml --env-file .env pull
+            docker compose -f docker-compose.dev.yml --env-file .env up -d
+            docker image prune -f
