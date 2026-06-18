@@ -1,5 +1,6 @@
-rootProject.name = "openAt"
+rootProject.name = "openat"
 
+include("common")
 include("member")
 include("order")
 include("payment")
