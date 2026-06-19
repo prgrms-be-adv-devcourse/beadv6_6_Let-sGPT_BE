@@ -12,6 +12,12 @@ spring:
         default_schema: payment # 스키마 분리
     hibernate:
       ddl-auto: validate
+  flyway:
+    schemas: payment # flyway_schema_history도 payment 스키마 안에 생성
+    locations: classpath:db/migration
+payment:
+  encryption:
+    key: ${PAYMENT_FIELD_ENCRYPTION_KEY} # pgPaymentKey/pgRefundKey AES-GCM 키(Base64, 32바이트) — .env/docker-compose 쪽 값 추가 필요(dev-infra)
 springdoc:
   api-docs:
     path: /api-docs
