@@ -88,9 +88,39 @@ EC2에서 `docker compose pull && up`을 수행. 비밀값은 `.env` 대신 GitH
   Kafka/Redis 클라이언트 모킹으로 단위/슬라이스 테스트를 돌리는 걸 권장 — 인프라 디테일(실제 Postgres
   전용 SQL, 실제 직렬화 등)은 어차피 2번에서 잡으므로, CI는 빠르게 로직만 검증하는 역할로 남긴다.
 
+## 5. PG(토스) 웹훅 로컬 연동 — ngrok
+
+`local`/`compose` 프로필에서 Toss 웹훅(`/api/v1/payments/webhook`, `/api/v1/wallet/charge/webhook`,
+`/api/v1/refunds/webhook`)을 로컬 환경에서 직접 받아보려면 외부에서 접근 가능한 URL이 필요하다
+(로컬 포트만으로는 Toss 개발자센터에 웹훅 URL로 등록할 수 없음). 고정 서브도메인은 ngrok 유료 플랜이
+필요해 지금 범위 밖이므로, 매번 무료 ngrok으로 터널을 새로 띄우고 그때그때 등록하는 방식으로 운용한다.
+
+```bash
+# 1) ngrok 설치 (최초 1회)
+#    https://ngrok.com/download 참고, 설치 후 authtoken 등록
+ngrok config add-authtoken <your-authtoken>
+
+# 2) payment 모듈을 9130 포트로 기동한 상태에서 터널 오픈
+ngrok http 9130
+```
+
+- 위 명령 실행 시 출력되는 `https://<random>.ngrok-free.app` 형태의 URL을 Toss 개발자센터의
+  웹훅 등록 화면에서 결제/충전/환불 각 웹훅 엔드포인트(`/api/v1/payments/webhook` 등)에 등록한다.
+- 무료 플랜은 ngrok을 재시작할 때마다 URL이 바뀌므로, **이 URL은 `.env`나 설정 파일에 저장하지
+  않고** 그때그때 Toss 개발자센터에 수동으로 다시 등록하는 것으로 확정.
+
+### PG 키 설정
+
+- `.env`의 `PG_CLIENT_KEY`/`PG_SECRET_KEY`에 Toss 테스트 키 값을 채운다. 값 자체는 팀 Slack 등
+  별도 채널로 공유받아 채우고(테스트 키 한정 — 라이브 키는 이 방식으로 공유하지 않음), 깃에는
+  올리지 않는다(`.env`는 gitignore 대상).
+- `payment` 모듈은 `application-local.yml`/`application-compose.yml`의 `pg.client-key`/`pg.secret-key`로
+  매핑되어 있고, `docker-compose.full.yml`/`docker-compose.dev.yml`의 `payment` 서비스
+  `environment:`에도 `PG_CLIENT_KEY`/`PG_SECRET_KEY`가 전달되도록 되어 있다.
+
 ## 참고
 
 - DB 자격증명·이미지 경로(`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `GITHUB_REPOSITORY`)와
   `KAFKA_BROKER`, `REDIS_HOST`, `REDIS_PORT`는 compose 파일이 직접 참조하므로 팀원 전체가 같은 `.env`를 가져야 함.
-- `PG_SECRET_KEY`(결제), `JWT_SECRET`(회원)은 기능 구현 시 `.env`에 값 채우고
-  해당 서비스의 `environment:` 블록에 매핑 추가 필요.
+- `PG_CLIENT_KEY`/`PG_SECRET_KEY`(결제, 위 5번 참고), `JWT_SECRET`(회원)은 기능 구현 시 `.env`에
+  값 채우고 해당 서비스의 `environment:` 블록에 매핑 추가 필요.
