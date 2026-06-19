@@ -117,10 +117,14 @@ ngrok http 9130
 - `payment` 모듈은 `application-local.yml`/`application-compose.yml`의 `pg.client-key`/`pg.secret-key`로
   매핑되어 있고, `docker-compose.full.yml`/`docker-compose.dev.yml`의 `payment` 서비스
   `environment:`에도 `PG_CLIENT_KEY`/`PG_SECRET_KEY`가 전달되도록 되어 있다.
+- `PAYMENT_FIELD_ENCRYPTION_KEY`는 `pgPaymentKey`/`pgRefundKey` 등 DB에 저장되는 PG 민감정보 컬럼을
+  암호화(AES-GCM)하는 우리 쪽 자체 키다(토스가 준 키가 아님 — `PG_CLIENT_KEY`/`PG_SECRET_KEY`와는
+  보호 대상이 다름). Base64로 인코딩된 32바이트 키 값을 같은 방식(Slack 등 별도 채널, 깃에 안 올림)으로
+  공유받아 `.env`에 채운다.
 
 ## 참고
 
 - DB 자격증명·이미지 경로(`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `GITHUB_REPOSITORY`)와
   `KAFKA_BROKER`, `REDIS_HOST`, `REDIS_PORT`는 compose 파일이 직접 참조하므로 팀원 전체가 같은 `.env`를 가져야 함.
-- `PG_CLIENT_KEY`/`PG_SECRET_KEY`(결제, 위 5번 참고), `JWT_SECRET`(회원)은 기능 구현 시 `.env`에
+- `PG_CLIENT_KEY`/`PG_SECRET_KEY`/`PAYMENT_FIELD_ENCRYPTION_KEY`(결제, 위 5번 참고), `JWT_SECRET`(회원)은 기능 구현 시 `.env`에
   값 채우고 해당 서비스의 `environment:` 블록에 매핑 추가 필요.
