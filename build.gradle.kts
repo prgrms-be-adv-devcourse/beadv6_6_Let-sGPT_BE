@@ -40,7 +40,7 @@ subprojects {
         implementation("org.springframework.boot:spring-boot-starter-web")
         // IntelliJ Run/Gradle bootRun에서도 루트 .env를 자동으로 읽어 ${DB_USER} 같은 placeholder를 채워줌
         implementation("me.paulschwarz:springboot4-dotenv:5.1.0")
-        implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3")
+        implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.8")
         compileOnly("org.projectlombok:lombok")
         runtimeOnly("org.postgresql:postgresql")
         annotationProcessor("org.projectlombok:lombok")

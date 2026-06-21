@@ -21,8 +21,9 @@ repositories {
 extra["springCloudVersion"] = "2025.1.2"
 
 dependencies {
+    implementation(project(":common"))
+
     implementation("org.springframework.cloud:spring-cloud-starter-gateway-server-webflux")
-    implementation("org.springframework.cloud:spring-cloud-starter-netflix-eureka-client")
 
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.springframework.boot:spring-boot-starter-security")

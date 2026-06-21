@@ -1,0 +1,42 @@
+# docker-compose 네트워크 안에서 띄울 때 쓰는 프로필. 다운스트림 서비스를 컨테이너 서비스명으로 호출한다.
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://member:9100/oauth2/jwks
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: member
+              uri: http://member:9100
+              predicates:
+                - Path=/member/**
+              filters:
+                - StripPrefix=1
+            - id: product
+              uri: http://product:9110
+              predicates:
+                - Path=/product/**
+              filters:
+                - StripPrefix=1
+            - id: order
+              uri: http://order:9120
+              predicates:
+                - Path=/order/**
+              filters:
+                - StripPrefix=1
+            - id: payment
+              uri: http://payment:9130
+              predicates:
+                - Path=/payment/**
+              filters:
+                - StripPrefix=1
+            - id: settlement
+              uri: http://settlement:9140
+              predicates:
+                - Path=/settlement/**
+              filters:
+                - StripPrefix=1

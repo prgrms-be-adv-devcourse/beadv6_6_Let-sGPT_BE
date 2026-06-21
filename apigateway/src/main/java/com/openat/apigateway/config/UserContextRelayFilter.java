@@ -1,10 +1,12 @@
 package com.openat.apigateway.config;
 
+import com.openat.common.auth.UserHeaders;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.NullMarked;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
+import org.springframework.http.HttpHeaders;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.core.context.SecurityContext;
@@ -29,14 +31,33 @@ public class UserContextRelayFilter implements GlobalFilter, Ordered {
                     String roles = auth.getAuthorities().stream()
                             .map(GrantedAuthority::getAuthority)
                             .collect(Collectors.joining(","));
-                    return exchange.mutate()
-                            .request(builder -> builder
-                                    .header("X-User-Id", userId == null ? "" : userId)
-                                    .header("X-User-Roles", roles))
-                            .build();
+                    return mutateWithUserHeaders(exchange, userId == null ? "" : userId, roles);
                 })
-                .defaultIfEmpty(exchange)
+                // 인증되지 않은 요청(permitAll 경로 포함)도 클라이언트가 직접 보낸
+                // X-User-Id/X-User-Roles를 신뢰해서는 안 되므로, 이 경우에도 항상 헤더를 제거한다.
+                // (그렇지 않으면 누구나 두 헤더를 위조해 다운스트림에서 인증된 것처럼 위장 가능)
+                .defaultIfEmpty(stripUserHeaders(exchange))
                 .flatMap(chain::filter);
+    }
+
+    private ServerWebExchange mutateWithUserHeaders(ServerWebExchange exchange, String userId, String roles) {
+        return exchange.mutate()
+                .request(builder -> builder
+                        .headers(this::removeUserHeaders)
+                        .header(UserHeaders.USER_ID, userId)
+                        .header(UserHeaders.USER_ROLES, roles))
+                .build();
+    }
+
+    private ServerWebExchange stripUserHeaders(ServerWebExchange exchange) {
+        return exchange.mutate()
+                .request(builder -> builder.headers(this::removeUserHeaders))
+                .build();
+    }
+
+    private void removeUserHeaders(HttpHeaders headers) {
+        headers.remove(UserHeaders.USER_ID);
+        headers.remove(UserHeaders.USER_ROLES);
     }
 
     @Override
