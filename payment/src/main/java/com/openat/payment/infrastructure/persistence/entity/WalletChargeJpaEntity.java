@@ -51,6 +51,10 @@ public class WalletChargeJpaEntity {
     @Column(name = "idempotency_key", nullable = false, unique = true, length = 100)
     private String idempotencyKey;
 
+    // 동일 idempotencyKey로 바디(amount/method)가 다른 요청이 재전송되면 충돌로 판단(#7)
+    @Column(name = "request_hash", length = 64)
+    private String requestHash;
+
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -60,7 +64,7 @@ public class WalletChargeJpaEntity {
     private LocalDateTime updatedAt;
 
     private WalletChargeJpaEntity(UUID id, UUID memberId, Long amount, WalletCharge.Method method,
-            WalletCharge.Status status, String pgPaymentKey, String idempotencyKey,
+            WalletCharge.Status status, String pgPaymentKey, String idempotencyKey, String requestHash,
             LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.id = id;
         this.memberId = memberId;
@@ -69,6 +73,7 @@ public class WalletChargeJpaEntity {
         this.status = status;
         this.pgPaymentKey = pgPaymentKey;
         this.idempotencyKey = idempotencyKey;
+        this.requestHash = requestHash;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
     }
@@ -76,7 +81,7 @@ public class WalletChargeJpaEntity {
     public static WalletChargeJpaEntity fromDomain(WalletCharge charge) {
         return new WalletChargeJpaEntity(
                 charge.getId(), charge.getMemberId(), charge.getAmount(), charge.getMethod(),
-                charge.getStatus(), charge.getPgPaymentKey(), charge.getIdempotencyKey(),
+                charge.getStatus(), charge.getPgPaymentKey(), charge.getIdempotencyKey(), charge.getRequestHash(),
                 charge.getCreatedAt(), charge.getUpdatedAt());
     }
 
@@ -89,6 +94,7 @@ public class WalletChargeJpaEntity {
                 .status(status)
                 .pgPaymentKey(pgPaymentKey)
                 .idempotencyKey(idempotencyKey)
+                .requestHash(requestHash)
                 .createdAt(createdAt)
                 .updatedAt(updatedAt)
                 .build();

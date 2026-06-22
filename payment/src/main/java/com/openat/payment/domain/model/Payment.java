@@ -36,6 +36,9 @@ public class Payment {
 
     private String pgPaymentKey;
 
+    // pgPaymentKey는 암호화(비결정적 IV)되어 등호 조회가 불가능 — 웹훅 매칭은 이 평문 해시(결정적)로 수행
+    private String pgPaymentKeyHash;
+
     // 웹훅 중복 수신 판단 기준
     private String pgTxId;
 
@@ -47,6 +50,9 @@ public class Payment {
 
     // 멱등키는 시도 단위로 발급(orderId 단독 아님)
     private String idempotencyKey;
+
+    // 동일 idempotencyKey로 바디가 다른 요청이 재전송되면 충돌로 판단(#7) — amount/method/orderId 해시
+    private String requestHash;
 
     // APPROVED 전이 시점 1회 기록(updatedAt과 분리)
     private LocalDateTime approvedAt;

@@ -30,6 +30,9 @@ public class WalletCharge {
 
     private String idempotencyKey;
 
+    // 동일 idempotencyKey로 바디(amount/method)가 다른 요청이 재전송되면 충돌로 판단(#7)
+    private String requestHash;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

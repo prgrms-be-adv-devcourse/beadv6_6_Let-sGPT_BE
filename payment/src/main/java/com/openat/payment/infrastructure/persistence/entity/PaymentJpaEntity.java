@@ -58,6 +58,10 @@ public class PaymentJpaEntity {
     @Column(name = "pg_payment_key", length = 500)
     private String pgPaymentKey;
 
+    // pgPaymentKey는 암호화(비결정적 IV)되어 등호 조회가 불가능 — 웹훅 매칭은 이 평문 해시(결정적)로 수행
+    @Column(name = "pg_payment_key_hash", length = 64)
+    private String pgPaymentKeyHash;
+
     // 웹훅 중복 수신 판단 기준
     @Column(name = "pg_tx_id", length = 100)
     private String pgTxId;
@@ -74,6 +78,10 @@ public class PaymentJpaEntity {
     @Column(name = "idempotency_key", nullable = false, unique = true, length = 100)
     private String idempotencyKey;
 
+    // 동일 idempotencyKey로 바디가 다른 요청이 재전송되면 충돌로 판단(#7)
+    @Column(name = "request_hash", length = 64)
+    private String requestHash;
+
     // APPROVED 전이 시점 1회 기록(updatedAt과 분리)
     @Column(name = "approved_at")
     private LocalDateTime approvedAt;
@@ -87,9 +95,9 @@ public class PaymentJpaEntity {
     private LocalDateTime updatedAt;
 
     private PaymentJpaEntity(UUID id, UUID orderId, UUID memberId, UUID sellerId, UUID productId, Long amount,
-            Payment.Method method, String pgProvider, String pgPaymentKey, String pgTxId, Payment.Status status,
-            Long refundedAmount, String idempotencyKey, LocalDateTime approvedAt, LocalDateTime createdAt,
-            LocalDateTime updatedAt) {
+            Payment.Method method, String pgProvider, String pgPaymentKey, String pgPaymentKeyHash, String pgTxId,
+            Payment.Status status, Long refundedAmount, String idempotencyKey, String requestHash,
+            LocalDateTime approvedAt, LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.id = id;
         this.orderId = orderId;
         this.memberId = memberId;
@@ -99,10 +107,12 @@ public class PaymentJpaEntity {
         this.method = method;
         this.pgProvider = pgProvider;
         this.pgPaymentKey = pgPaymentKey;
+        this.pgPaymentKeyHash = pgPaymentKeyHash;
         this.pgTxId = pgTxId;
         this.status = status;
         this.refundedAmount = refundedAmount;
         this.idempotencyKey = idempotencyKey;
+        this.requestHash = requestHash;
         this.approvedAt = approvedAt;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
@@ -112,8 +122,9 @@ public class PaymentJpaEntity {
         return new PaymentJpaEntity(
                 payment.getId(), payment.getOrderId(), payment.getMemberId(), payment.getSellerId(),
                 payment.getProductId(), payment.getAmount(), payment.getMethod(), payment.getPgProvider(),
-                payment.getPgPaymentKey(), payment.getPgTxId(), payment.getStatus(), payment.getRefundedAmount(),
-                payment.getIdempotencyKey(), payment.getApprovedAt(), payment.getCreatedAt(), payment.getUpdatedAt());
+                payment.getPgPaymentKey(), payment.getPgPaymentKeyHash(), payment.getPgTxId(), payment.getStatus(),
+                payment.getRefundedAmount(), payment.getIdempotencyKey(), payment.getRequestHash(),
+                payment.getApprovedAt(), payment.getCreatedAt(), payment.getUpdatedAt());
     }
 
     public Payment toDomain() {
@@ -127,10 +138,12 @@ public class PaymentJpaEntity {
                 .method(method)
                 .pgProvider(pgProvider)
                 .pgPaymentKey(pgPaymentKey)
+                .pgPaymentKeyHash(pgPaymentKeyHash)
                 .pgTxId(pgTxId)
                 .status(status)
                 .refundedAmount(refundedAmount)
                 .idempotencyKey(idempotencyKey)
+                .requestHash(requestHash)
                 .approvedAt(approvedAt)
                 .createdAt(createdAt)
                 .updatedAt(updatedAt)
