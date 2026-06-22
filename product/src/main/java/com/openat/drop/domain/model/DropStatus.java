@@ -1,4 +1,4 @@
-package com.openat.product.domain.model;
+package com.openat.drop.domain.model;
 
 public enum DropStatus {
   SCHEDULED, // 오픈 예정

@@ -1,4 +1,4 @@
-package com.openat.product.domain.model;
+package com.openat.drop.domain.model;
 
 public enum StockChangeType {
   DEDUCT, // 재고 차감

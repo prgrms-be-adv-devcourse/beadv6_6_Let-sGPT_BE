@@ -1,5 +1,6 @@
-package com.openat.product.domain.model;
+package com.openat.drop.domain.model;
 
+import com.openat.product.domain.model.Product;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -10,10 +11,8 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-
 import java.time.Instant;
 import java.util.UUID;
-
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;

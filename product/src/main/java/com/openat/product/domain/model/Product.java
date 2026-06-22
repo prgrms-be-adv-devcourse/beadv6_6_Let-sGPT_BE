@@ -1,5 +1,6 @@
 package com.openat.product.domain.model;
 
+import com.openat.category.domain.model.Category;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
