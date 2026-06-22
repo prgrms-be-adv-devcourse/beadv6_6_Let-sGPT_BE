@@ -1,6 +1,11 @@
 package com.openat.payment.application.service;
 
+import com.openat.common.error.CommonErrorCode;
 import com.openat.common.exception.BusinessException;
+import com.openat.payment.application.client.TossConfirmResult;
+import com.openat.payment.application.client.TossPaymentClient;
+import com.openat.payment.application.dto.ChargeConfirmCommand;
+import com.openat.payment.application.dto.ChargePgCommand;
 import com.openat.payment.application.dto.ChargeWalletCommand;
 import com.openat.payment.application.dto.WalletChargeResult;
 import com.openat.payment.application.exception.PaymentErrorCode;
@@ -19,19 +24,22 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-// MOCK 충전(§4) — PG 의존 없는 가장 단순한 흐름, 항상 즉시 APPROVED.
+// MOCK 충전(§4)은 PG 의존 없는 가장 단순한 흐름, 항상 즉시 APPROVED. PG 충전(E1)은 confirmPg와 동일한
+// confirm 메인 구조를 처음부터 적용(Order 검증만 없음 — 충전엔 orderId가 없어 #17 비대상).
 @Service
 public class WalletChargeService implements WalletChargeUseCase {
 
     private final WalletChargeRepository walletChargeRepository;
     private final WalletRepository walletRepository;
     private final WalletTransactionRepository walletTransactionRepository;
+    private final TossPaymentClient tossPaymentClient;
 
     public WalletChargeService(WalletChargeRepository walletChargeRepository, WalletRepository walletRepository,
-            WalletTransactionRepository walletTransactionRepository) {
+            WalletTransactionRepository walletTransactionRepository, TossPaymentClient tossPaymentClient) {
         this.walletChargeRepository = walletChargeRepository;
         this.walletRepository = walletRepository;
         this.walletTransactionRepository = walletTransactionRepository;
+        this.tossPaymentClient = tossPaymentClient;
     }
 
     @Override
@@ -72,6 +80,89 @@ public class WalletChargeService implements WalletChargeUseCase {
                 .build());
 
         return new WalletChargeResult(saved.getId(), saved.getStatus().name(), saved.getAmount());
+    }
+
+    @Override
+    @Transactional
+    public WalletChargeResult chargePg(ChargePgCommand command) {
+        String requestHash = RequestHasher.hash(
+                command.memberId().toString(), command.amount().toString(), WalletCharge.Method.PG.name());
+
+        Optional<WalletCharge> existing = walletChargeRepository.findByIdempotencyKey(command.idempotencyKey());
+        if (existing.isPresent()) {
+            return replayOrConflict(existing.get(), requestHash);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+
+        // payWithPg와 동일 원칙(A16) — 서버는 PG에 아무것도 요청하지 않음. PENDING row만 만들고 끝
+        // (pgPaymentKey는 confirmCharge에서 confirm 요청으로 전달받아 채움).
+        WalletCharge pending = walletChargeRepository.save(WalletCharge.builder()
+                .memberId(command.memberId())
+                .amount(command.amount())
+                .method(WalletCharge.Method.PG)
+                .status(WalletCharge.Status.PENDING)
+                .idempotencyKey(command.idempotencyKey())
+                .requestHash(requestHash)
+                .createdAt(now)
+                .updatedAt(now)
+                .build());
+
+        return new WalletChargeResult(pending.getId(), pending.getStatus().name(), pending.getAmount());
+    }
+
+    @Override
+    @Transactional
+    public WalletChargeResult confirmCharge(ChargeConfirmCommand command) {
+        // confirmPg와 동일 원칙(하자드20) — 여기서는 #7(바디해시 대조)을 쓰지 않고 status 기준으로만 멱등성을 판단한다.
+        WalletCharge charge = walletChargeRepository.findById(command.chargeId())
+                .orElseThrow(() -> new BusinessException(CommonErrorCode.NOT_FOUND));
+
+        if (!Objects.equals(charge.getMemberId(), command.memberId())) {
+            throw new BusinessException(PaymentErrorCode.FORBIDDEN);
+        }
+
+        if (charge.getStatus() != WalletCharge.Status.PENDING) {
+            // 이미 다른 confirm 호출(재시도)이나 보조 웹훅이 먼저 확정함 — 멱등 반환, PG 재호출 없음.
+            return new WalletChargeResult(charge.getId(), charge.getStatus().name(), charge.getAmount());
+        }
+
+        // 신-하자드9와 동일 원칙 — PG를 호출하기 *전에* 먼저 pgPaymentKey를 기록.
+        walletChargeRepository.updatePgPaymentKey(charge.getId(), command.paymentKey());
+
+        // A10과 동일 원칙 — 멱등키를 confirm 호출에 부착.
+        TossConfirmResult confirmResult = tossPaymentClient.confirmCharge(
+                command.paymentKey(), command.chargeId(), command.amount(), command.idempotencyKey());
+
+        WalletCharge.Status newStatus =
+                confirmResult.approved() ? WalletCharge.Status.APPROVED : WalletCharge.Status.FAILED;
+
+        // 하자드10과 동일 원칙 — 보조 웹훅과 동시에 같은 row를 만질 수 있어 조건부 UPDATE로 원자처리.
+        int affected = walletChargeRepository.tryTransitionFromPending(
+                charge.getId(), newStatus, confirmResult.pgTxId());
+        if (affected == 0) {
+            WalletCharge current = walletChargeRepository.findById(charge.getId()).orElse(charge);
+            return new WalletChargeResult(current.getId(), current.getStatus().name(), current.getAmount());
+        }
+
+        WalletCharge updated = walletChargeRepository.findById(charge.getId()).orElse(charge);
+        if (newStatus == WalletCharge.Status.APPROVED) {
+            // confirmPg엔 없는 충전 고유 후속처리 — 승인 즉시 Wallet 잔액 반영.
+            Wallet wallet = getOrCreateWallet(updated.getMemberId());
+            walletRepository.charge(wallet.getId(), updated.getAmount());
+            long balanceAfter = wallet.getBalance() + updated.getAmount();
+
+            walletTransactionRepository.save(WalletTransaction.builder()
+                    .walletId(wallet.getId())
+                    .type(WalletTransaction.Type.CHARGE)
+                    .amount(updated.getAmount())
+                    .balanceAfter(balanceAfter)
+                    .idempotencyKey(updated.getIdempotencyKey())
+                    .createdAt(LocalDateTime.now())
+                    .build());
+        }
+
+        return new WalletChargeResult(updated.getId(), updated.getStatus().name(), updated.getAmount());
     }
 
     private WalletChargeResult replayOrConflict(WalletCharge existing, String requestHash) {

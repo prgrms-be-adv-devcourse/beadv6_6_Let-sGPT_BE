@@ -17,6 +17,11 @@ public class StubTossPaymentClient implements TossPaymentClient {
     }
 
     @Override
+    public TossConfirmResult confirmCharge(String paymentKey, UUID chargeId, Long amount, String idempotencyKey) {
+        return TossConfirmResult.approved("stub_pg_tx_" + UUID.randomUUID());
+    }
+
+    @Override
     public TossQueryResult queryPaymentStatus(String paymentKey) {
         // confirm을 한 번도 호출하지 않은 키는 토스도 모르는 게 현실에 가까움 — NOT_FOUND(=EXPIRED 취급)가 기본값.
         // §3의 "신-하자드9"(confirm은 PG호출까지 갔는데 우리 기록만 끊긴 케이스)를 시연하려면 DB에서

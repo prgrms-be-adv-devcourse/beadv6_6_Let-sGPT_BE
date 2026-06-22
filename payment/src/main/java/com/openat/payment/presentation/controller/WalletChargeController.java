@@ -3,9 +3,12 @@ package com.openat.payment.presentation.controller;
 import com.openat.common.error.CommonErrorCode;
 import com.openat.common.exception.BusinessException;
 import com.openat.common.response.ApiResponse;
+import com.openat.payment.application.dto.ChargeConfirmCommand;
+import com.openat.payment.application.dto.ChargePgCommand;
 import com.openat.payment.application.dto.ChargeWalletCommand;
 import com.openat.payment.application.dto.WalletChargeResult;
 import com.openat.payment.application.usecase.WalletChargeUseCase;
+import com.openat.payment.presentation.dto.WalletChargeConfirmRequest;
 import com.openat.payment.presentation.dto.WalletChargeRequest;
 import com.openat.payment.presentation.dto.WalletChargeResponse;
 import java.util.UUID;
@@ -32,15 +35,27 @@ public class WalletChargeController {
             @RequestHeader("X-User-Id") UUID memberId,
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody WalletChargeRequest request) {
-        if (!"MOCK".equals(request.method())) {
-            // PG 충전은 Day5 범위 — 지금은 MOCK만 지원.
-            throw new BusinessException(CommonErrorCode.INVALID_INPUT, "PG 충전은 아직 지원하지 않습니다(Day5)");
-        }
-
-        WalletChargeResult result =
-                walletChargeUseCase.chargeMock(new ChargeWalletCommand(memberId, request.amount(), idempotencyKey));
+        WalletChargeResult result = switch (request.method()) {
+            case "MOCK" -> walletChargeUseCase.chargeMock(
+                    new ChargeWalletCommand(memberId, request.amount(), idempotencyKey));
+            case "PG" -> walletChargeUseCase.chargePg(
+                    new ChargePgCommand(memberId, request.amount(), idempotencyKey));
+            default -> throw new BusinessException(CommonErrorCode.INVALID_INPUT, "지원하지 않는 충전수단: " + request.method());
+        };
 
         WalletChargeResponse body = new WalletChargeResponse(result.chargeId(), result.status());
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.of(body, HttpStatus.CREATED));
+    }
+
+    // E1 — 충전 PG 승인의 메인 경로. 프론트가 결제와 동일한 모양으로 이 엔드포인트를 호출.
+    @PostMapping("/confirm")
+    public ResponseEntity<ApiResponse<WalletChargeResponse>> confirm(
+            @RequestHeader("X-User-Id") UUID memberId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody WalletChargeConfirmRequest request) {
+        WalletChargeResult result = walletChargeUseCase.confirmCharge(new ChargeConfirmCommand(
+                request.chargeId(), memberId, request.amount(), request.paymentKey(), idempotencyKey));
+        WalletChargeResponse body = new WalletChargeResponse(result.chargeId(), result.status());
+        return ResponseEntity.ok(ApiResponse.ok(body));
     }
 }

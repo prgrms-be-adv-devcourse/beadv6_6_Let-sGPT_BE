@@ -48,6 +48,14 @@ public class WalletChargeJpaEntity {
     @Column(name = "pg_payment_key", length = 500)
     private String pgPaymentKey;
 
+    // pgPaymentKey는 암호화(비결정적 IV)되어 등호 조회가 불가능 — 웹훅 매칭은 이 평문 해시(결정적)로 수행
+    @Column(name = "pg_payment_key_hash", length = 64)
+    private String pgPaymentKeyHash;
+
+    // 웹훅 중복 수신 판단 기준
+    @Column(name = "pg_tx_id", length = 100)
+    private String pgTxId;
+
     @Column(name = "idempotency_key", nullable = false, unique = true, length = 100)
     private String idempotencyKey;
 
@@ -64,14 +72,16 @@ public class WalletChargeJpaEntity {
     private LocalDateTime updatedAt;
 
     private WalletChargeJpaEntity(UUID id, UUID memberId, Long amount, WalletCharge.Method method,
-            WalletCharge.Status status, String pgPaymentKey, String idempotencyKey, String requestHash,
-            LocalDateTime createdAt, LocalDateTime updatedAt) {
+            WalletCharge.Status status, String pgPaymentKey, String pgPaymentKeyHash, String pgTxId,
+            String idempotencyKey, String requestHash, LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.id = id;
         this.memberId = memberId;
         this.amount = amount;
         this.method = method;
         this.status = status;
         this.pgPaymentKey = pgPaymentKey;
+        this.pgPaymentKeyHash = pgPaymentKeyHash;
+        this.pgTxId = pgTxId;
         this.idempotencyKey = idempotencyKey;
         this.requestHash = requestHash;
         this.createdAt = createdAt;
@@ -81,8 +91,8 @@ public class WalletChargeJpaEntity {
     public static WalletChargeJpaEntity fromDomain(WalletCharge charge) {
         return new WalletChargeJpaEntity(
                 charge.getId(), charge.getMemberId(), charge.getAmount(), charge.getMethod(),
-                charge.getStatus(), charge.getPgPaymentKey(), charge.getIdempotencyKey(), charge.getRequestHash(),
-                charge.getCreatedAt(), charge.getUpdatedAt());
+                charge.getStatus(), charge.getPgPaymentKey(), charge.getPgPaymentKeyHash(), charge.getPgTxId(),
+                charge.getIdempotencyKey(), charge.getRequestHash(), charge.getCreatedAt(), charge.getUpdatedAt());
     }
 
     public WalletCharge toDomain() {
@@ -93,6 +103,8 @@ public class WalletChargeJpaEntity {
                 .method(method)
                 .status(status)
                 .pgPaymentKey(pgPaymentKey)
+                .pgPaymentKeyHash(pgPaymentKeyHash)
+                .pgTxId(pgTxId)
                 .idempotencyKey(idempotencyKey)
                 .requestHash(requestHash)
                 .createdAt(createdAt)
