@@ -8,12 +8,16 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverter;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.security.web.server.authorization.ServerAccessDeniedHandler;
 import org.springframework.security.web.server.ServerAuthenticationEntryPoint;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.reactive.CorsConfigurationSource;
+import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -29,8 +33,16 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+    public SecurityWebFilterChain securityWebFilterChain(
+            ServerHttpSecurity http,
+            CorsConfigurationSource corsConfigurationSource,
+            RouteExistenceFilter routeExistenceFilter
+    ) {
         http
+                // 인증 검사보다 먼저 "이 경로가 실제 라우트인지"부터 확인 — 미등록 경로는
+                // 토큰 유무와 무관하게 즉시 404 (RouteExistenceFilter 참고).
+                .addFilterBefore(routeExistenceFilter, SecurityWebFiltersOrder.FIRST)
+                .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .exceptionHandling(exceptionHandling -> exceptionHandling
                         // 인증 실패(토큰 없음/만료/위조) → common 공통 에러 포맷 401
@@ -47,29 +59,53 @@ public class SecurityConfig {
                                 "/webjars/**").permitAll()
 
                         // 각 서비스 OpenAPI 문서 + 개별 Swagger UI
+                        // (각 서비스가 springdoc.api-docs.path를 기본값 "/v3/api-docs"가 아닌
+                        // "/api-docs"로 override해서 쓰는 컨벤션을 따름 — member application.yml 참고)
                         .pathMatchers(
-                                "/*/v3/api-docs/**",
+                                "/*/api-docs/**",
                                 "/*/swagger-ui/**",
                                 "/*/swagger-ui.html").permitAll()
 
-                        // member 공개 기능 (로그인/토큰 발급, JWKS)
-                        .pathMatchers(
-                                "/member/api/v1/auth/**",
-                                "/member/oauth2/jwks").permitAll()
+                        // member 공개 기능 (JWKS)
+                        // member route가 prefix 없이 실제 컨트롤러 경로 그대로 노출되므로
+                        // (application-local/compose.yaml의 "member" route 참고) 여기도 prefix 없이 매칭.
+                        .pathMatchers("/oauth2/jwks").permitAll()
 
-                        // POST 만 공개
+                        // 회원가입/로그인/리프레시는 토큰이 없는 상태에서 호출해야 하므로 POST만 공개
+                        // (MemberController에 통합됨 — 별도 AuthController 없음)
                         .pathMatchers(
-                                HttpMethod.POST, "/member/api/v1/members").permitAll()
+                                HttpMethod.POST,
+                                "/api/v1/members",
+                                "/api/v1/members/login",
+                                "/api/v1/members/refresh").permitAll()
 
                         // 판매자만 접근 가능
                         .pathMatchers(
-                                "/member/api/v1/seller/**").hasRole("SELLER")
+                                "/api/v1/seller/**").hasRole("SELLER")
 
                         // 인증만 되면 누구나 접근 가능 (경로 생략 가능)
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth -> oauth
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
         return http.build();
+    }
+
+    /**
+     * swagger-ui(localhost:8000)에서 각 서비스로 직접 "Try it out" 호출할 때 발생하는
+     * CORS 문제를 막기 위함. 로컬 개발 전용이라 localhost의 모든 포트를 허용 패턴으로 열어둔다
+     * (운영 배포 시에는 실제 프론트 도메인으로 좁혀야 함).
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOriginPatterns(List.of("http://localhost:*", "https://localhost:*"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setAllowCredentials(true);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
     }
 
     private ServerAuthenticationEntryPoint authenticationEntryPoint() {

@@ -10,12 +10,16 @@ spring:
       server:
         webflux:
           routes:
+            - id: member-docs
+              uri: http://member:9100
+              predicates:
+                - Path=/member/api-docs,/member/swagger-ui.html,/member/swagger-ui/**
+              filters:
+                - StripPrefix=1
             - id: member
               uri: http://member:9100
               predicates:
-                - Path=/member/**
-              filters:
-                - StripPrefix=1
+                - Path=/api/v1/members/**,/oauth2/jwks
             - id: product
               uri: http://product:9110
               predicates:

@@ -11,12 +11,20 @@ spring:
       server:
         webflux:
           routes:
+            # swagger 문서 경로는 모든 모듈이 "/api-docs", "/swagger-ui.html"을 똑같이 쓰는
+            # 컨벤션이라 prefix로 모듈을 구분해야 함 (StripPrefix로 떼고 전달).
+            - id: member-docs
+              uri: http://localhost:9100
+              predicates:
+                - Path=/member/api-docs,/member/swagger-ui.html,/member/swagger-ui/**
+              filters:
+                - StripPrefix=1
+            # 실제 비즈니스 API는 도메인별 경로(/api/v1/members/**)가 이미 모듈마다 겹치지 않으므로
+            # prefix 없이 실제 컨트롤러 경로 그대로 호출 가능.
             - id: member
               uri: http://localhost:9100
               predicates:
-                - Path=/member/**
-              filters:
-                - StripPrefix=1
+                - Path=/api/v1/members/**,/oauth2/jwks
             - id: product
               uri: http://localhost:9110
               predicates:
