@@ -9,15 +9,12 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-
 import java.time.Instant;
 import java.util.UUID;
-
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
@@ -65,7 +62,7 @@ public class Product {
   @Column(name = "updated_at", nullable = false, comment = "수정 일시")
   private Instant updatedAt;
 
-  @Builder(builderMethodName = "register")
+  @Builder(builderMethodName = "create")
   private Product(
       UUID sellerId,
       String name,
