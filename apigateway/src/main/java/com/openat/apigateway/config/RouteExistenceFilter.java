@@ -5,6 +5,8 @@ import com.openat.common.error.CommonErrorCode;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cloud.gateway.route.RouteLocator;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
@@ -14,8 +16,7 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 /**
- * Spring Security의 인증 검사보다 먼저 실행되어, 요청 경로가 실제로 매칭되는 라우트가
- * 있는지부터 확인한다.
+ * 요청 경로가 실제로 매칭되는 라우트가 있는지부터 확인한다.
  *
  * <p>원래대로(이 필터 없이)는 {@code anyExchange().authenticated()} 때문에 토큰 없이
  * 미등록 경로를 호출해도 라우팅 단계까지 가보지 못하고 401이 먼저 나서, "이 경로가
@@ -24,8 +25,19 @@ import reactor.core.publisher.Mono;
  *
  * <p>swagger-ui/api-docs/webjars처럼 게이트웨이 자신이 직접 서빙하는(별도 Route로
  * 등록되지 않은) 경로는 라우트 매칭 대상이 아니므로 미리 통과시킨다.
+ *
+ * <p><b>Spring Security 체인 안에 {@code addFilterBefore(this, SecurityWebFiltersOrder.FIRST)}로
+ * 끼워넣지 않고 일반 전역 {@code WebFilter}로 등록한 이유</b>: {@code authorizeExchange()}의
+ * {@code anyExchange().authenticated()}(명시적 {@code pathMatchers(...)}에 안 걸리는 catch-all)에
+ * 해당하는 요청은 Spring Boot가 {@code spring.security.oauth2.resourceserver.jwt.*} 설정만
+ * 보고 자동 등록하는 별도의 기본 {@code SecurityWebFilterChain}(빈 이름:
+ * {@code reactiveJwtSecurityFilterChain})으로 처리되어, {@code addFilterBefore}로 끼워넣은
+ * 필터를 건너뛰는 현상이 실제로 확인됐다(우리 체인에 {@code @Order(HIGHEST_PRECEDENCE)}를
+ * 줘도 해당 catch-all 케이스는 여전히 우회됨). 전역 {@code WebFilter}는 어느 보안 체인이
+ * 선택되는지와 무관하게 WebFlux 디스패치 전체를 감싸므로 이 문제가 없다.
  */
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
 @RequiredArgsConstructor
 public class RouteExistenceFilter implements WebFilter {
 

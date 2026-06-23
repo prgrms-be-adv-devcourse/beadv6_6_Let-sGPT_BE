@@ -19,12 +19,12 @@ spring:
                 - Path=/member/api-docs,/member/swagger-ui.html,/member/swagger-ui/**
               filters:
                 - StripPrefix=1
-            # 실제 비즈니스 API는 도메인별 경로(/api/v1/members/**)가 이미 모듈마다 겹치지 않으므로
-            # prefix 없이 실제 컨트롤러 경로 그대로 호출 가능.
+            # 실제 비즈니스 API는 도메인별 경로(/api/v1/members/**, /api/v1/seller/**)가
+            # 이미 모듈마다 겹치지 않으므로 prefix 없이 실제 컨트롤러 경로 그대로 호출 가능.
             - id: member
               uri: http://localhost:9100
               predicates:
-                - Path=/api/v1/members/**,/oauth2/jwks
+                - Path=/api/v1/members/**,/api/v1/seller/**,/oauth2/jwks
             - id: product
               uri: http://localhost:9110
               predicates:

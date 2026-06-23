@@ -4,11 +4,12 @@ import com.openat.apigateway.error.ApiErrorResponseWriter;
 import com.openat.common.error.CommonErrorCode;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
-import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverter;
@@ -32,16 +33,23 @@ public class SecurityConfig {
         this.responseWriter = responseWriter;
     }
 
+    /**
+     * Spring Boot가 {@code spring.security.oauth2.resourceserver.jwt.*} 설정만 보고
+     * "reactiveJwtSecurityFilterChain"이라는 기본 체인을 추가로 자동 등록하는데, 이 체인은
+     * CORS/permitAll 목록 등 우리가 정의한 규칙을 전혀 모른 채 그냥 "인증됐는지"만 본다.
+     * {@code SecurityWebFilterChain}이 여러 개일 때 Spring Security는 {@code @Order}가
+     * 낮은(우선순위 높은) 체인의 매처가 매칭되면 그 체인을 쓰는데, 명시적 순서를 안 주면
+     * 우리 체인이 항상 이긴다는 보장이 없어 일부 경로가 자동 체인으로 새서 permitAll이어야
+     * 할 경로가 보호되는 등 어긋났다. 항상 우리 체인이 먼저 선택되도록 최우선순위를 명시한다.
+     * (라우트 존재 여부 체크는 더 이상 이 체인에 끼워넣지 않는다 — {@link RouteExistenceFilter} 참고.)
+     */
     @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     public SecurityWebFilterChain securityWebFilterChain(
             ServerHttpSecurity http,
-            CorsConfigurationSource corsConfigurationSource,
-            RouteExistenceFilter routeExistenceFilter
+            CorsConfigurationSource corsConfigurationSource
     ) {
         http
-                // 인증 검사보다 먼저 "이 경로가 실제 라우트인지"부터 확인 — 미등록 경로는
-                // 토큰 유무와 무관하게 즉시 404 (RouteExistenceFilter 참고).
-                .addFilterBefore(routeExistenceFilter, SecurityWebFiltersOrder.FIRST)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .exceptionHandling(exceptionHandling -> exceptionHandling
@@ -79,9 +87,11 @@ public class SecurityConfig {
                                 "/api/v1/members/login",
                                 "/api/v1/members/refresh").permitAll()
 
-                        // 판매자만 접근 가능
+                        // 인증만 되면 누구나 접근 가능 — POST/PUT은 아직 ROLE_USER인 회원이
+                        // "최초 판매자 전환"을 할 때도 호출해야 하므로 hasRole("SELLER")로 막을 수 없다.
+                        // 활성 SellerInfo 존재 여부에 따른 실질적인 보호는 member 서비스 로직에서 처리한다.
                         .pathMatchers(
-                                "/api/v1/seller/**").hasRole("SELLER")
+                                "/api/v1/seller/**").authenticated()
 
                         // 인증만 되면 누구나 접근 가능 (경로 생략 가능)
                         .anyExchange().authenticated())
