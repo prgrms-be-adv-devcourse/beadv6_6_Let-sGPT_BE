@@ -3,6 +3,7 @@ package com.openat.payment.infrastructure.client;
 import com.openat.payment.application.client.TossConfirmResult;
 import com.openat.payment.application.client.TossPaymentClient;
 import com.openat.payment.application.client.TossQueryResult;
+import com.openat.payment.application.client.TossRefundResult;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 
@@ -19,6 +20,11 @@ public class StubTossPaymentClient implements TossPaymentClient {
     @Override
     public TossConfirmResult confirmCharge(String paymentKey, UUID chargeId, Long amount, String idempotencyKey) {
         return TossConfirmResult.approved("stub_pg_tx_" + UUID.randomUUID());
+    }
+
+    @Override
+    public TossRefundResult refundPayment(String pgPaymentKey, Long amount, String idempotencyKey) {
+        return TossRefundResult.complete("stub_pg_refund_" + UUID.randomUUID());
     }
 
     @Override

@@ -29,4 +29,10 @@ public interface PaymentRepository {
 
     // TTL 스캐너(§3) — 생성 후 threshold 이전인 PAYMENT_PENDING row 전체(pgPaymentKey null/有 둘 다 포함, 분기는 호출 측이 처리).
     List<Payment> findStalePending(LocalDateTime threshold);
+
+    // 환불가능액 원자 검증(#13) — WHERE refundedAmount + amount <= amount, affected=0이면 한도초과.
+    int tryIncreaseRefundedAmount(UUID paymentId, Long amount);
+
+    // PG가 환불을 명시적으로 거절했을 때 한도를 원복(보정용).
+    int tryDecreaseRefundedAmount(UUID paymentId, Long amount);
 }

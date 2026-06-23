@@ -51,6 +51,10 @@ public class RefundJpaEntity {
     @Column(name = "idempotency_key", nullable = false, unique = true, length = 100)
     private String idempotencyKey;
 
+    // 동일 idempotencyKey로 바디가 다른 요청이 재전송되면 충돌로 판단(#7, A9 범위 환불까지 확장)
+    @Column(name = "request_hash", length = 64)
+    private String requestHash;
+
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
@@ -59,7 +63,8 @@ public class RefundJpaEntity {
     private LocalDateTime createdAt;
 
     private RefundJpaEntity(UUID id, UUID paymentId, Long amount, Refund.Status status, String reason,
-            String pgRefundKey, String idempotencyKey, LocalDateTime completedAt, LocalDateTime createdAt) {
+            String pgRefundKey, String idempotencyKey, String requestHash, LocalDateTime completedAt,
+            LocalDateTime createdAt) {
         this.id = id;
         this.paymentId = paymentId;
         this.amount = amount;
@@ -67,6 +72,7 @@ public class RefundJpaEntity {
         this.reason = reason;
         this.pgRefundKey = pgRefundKey;
         this.idempotencyKey = idempotencyKey;
+        this.requestHash = requestHash;
         this.completedAt = completedAt;
         this.createdAt = createdAt;
     }
@@ -74,7 +80,8 @@ public class RefundJpaEntity {
     public static RefundJpaEntity fromDomain(Refund refund) {
         return new RefundJpaEntity(
                 refund.getId(), refund.getPaymentId(), refund.getAmount(), refund.getStatus(), refund.getReason(),
-                refund.getPgRefundKey(), refund.getIdempotencyKey(), refund.getCompletedAt(), refund.getCreatedAt());
+                refund.getPgRefundKey(), refund.getIdempotencyKey(), refund.getRequestHash(),
+                refund.getCompletedAt(), refund.getCreatedAt());
     }
 
     public Refund toDomain() {
@@ -86,6 +93,7 @@ public class RefundJpaEntity {
                 .reason(reason)
                 .pgRefundKey(pgRefundKey)
                 .idempotencyKey(idempotencyKey)
+                .requestHash(requestHash)
                 .completedAt(completedAt)
                 .createdAt(createdAt)
                 .build();

@@ -68,4 +68,14 @@ public class PaymentRepositoryAdaptor implements PaymentRepository {
         return paymentJpaRepository.findByStatusAndCreatedAtBefore(Payment.Status.PAYMENT_PENDING, threshold)
                 .stream().map(PaymentJpaEntity::toDomain).toList();
     }
+
+    @Override
+    public int tryIncreaseRefundedAmount(UUID paymentId, Long amount) {
+        return paymentJpaRepository.tryIncreaseRefundedAmount(paymentId, amount);
+    }
+
+    @Override
+    public int tryDecreaseRefundedAmount(UUID paymentId, Long amount) {
+        return paymentJpaRepository.tryDecreaseRefundedAmount(paymentId, amount);
+    }
 }

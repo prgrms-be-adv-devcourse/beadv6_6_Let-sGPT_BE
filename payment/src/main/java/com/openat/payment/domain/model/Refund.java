@@ -31,6 +31,9 @@ public class Refund {
     // PG 환불 호출에도 동일 키 부착(#12)
     private String idempotencyKey;
 
+    // 동일 idempotencyKey로 바디(amount 등)가 다른 요청이 재전송되면 충돌로 판단(#7, A9 범위 환불까지 확장)
+    private String requestHash;
+
     private LocalDateTime completedAt;
 
     private LocalDateTime createdAt;

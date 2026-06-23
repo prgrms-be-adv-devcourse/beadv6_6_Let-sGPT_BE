@@ -14,4 +14,7 @@ public interface TossPaymentClient {
 
     // PG 상태조회(§3 TTL 스캐너) — confirm을 못 받고 PAYMENT_PENDING에 머무는 row를 강제로 확정할 때 사용.
     TossQueryResult queryPaymentStatus(String paymentKey);
+
+    // 환불(결제취소, E2) — PG 환불 호출에도 멱등키 부착(#12).
+    TossRefundResult refundPayment(String pgPaymentKey, Long amount, String idempotencyKey);
 }

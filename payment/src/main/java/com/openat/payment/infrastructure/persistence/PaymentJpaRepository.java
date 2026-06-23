@@ -43,4 +43,16 @@ public interface PaymentJpaRepository extends JpaRepository<PaymentJpaEntity, UU
 
     // TTL 스캐너(§3) — 생성 후 threshold 이전인 PAYMENT_PENDING row 전체.
     List<PaymentJpaEntity> findByStatusAndCreatedAtBefore(Payment.Status status, LocalDateTime threshold);
+
+    // 환불가능액 원자 검증(#13) — 합계가 원 결제금액을 넘지 않을 때만 증가.
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE PaymentJpaEntity p SET p.refundedAmount = p.refundedAmount + :amount "
+            + "WHERE p.id = :id AND p.refundedAmount + :amount <= p.amount")
+    int tryIncreaseRefundedAmount(@Param("id") UUID id, @Param("amount") Long amount);
+
+    // PG가 환불을 명시적으로 거절했을 때 한도 원복.
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE PaymentJpaEntity p SET p.refundedAmount = p.refundedAmount - :amount "
+            + "WHERE p.id = :id AND p.refundedAmount - :amount >= 0")
+    int tryDecreaseRefundedAmount(@Param("id") UUID id, @Param("amount") Long amount);
 }
