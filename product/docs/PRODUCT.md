@@ -112,7 +112,27 @@ com.openat
 
 ---
 
-## 11. 참고
+## 11. PR 컨벤션
+- **제목·본문**: 커밋 컨벤션 그대로 — `<type>: <한글 제목>` + 빈 줄 + 요약 한 줄 + What 목록(`-`).
+- 본문 아래에 **`### Summary of Changes`**(리뷰어가 볼 핵심 변경 요약)와 **`### Checklist`**(`- [x]` 확인 항목)를 둔다.
+- **base 브랜치는 `dev`**(PROJECT §13). 기능 단위로 올리고, 이미 dev에 있는 변경(공통 인프라 등)은 포함하지 않는다(rebase로 정리).
+
+```
+<type>: <한글 제목>
+
+<변경 의도·요약 한 줄>
+- <변경 항목>
+
+### Summary of Changes
+- <핵심 변경 요약>
+
+### Checklist
+- [x] <확인 항목>
+```
+
+---
+
+## 12. 참고
 - 결정 근거: [`DECISIONS.md`](DECISIONS.md)
 - 재고 게이트키퍼 설계: [`STOCK_GATEKEEPER.md`](STOCK_GATEKEEPER.md)
 - 전역 정보·컨벤션: [`../../docs/PROJECT.md`](../../docs/PROJECT.md)
