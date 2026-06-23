@@ -11,8 +11,10 @@ import com.openat.member.domain.exception.MemberErrorCode;
 import com.openat.member.domain.model.Member;
 import com.openat.member.domain.model.PlatformType;
 import com.openat.member.domain.model.Role;
+import com.openat.member.domain.model.SellerInfo;
 import com.openat.member.domain.repository.MemberRepository;
 import com.openat.member.domain.repository.RefreshTokenRepository;
+import com.openat.member.domain.repository.SellerInfoRepository;
 import com.openat.member.infrastructure.security.JwtTokenProvider;
 import com.openat.common.exception.BusinessException;
 import io.jsonwebtoken.Claims;
@@ -30,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class MemberService implements MemberUseCase {
 
     private final MemberRepository memberRepository;
+    private final SellerInfoRepository sellerInfoRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final PasswordEncoder passwordEncoder;
@@ -52,7 +55,7 @@ public class MemberService implements MemberUseCase {
                 .nickname(request.nickname())
                 .build();
 
-        return MemberResponse.from(memberRepository.save(member));
+        return toResponse(memberRepository.save(member));
     }
 
     /**
@@ -101,7 +104,7 @@ public class MemberService implements MemberUseCase {
     public MemberResponse getMyInfo(UUID memberId) {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new BusinessException(MemberErrorCode.MEMBER_NOT_FOUND));
-        return MemberResponse.from(member);
+        return toResponse(member);
     }
 
     /**
@@ -136,7 +139,7 @@ public class MemberService implements MemberUseCase {
             member.changeNickname(request.nickname());
         }
 
-        return MemberResponse.from(member);
+        return toResponse(member);
     }
 
     /**
@@ -167,5 +170,11 @@ public class MemberService implements MemberUseCase {
         );
 
         return TokenResponse.of(accessToken, refreshToken, jwtTokenProvider.getAccessTokenExpireSeconds());
+    }
+
+    /** 회원 조회 시에는 항상 활성(논리적 삭제되지 않은) SellerInfo를 같이 조회해서 응답에 포함시킨다. */
+    private MemberResponse toResponse(Member member) {
+        SellerInfo sellerInfo = sellerInfoRepository.findActiveByMemberId(member.getId()).orElse(null);
+        return MemberResponse.from(member, sellerInfo);
     }
 }

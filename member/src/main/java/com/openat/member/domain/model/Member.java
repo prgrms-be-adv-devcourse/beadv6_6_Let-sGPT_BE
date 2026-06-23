@@ -57,11 +57,17 @@ public class Member extends BaseTimeEntity {
         this.nickname = nickname;
     }
 
-    /**
-     * 회원 탈퇴(논리적 삭제). {@link BaseTimeEntity#markDeleted()}로 deletedAt만 채우고
-     * 실제 row는 지우지 않는다 — 이후 findById/findByEmail(활성 회원 전용 조회)에서 안 보이게 된다.
-     */
     public void withdraw() {
         markDeleted();
+    }
+
+    /** 활성 SellerInfo를 (처음 또는 다시) 갖게 됐을 때 권한을 SELLER로 올린다. */
+    public void promoteToSeller() {
+        this.role = Role.ROLE_SELLER;
+    }
+
+    /** 활성 SellerInfo가 하나도 남지 않게 됐을 때 권한을 USER로 내린다. */
+    public void demoteToUser() {
+        this.role = Role.ROLE_USER;
     }
 }

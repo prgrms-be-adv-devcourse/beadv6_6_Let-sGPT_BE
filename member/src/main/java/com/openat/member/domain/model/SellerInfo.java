@@ -41,4 +41,9 @@ public class SellerInfo extends BaseTimeEntity {
         this.storeName = storeName;
         this.member = member;
     }
+
+    /** PATCH 전용 — storeName만 변경 가능(businessNumber는 PUT으로만 갈아끼움). */
+    public void changeStoreName(String storeName) {
+        this.storeName = storeName;
+    }
 }

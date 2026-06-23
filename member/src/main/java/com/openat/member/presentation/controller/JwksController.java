@@ -23,7 +23,7 @@ public class JwksController {
     private final RSAPublicKey rsaPublicKey;
     private final JwtProperties jwtProperties;
 
-    @GetMapping("/auth/jwks")
+    @GetMapping("/oauth2/jwks")
     public Map<String, Object> jwks() {
         RSAKey rsaKey = new RSAKey.Builder(rsaPublicKey)
                 .keyUse(KeyUse.SIGNATURE)
