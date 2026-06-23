@@ -17,11 +17,7 @@ public class OpenApiConfig {
   @Bean
   public OpenAPI productOpenApi() {
     return new OpenAPI()
-        .info(
-            new Info()
-                .title("Product API")
-                .description("상품 도메인 API 문서")
-                .version("v1"))
+        .info(new Info().title("Product API").description("상품 도메인 API 문서").version("v1"))
         .addSecurityItem(new SecurityRequirement().addList(USER_ID_HEADER_SCHEME))
         .components(
             new Components()
