@@ -112,7 +112,7 @@ com.openat
 ---
 
 ## 10. 설정 / 시드
-- `application.yml`: `default_schema=product`, `ddl-auto=update`, `defer-datasource-initialization=true` + `sql.init.mode=always`.
+- `application.yml`: `default_schema=product`, `ddl-auto=create`(구현 초기 — 엔티티 변경이 잦아 당분간 매 기동 재생성, 안정화 후 `update` 복귀), `defer-datasource-initialization=true` + `sql.init.mode=always`.
 - `data.sql`: `categories` 시드(의류·액세서리·문구·전자기기·피규어·기타), `ON CONFLICT (name) DO NOTHING`.
 
 ---
