@@ -124,7 +124,7 @@
 
 - **패키지:** 클린 아키텍처 계층 구조 — `com.openat.<domain>.{domain, application, infrastructure, presentation}` (전부 소문자). 계층별 책임은 [§3 클린 아키텍처](#3-아키텍처-원칙-반드시-준수) 참고.
 - **네이밍:** 클래스 `PascalCase`, 메서드·변수 `camelCase`, 상수 `UPPER_SNAKE`. 불리언은 **긍정형**(`isOpen` ⭕ / `isNotClosed` ❌).
-- **DB 테이블/엔티티:** 엔티티 클래스는 **단수**(`Product`·`Drop`), 테이블명은 **복수형**(`products`·`drops`). 예약어(`order`·`drop`·`user`) 충돌 회피 + 일관성 목적. 컬럼은 `snake_case`. 인덱스·제약 이름도 **복수 테이블 기준**(`idx_products_*`, `uk_categories_code`). 공통 DB(`openat`)를 공유하므로 테이블 일관성을 위해 **팀 합의로 승격한 전사 컨벤션**(이유·대안 공유 후 채택).
+- **DB 테이블/엔티티:** 엔티티 클래스는 **단수**(`Product`·`Drop`), 테이블명은 **복수형**(`products`·`drops`). 예약어(`order`·`drop`·`user`) 충돌 회피 + 일관성 목적. 컬럼은 `snake_case`. 인덱스·제약 이름도 **복수 테이블 기준**(`idx_products_*`, `uk_categories_name`). 공통 DB(`openat`)를 공유하므로 테이블 일관성을 위해 **팀 합의로 승격한 전사 컨벤션**(이유·대안 공유 후 채택).
 - **DTO:**
   - 컨트롤러: 요청 `~Request` / 응답 `~Response` (**`~Dto` 지양**)
   - 서비스: 요청 `~Command` / 반환 `~Info`
@@ -206,7 +206,7 @@
 > PK는 **UUIDv7**. 타 도메인 참조는 "값 참조"(FK 아님). 민감정보(`settlementAccount`, `pgPaymentKey`)는 **AES 암호화**.
 
 - **회원(9100):** `Member`(role[BUYER/SELLER]), `SellerProfile`(상호·사업자번호·정산계좌[암호화]), `RefreshToken`
-- **상품(9110):** `Product`(상품 마스터), `Category`(상품 카테고리: code[고유]·name·sortOrder), `Drop`(**재고·오픈시각의 주인**: totalQuantity·dropPrice·openAt·closeAt·limitPerUser·status; 잔여 수량은 스냅샷 없이 `StockHistory` 합산), `StockHistory`(append-only 재고 이력)
+- **상품(9110):** `Product`(상품 마스터), `Category`(상품 카테고리: name[고유]), `Drop`(**재고·오픈시각의 주인**: totalQuantity·dropPrice·openAt·closeAt·limitPerUser·status; 잔여 수량은 스냅샷 없이 `StockHistory` 합산), `StockHistory`(append-only 재고 이력)
 - **주문(9120):** `Order`(dropId·quantity·orderPrice 스냅샷·status), `OrderSagaState`(사가 진행/보상 추적)
 - **결제(9130):** `Payment`(pgPaymentKey[암호화]·idempotencyKey[UNIQUE]), `Refund`
 - **정산(9140):** `SettlementRecord`(이벤트 적재: SALE/REFUND), `Settlement`(월 정산 결과 periodYm·수수료·실지급액)
@@ -228,7 +228,7 @@
 - 결제 이벤트 미회신 시 정리 시점/방식 (`stock_timeout` 트리거 기준 시간 등).
 - 결제 결과 사용자 응답 경로(리다이렉트 successUrl/failUrl) vs 백엔드 이벤트 전파의 역할 분담.
 - 예치금·장바구니: 과제 필수지만 현재 **TODO**. 현재는 PG 직접 결제·드롭 즉시 주문.
-- 카테고리: 상품 서비스 내 **`categories` 테이블**로 분리 완료(`Product`가 `@ManyToOne` 참조). 계층 구조·카테고리별 수수료는 추후 컬럼 확장으로 대응.
+- 카테고리: 상품 서비스 내 **`categories` 테이블**로 분리 완료(`Product`가 `@ManyToOne`으로 **선택 참조** — nullable, 카테고리 없이 상품 등록 가능·삭제 시 미분류). 계층 구조·카테고리별 수수료는 추후 컬럼 확장으로 대응.
 - 공통 모듈 범위·QueryDSL 도입 여부: 도메인별 결정 사항.
 
 ---

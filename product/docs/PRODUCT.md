@@ -37,14 +37,16 @@ com.openat
 | `category` | 상품 카테고리(참조 데이터) + 존재 판정 |
 
 - **의존 방향은 단방향: `drop → product → category`.** 역참조 금지(순환 차단). FK 방향(`drops.product_id`, `products.category_id`)과 일치.
+- **`products.category_id`는 선택 참조(nullable).** 카테고리 없이 상품 등록 가능(미분류), 카테고리 삭제 시 SET NULL로 미분류 전환. (§11 삭제 전략)
 
 ---
 
 ## 4. 서브도메인 간 호출 규칙
 - 다른 서브도메인의 **repository·내부 구현에 직접 접근 금지.** 반드시 그 서브도메인의 **application 포트**를 통한다.
 - "그 개념에 대한 판정·예외"는 **소유 서브도메인**이 가진다.
-  - 예: "없는 카테고리"는 category가 소유 — `CategoryReader.getById()`가 `CategoryErrorCode.NOT_FOUND`를 던지고, product는 포트만 호출.
+  - 예: "없는 카테고리"는 category가 소유 — `CategoryQueryUseCase.getById()`가 `CategoryErrorCode.NOT_FOUND`를 던지고, product는 포트만 호출.
 - 엔티티 참조는 FK상 불가피하다(예: product가 `Category` 엔티티 참조). 같은 모듈·DB라 수용. 서비스로 분리되는 시점엔 읽기 모델/식별자 참조로 전환.
+- **참조 무결성(삭제 차단 등)은 DB FK 제약이 책임진다.** 애플리케이션 레벨에서 "참조 중인지"를 확인하지 않는다 — 그 판정 지식은 참조하는 쪽(예: product)에 있어, 코드로 확인하려면 역방향 참조(`category → product`)가 생겨 §3 단방향이 깨지기 때문. 무결성을 FK(두 서브도메인보다 아래 계층)에 맡겨 방향 충돌을 원천 차단한다. (근거: DECISIONS 2026-06-23 #2)
 
 ---
 
@@ -63,6 +65,9 @@ com.openat
 - **CQRS 경량(서비스 분리)**: application 포트·서비스를 읽기/쓰기로 분리 — `Xxx`**`Query`**`UseCase`+`Xxx`**`Query`**`Service`(`@Transactional(readOnly = true)` 클래스 레벨) / `Xxx`**`Command`**`UseCase`+`Xxx`**`Command`**`Service`(`@Transactional`). 필요한 쪽만 생성하고, 경계를 넘는 의존은 읽기(Query) 포트로 제한. (DECISIONS 2026-06-22 #4)
 - **DTO**: presentation `~Request`/`~Response`, application 쓰기 입력 `~Command` / 읽기 입력 `~Query` / 출력 `~Info`. 생성 흐름 동사는 **`create`로 통일**(컨트롤러 메서드·usecase·빌더까지 한 단어).
 - **영속 포트 구현**: `<Aggregate>JpaRepository`(Spring Data 인터페이스) + `<Aggregate>RepositoryAdaptor`(`@Repository`, 도메인 포트 구현).
+- **조회 네이밍 — `get`/`find` 구분**: `getXxx`는 없으면 예외를 던진다(반드시 존재 보장). `findXxx`는 `Optional`을 반환한다(없을 수 있음). 예: 포트 `CategoryQueryUseCase.getById`(NOT_FOUND throw) ↔ 리포지토리 `findById`(Optional).
+- **엔티티 변수명**: 로드한 **기존** 엔티티는 엔티티명 그대로(`category`), **새로 생성**(미영속) 엔티티는 `new<Entity>`(`newCategory`·`newProduct`). 단, 한 스코프에 신규·기존이 함께 있어 비교가 필요하면 맥락에 어울리는 이름으로 구분한다.
+- **메서드 본문 — 사고 흐름 단계대로**: 메서드 내부 코드는 사람의 사고 흐름 단계와 일치하도록 단계별로 작성한다. 동일 성능이면 가독성을 우선하고, 중첩 호출로 압축하기보다 단계를 지역 변수로 풀어 한 문장당 하나의 일로 읽히게 한다.
 - **에러코드**: 서브도메인별 enum(`CategoryErrorCode` 등)이 `common.error.ErrorCode`를 구현. 클라이언트 노출 `code` 문자열은 안정적으로 유지(예: `"CATEGORY_NOT_FOUND"`).
 
 ---
@@ -108,11 +113,27 @@ com.openat
 
 ## 10. 설정 / 시드
 - `application.yml`: `default_schema=product`, `ddl-auto=update`, `defer-datasource-initialization=true` + `sql.init.mode=always`.
-- `data.sql`: `categories` 시드(의류·액세서리·문구·전자기기·피규어·기타), `ON CONFLICT (code) DO NOTHING`.
+- `data.sql`: `categories` 시드(의류·액세서리·문구·전자기기·피규어·기타), `ON CONFLICT (name) DO NOTHING`.
 
 ---
 
-## 11. 참고
+## 11. 삭제 전략 (soft delete)
+
+삭제는 **참조 데이터(category)와 비즈니스 레코드(product·drop)의 성격 차이**로 이원화한다. 정합성은 §4 원칙대로 DB/영속 계층에 위임하고, 코드에 역방향 참조를 만들지 않는다. (근거: DECISIONS 2026-06-23 #3)
+
+| 대상 | 전략 | 메커니즘 |
+| :-- | :-- | :-- |
+| `category` (참조 데이터) | 하드 삭제 + 참조 끊기 | `products.category_id` nullable + FK `ON DELETE SET NULL` → 참조 상품은 미분류(null). DB가 끊으므로 역참조 없음 |
+| `product`·`drop` (비즈니스 레코드) | soft 삭제 | `@SoftDelete(strategy = TIMESTAMP, columnName = "deleted_at")` — DELETE→UPDATE 자동 변환 + 조회 자동 필터 |
+| `stock_histories` (감사 원장) | 삭제 안 함 | append-only |
+
+- **하향 전파(product → drop)**: product를 soft 삭제하면 그 product의 drop도 함께 soft 삭제한다(한정판·재고 이력 보존·복구 여지). 단 직접 호출은 §3 단방향을 깨므로 **동기 인프로세스 이벤트**로 처리 — product가 삭제 이벤트 발행, drop 리스너가 자기 drop을 soft 삭제(컴파일 의존 `drop → product` 정방향, 동일 트랜잭션·실패 시 롤백). 무결성=FK / 상태 전파=이벤트 역할 분담의 적용.
+- **원장 예외**: `stock_histories`는 soft 삭제된 drop을 계속 참조하므로, 원장 조회는 `drop_id` 값 기준으로 다루고 soft 삭제 필터가 걸리는 `Drop` 연관 네비게이션에 의존하지 않는다(감사 독립성).
+- **조회 정합성**: 부모 삭제로 인한 자식 숨김은 항상 자식→부모(정방향) 필터로 처리하고, 영속 계층 자동 필터에 위임한다.
+
+---
+
+## 12. 참고
 - 결정 근거: [`DECISIONS.md`](DECISIONS.md)
 - 재고 게이트키퍼 설계: [`STOCK_GATEKEEPER.md`](STOCK_GATEKEEPER.md)
 - 전역 정보·컨벤션: [`../../docs/PROJECT.md`](../../docs/PROJECT.md)
