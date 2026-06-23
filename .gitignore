@@ -43,3 +43,6 @@ bin/
 
 .claude
 /payment/
+*.html
+*.css
+*.js
