@@ -76,10 +76,27 @@ com.openat
 
 ---
 
-## 8. 검증 / 예외 / 응답
-- **검증**: 컨트롤러 `@Valid`(Bean Validation). HTTP 진입 단일 경로 가정으로 도메인 중복 검증 생략. (`spring-boot-starter-validation` 의존 추가)
-- **예외**: `BusinessException`(언체크) + 서브도메인 ErrorCode. 전역 처리는 common `GlobalExceptionHandler`(@AutoConfiguration)에 위임 — product는 컴포넌트 스캔에서 common을 제외하므로 자동설정 경로로만 등록된다.
-- **응답**: `ApiResponse.of(data, status)`. 생성은 `@ResponseStatus(CREATED)` + 201.
+## 8. API 엔드포인트 컨벤션 — 상품 등록(`POST /products`) 기준
+
+전역 응답/에러 표준은 PROJECT §8을 따른다(성공 `ResponseEntity<T>`·봉투 없음, 에러 `ErrorResponse`). 아래는 그 위에 product가 적용하는 내부 규칙 — **상품 등록 흐름을 모든 엔드포인트의 템플릿으로 삼는다.**
+
+**컨트롤러는 얇게** — 명세 구현 + 인증 추출 + 검증 + 유스케이스 호출 + 응답 구성만. 비즈니스 로직은 service.
+- Swagger 명세 전담 인터페이스(`ProductApiSpec`)를 `implements` → 컨트롤러엔 제어 흐름만, 문서 어노테이션은 인터페이스로 분리.
+- 인증 식별자는 `@CurrentUser UUID`로 수신(게이트웨이 전달, 현재 임시 `X-User-Id`). **API 명세엔 노출하지 않는다**(내부 파라미터).
+- 입력 검증은 `@Valid`(Bean Validation). 단일 진입 가정으로 도메인 중복 검증 생략. (`spring-boot-starter-validation`)
+
+**예외**
+- `BusinessException`(언체크) + 서브도메인 ErrorCode → common `GlobalExceptionHandler`가 `ErrorResponse`로 변환. (@AutoConfiguration 등록 — product는 스캔에서 common 제외하므로 자동설정 경로로만 등록)
+
+**응답 (전역 표준의 product 적용)**
+- 생성: `201 Created` + `Location` 헤더 — Location은 common `Locations.fromCurrentRequest(id)`로 `현재요청/{id}` 구성. **생성 리소스 id는 본문이 아니라 Location으로 전달**(전용 응답 본문을 두지 않음). 예: `POST /products` → `201`, `Location: /api/v1/products/{id}`, 본문 없음.
+- 본문 없는 응답(삭제 등): `204 No Content`(표준 `ResponseEntity.noContent()`).
+
+**Swagger 문서** (명세 인터페이스에 집약)
+- 성공 응답은 **엔드포인트별로 `@ApiResponse`를 직접 선언**(상태코드·설명·헤더를 엔드포인트마다 자유롭게). 예: 생성 `@ApiResponse(responseCode = "201", headers = @Header(name = "Location", ...))`.
+- 공통 에러는 `@ApiErrorResponses`(공통 메타 어노테이션) 재사용. 데이터 모델 스키마(`@Schema`)는 DTO record에 매핑.
+
+(근거: DECISIONS.md — Swagger 인터페이스 방식 · 인증 파라미터 내부 추출 · 응답 ResponseEntity 전환)
 
 ---
 

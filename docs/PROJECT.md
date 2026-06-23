@@ -142,13 +142,13 @@
 - **URL:** 복수형 + 케밥케이스. (`/api/v1/products`, `/internal/drops/{id}/stock-histories`)
 - **버전/경계:** 외부 `/api/v1/...`, 내부 `/internal/...`.
 - **메서드:** 전체 수정 **PUT** / 일부 수정 **PATCH**.
-- **공통 응답 래퍼:**
+- **성공 응답:** 봉투 없이 리소스를 그대로 반환(`ResponseEntity<T>`). 상태코드는 HTTP 상태 라인이 단일 기준이며 본문에 중복하지 않음. 생성은 `201 Created` + `Location` 헤더, 본문 없는 응답은 `204 No Content`.
 
   ```json
-  { "data": { /* 본문 */ }, "status": 200 }
+  { /* 리소스 본문 */ }
   ```
 
-- **에러 응답:** 도메인별 error enum.
+- **에러 응답:** 도메인별 error enum. (HTTP 상태코드는 상태 라인으로 전달)
 
   ```json
   { "error": "SOLD_OUT", "message": "재고가 없습니다" }
@@ -287,7 +287,7 @@
 feat: 공통 API 응답·에러 표준 구조 추가
 
 - 도메인마다 제각각이던 응답/에러 포맷을 표준화해 클라이언트·서비스 간 계약을 일관되게 맞추기 위함
-- ApiResponse/ErrorResponse 공통 래퍼 정의
+- 성공은 ResponseEntity로 리소스 직접 반환(봉투 없음), 에러는 ErrorResponse 공통 정의
 - ErrorCode 인터페이스 + 도메인 enum 구현 방식 채택 -> 도메인별 에러코드를 공통 계약으로 통일
 - GlobalExceptionHandler를 AutoConfiguration으로 전역 등록
 ```

@@ -23,7 +23,7 @@ public class ProductCommandService implements ProductCommandUseCase {
   public UUID create(ProductCreateCommand command) {
     Category category = categoryQueryUseCase.getById(command.categoryId());
 
-    Product product =
+    Product newProduct =
         Product.create()
             .sellerId(command.sellerId())
             .name(command.name())
@@ -33,6 +33,6 @@ public class ProductCommandService implements ProductCommandUseCase {
             .thumbnailKey(command.thumbnailKey())
             .build();
 
-    return productRepository.save(product).getId();
+    return productRepository.save(newProduct).getId();
   }
 }
