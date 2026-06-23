@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -40,6 +41,17 @@ public class GlobalExceptionHandler {
                 .findFirst()
                 .map(fieldError -> fieldError.getField() + ": " + fieldError.getDefaultMessage())
                 .orElse(CommonErrorCode.INVALID_INPUT.getMessage());
+        return ResponseEntity
+                .status(CommonErrorCode.INVALID_INPUT.getHttpStatus())
+                .body(ErrorResponse.of(CommonErrorCode.INVALID_INPUT, message));
+    }
+
+    // 결제 도메인의 Idempotency-Key/X-User-Id 같은 필수 @RequestHeader가 빠지면 이 예외가 던져지는데,
+    // 별도 핸들러가 없으면 클라이언트 실수(헤더 누락)인데도 500으로 응답해서 추가함.
+    /** 필수 요청 헤더 누락(@RequestHeader) → 400 INVALID_INPUT, 누락된 헤더 이름을 메시지에 포함 */
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<ErrorResponse> handleMissingHeader(MissingRequestHeaderException e) {
+        String message = "필수 헤더가 없습니다: " + e.getHeaderName();
         return ResponseEntity
                 .status(CommonErrorCode.INVALID_INPUT.getHttpStatus())
                 .body(ErrorResponse.of(CommonErrorCode.INVALID_INPUT, message));

@@ -11,6 +11,10 @@ import com.openat.payment.application.usecase.WalletChargeUseCase;
 import com.openat.payment.presentation.dto.WalletChargeConfirmRequest;
 import com.openat.payment.presentation.dto.WalletChargeRequest;
 import com.openat.payment.presentation.dto.WalletChargeResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Tag(name = "Wallet Charge", description = "지갑 충전(MOCK/PG) 생성·승인")
 @RestController
 @RequestMapping("/api/v1/wallet/charge")
 public class WalletChargeController {
@@ -30,9 +35,17 @@ public class WalletChargeController {
         this.walletChargeUseCase = walletChargeUseCase;
     }
 
+    @Operation(summary = "지갑 충전 생성", description = "MOCK은 즉시 승인, PG는 PENDING row만 생성하며 승인은 /confirm에서 처리한다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "생성 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "INVALID_INPUT(지원하지 않는 충전수단)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "IDEMPOTENCY_KEY_CONFLICT")
+    })
     @PostMapping
     public ResponseEntity<ApiResponse<WalletChargeResponse>> charge(
+            @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
             @RequestHeader("X-User-Id") UUID memberId,
+            @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody WalletChargeRequest request) {
         WalletChargeResult result = switch (request.method()) {
@@ -48,9 +61,16 @@ public class WalletChargeController {
     }
 
     // E1 — 충전 PG 승인의 메인 경로. 프론트가 결제와 동일한 모양으로 이 엔드포인트를 호출.
+    @Operation(summary = "충전 PG 승인", description = "브라우저의 토스 SDK 호출 후 successUrl로 전달받은 paymentKey로 PG 승인을 확정한다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "승인 처리 완료(승인/거절 모두 200, status로 구분)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "NOT_FOUND(대상 충전 없음)")
+    })
     @PostMapping("/confirm")
     public ResponseEntity<ApiResponse<WalletChargeResponse>> confirm(
+            @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
             @RequestHeader("X-User-Id") UUID memberId,
+            @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody WalletChargeConfirmRequest request) {
         WalletChargeResult result = walletChargeUseCase.confirmCharge(new ChargeConfirmCommand(
