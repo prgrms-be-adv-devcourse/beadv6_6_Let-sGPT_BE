@@ -21,7 +21,8 @@ public class ProductCommandService implements ProductCommandUseCase {
 
   @Override
   public UUID create(ProductCreateCommand command) {
-    Category category = categoryQueryUseCase.getById(command.categoryId());
+    Category category =
+        command.categoryId() == null ? null : categoryQueryUseCase.getById(command.categoryId());
 
     Product newProduct =
         Product.create()

@@ -16,6 +16,8 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
@@ -44,11 +46,12 @@ public class Product {
   @Column(columnDefinition = "text", comment = "상품 상세 설명")
   private String description;
 
-  @ManyToOne(fetch = FetchType.LAZY, optional = false)
-  @JoinColumn(name = "category_id", nullable = false)
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "category_id")
+  @OnDelete(action = OnDeleteAction.SET_NULL)
   private Category category;
 
-  @Column(name = "price", comment = "판매 가격, null: 가격 미정")
+  @Column(comment = "판매 가격, null: 가격 미정")
   private Long price;
 
   @Column(name = "thumbnail_key", length = 512, comment = "썸네일 이미지 키")

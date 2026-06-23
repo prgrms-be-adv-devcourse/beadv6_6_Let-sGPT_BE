@@ -17,4 +17,19 @@ public class CategoryRepositoryAdaptor implements CategoryRepository {
   public Optional<Category> findById(UUID id) {
     return categoryJpaRepository.findById(id);
   }
+
+  @Override
+  public boolean existsByName(String name) {
+    return categoryJpaRepository.existsByName(name);
+  }
+
+  @Override
+  public Category save(Category category) {
+    return categoryJpaRepository.save(category);
+  }
+
+  @Override
+  public void delete(Category category) {
+    categoryJpaRepository.delete(category);
+  }
 }
