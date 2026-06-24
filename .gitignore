@@ -44,3 +44,7 @@ bin/
 .DS_Store
 
 .claude
+/payment/
+*.html
+*.css
+*.js

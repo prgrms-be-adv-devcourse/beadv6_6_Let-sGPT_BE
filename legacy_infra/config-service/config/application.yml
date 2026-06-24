@@ -1,4 +1,0 @@
-# Common configuration delivered to EVERY client (filename "application").
-# Lowest precedence: a service-specific file ([service-name].yml) overrides these.
-example:
-  message: "Hello from Config Server (common config)"

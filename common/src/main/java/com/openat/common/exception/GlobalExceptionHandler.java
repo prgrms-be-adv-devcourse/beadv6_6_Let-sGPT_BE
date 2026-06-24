@@ -3,11 +3,14 @@ package com.openat.common.exception;
 import com.openat.common.error.CommonErrorCode;
 import com.openat.common.error.ErrorCode;
 import com.openat.common.error.ErrorResponse;
+import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -55,6 +58,36 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(CommonErrorCode.INVALID_INPUT.getHttpStatus())
                 .body(ErrorResponse.of(CommonErrorCode.INVALID_INPUT, message));
+    }
+
+    /** 메서드 파라미터/PathVariable 검증 실패(@Validated) → 400 INVALID_INPUT, 첫 위반사항을 메시지로 */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ErrorResponse> handleConstraintViolation(ConstraintViolationException e) {
+        String message = e.getConstraintViolations().stream()
+                .findFirst()
+                .map(v -> v.getPropertyPath() + ": " + v.getMessage())
+                .orElse(CommonErrorCode.INVALID_INPUT.getMessage());
+        return ResponseEntity
+                .status(CommonErrorCode.INVALID_INPUT.getHttpStatus())
+                .body(ErrorResponse.of(CommonErrorCode.INVALID_INPUT, message));
+    }
+
+    /** 필수 쿼리 파라미터 누락 → 400 INVALID_INPUT */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingParameter(MissingServletRequestParameterException e) {
+        String message = "%s 파라미터가 필요합니다.".formatted(e.getParameterName());
+        return ResponseEntity
+                .status(CommonErrorCode.INVALID_INPUT.getHttpStatus())
+                .body(ErrorResponse.of(CommonErrorCode.INVALID_INPUT, message));
+    }
+
+    /** 요청 본문이 비어 있거나 JSON 형식이 잘못된 경우 → 400 INVALID_INPUT */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleMessageNotReadable(HttpMessageNotReadableException e) {
+        log.warn("[HttpMessageNotReadableException] {}", e.getMessage());
+        return ResponseEntity
+                .status(CommonErrorCode.INVALID_INPUT.getHttpStatus())
+                .body(ErrorResponse.of(CommonErrorCode.INVALID_INPUT));
     }
 
     /** 미지원 HTTP 메서드 → 405 */
