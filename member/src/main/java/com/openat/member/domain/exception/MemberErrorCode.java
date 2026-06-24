@@ -9,7 +9,6 @@ import org.springframework.http.HttpStatus;
 @RequiredArgsConstructor
 public enum MemberErrorCode implements ErrorCode {
 
-    // 팀 컨벤션: 모든 도메인 에러코드는 "도메인명_에러코드" 형식 → member 도메인은 전부 "MEMBER_" 접두.
     MEMBER_DUPLICATE_EMAIL(HttpStatus.CONFLICT, "MEMBER_DUPLICATE_EMAIL", "이미 사용 중인 이메일입니다."),
     MEMBER_DUPLICATE_NICKNAME(HttpStatus.CONFLICT, "MEMBER_DUPLICATE_NICKNAME", "이미 사용 중인 닉네임입니다."),
     MEMBER_NOT_FOUND(HttpStatus.NOT_FOUND, "MEMBER_NOT_FOUND", "회원을 찾을 수 없습니다."),

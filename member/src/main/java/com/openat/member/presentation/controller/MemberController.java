@@ -17,14 +17,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * gateway에서 "/member" 접두사가 StripPrefix로 제거된 뒤 그대로 매칭되는 경로.
- * 회원가입(POST)은 apigateway SecurityConfig에서 permitAll, "/me"(내정보)는 별도 규칙이 없어
- * anyExchange().authenticated()에 걸려 JWT가 있어야만 접근 가능하다.
- *
- * <p>응답 컨벤션: 공통 봉투({@code ApiResponse}) 없이 {@code ResponseEntity<T>}로 리소스를 그대로
- * 반환한다. 생성은 201 + Location, 본문이 없는 응답(로그아웃/탈퇴)은 204 No Content.
- */
 @RestController
 @RequestMapping("/api/v1/members")
 @RequiredArgsConstructor

@@ -30,8 +30,6 @@ public class SellerInfo extends BaseTimeEntity {
     @Column(nullable = false)
     private String storeName;
 
-    // 다른 모듈/도메인에 영향이 큰 양방향 연관관계라, Member 쪽에는 역방향(@OneToMany)을 두지 않았다.
-    // 자세한 이유는 답변 메시지 참고.
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "member_id", nullable = false)
     private Member member;
@@ -43,7 +41,6 @@ public class SellerInfo extends BaseTimeEntity {
         this.member = member;
     }
 
-    /** PATCH 전용 — storeName만 변경 가능(businessNumber는 PUT으로만 갈아끼움). */
     public void changeStoreName(String storeName) {
         this.storeName = storeName;
     }

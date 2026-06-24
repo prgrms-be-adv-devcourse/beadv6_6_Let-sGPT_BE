@@ -4,10 +4,6 @@ import com.openat.member.domain.model.Member;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * 영속성 기술(JPA)에 의존하지 않는 도메인 포트.
- * 구현체는 {@code infrastructure.persistence.MemberRepositoryAdaptor} 참고.
- */
 public interface MemberRepository {
 
     Member save(Member member);

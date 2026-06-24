@@ -7,9 +7,6 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
-/**
- * {@link MemberRepository} 포트를 {@link MemberJpaRepository}(Spring Data JPA)로 구현하는 어댑터.
- */
 @Repository
 @RequiredArgsConstructor
 public class MemberRepositoryAdaptor implements MemberRepository {

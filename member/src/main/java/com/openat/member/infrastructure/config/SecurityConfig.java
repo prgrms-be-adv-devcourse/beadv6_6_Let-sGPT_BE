@@ -36,11 +36,6 @@ public class SecurityConfig {
         return http.build();
     }
 
-    /**
-     * apigateway가 호스팅하는 swagger-ui(localhost:8000)에서 member(localhost:9100)를 직접
-     * "Try it out"으로 호출할 때 브라우저가 막는 CORS 문제를 풀기 위함. 로컬 개발 전용이라
-     * localhost의 모든 포트를 허용 패턴으로 열어둔다 (운영 배포 시에는 실제 프론트 도메인으로 좁혀야 함).
-     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();

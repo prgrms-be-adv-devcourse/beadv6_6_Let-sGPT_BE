@@ -12,9 +12,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/**
- * Base64(DER)로 저장된 RSA 키 문자열을 {@link RSAPrivateKey}/{@link RSAPublicKey} 빈으로 변환한다.
- */
 @Configuration
 @EnableConfigurationProperties(JwtProperties.class)
 public class JwtKeyConfig {
