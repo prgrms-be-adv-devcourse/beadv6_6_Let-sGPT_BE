@@ -11,6 +11,7 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.UuidGenerator;
 
 @Entity
 @Table(name = "member")
@@ -19,6 +20,7 @@ import lombok.NoArgsConstructor;
 public class Member extends BaseTimeEntity {
 
     @Id
+    @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
     private UUID id;
 
     @Enumerated(EnumType.STRING)
@@ -40,7 +42,6 @@ public class Member extends BaseTimeEntity {
 
     @Builder
     private Member(Role role, PlatformType platformType, String email, String password, String nickname) {
-        this.id = UUID.randomUUID();
         this.role = role;
         this.platformType = platformType;
         this.email = email;

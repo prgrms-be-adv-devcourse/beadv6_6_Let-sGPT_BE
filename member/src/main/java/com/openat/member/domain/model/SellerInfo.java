@@ -12,6 +12,7 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.UuidGenerator;
 
 @Entity
 @Table(name = "seller_info")
@@ -20,6 +21,7 @@ import lombok.NoArgsConstructor;
 public class SellerInfo extends BaseTimeEntity {
 
     @Id
+    @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
     private UUID id;
 
     @Column(nullable = false)
@@ -36,7 +38,6 @@ public class SellerInfo extends BaseTimeEntity {
 
     @Builder
     private SellerInfo(String businessNumber, String storeName, Member member) {
-        this.id = UUID.randomUUID();
         this.businessNumber = businessNumber;
         this.storeName = storeName;
         this.member = member;
