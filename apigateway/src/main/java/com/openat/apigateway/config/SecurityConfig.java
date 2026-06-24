@@ -83,17 +83,33 @@ public class SecurityConfig {
                                 "/api/v1/members/login",
                                 "/api/v1/members/refresh").permitAll()
 
-                        .pathMatchers(
-                                "/api/v1/seller/**").authenticated()
+                        // 판매자 등록 — 아직 ROLE_USER인 회원도 최초 등록 가능
+                        .pathMatchers(HttpMethod.POST, "/api/v1/seller/me").authenticated()
 
-                        // 판매자만
-                        .pathMatchers().hasRole("SELLER")
-                        // 관리자만
-                        .pathMatchers().hasRole("ADMIN")
-                        // 관리자 또는 판매자
-                        .pathMatchers().hasAnyRole("ADMIN", "SELLER")
+                        // 본인 판매자 정보 조회·수정·삭제 — 이미 판매자인 경우만
+                        .pathMatchers(HttpMethod.GET, "/api/v1/seller/me").hasRole("SELLER")
+                        .pathMatchers("/api/v1/seller/me/**").hasRole("SELLER")
 
-                        // 인증만 되면 누구나 접근 가능 (경로 생략 가능)
+                        // 관리자 전용: 판매자 정보 UUID 단건 조회
+                        .pathMatchers(HttpMethod.GET, "/api/v1/seller/*").hasRole("ADMIN")
+
+                        // 그 외 seller 경로 (확장 대비)
+                        .pathMatchers("/api/v1/seller/**").authenticated()
+
+//                        // 판매자만
+//                        .pathMatchers(
+//                                /** 엔드포인트 작성 **/
+//                        ).hasRole("SELLER")
+//                        // 관리자만
+//                        .pathMatchers(
+//                                /** 엔드포인트 작성 **/
+//                        ).hasRole("ADMIN")
+//                        // 관리자 또는 판매자
+//                        .pathMatchers(
+//                                /** 엔드포인트 작성 **/
+//                        ).hasAnyRole("ADMIN", "SELLER")
+
+                        // 인증만 되면 누구나
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth -> oauth
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
