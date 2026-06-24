@@ -42,6 +42,14 @@ public class SellerService implements SellerUseCase {
                 .toList();
     }
 
+    /** 관리자 전용: 판매자 정보 UUID로 단건 조회. */
+    @Override
+    public SellerInfoResponse getSellerInfoById(UUID sellerId) {
+        SellerInfo sellerInfo = sellerInfoRepository.findById(sellerId)
+                .orElseThrow(() -> new BusinessException(SellerErrorCode.SELLER_INFO_NOT_FOUND));
+        return SellerInfoResponse.from(sellerInfo);
+    }
+
     /** 판매자 정보 신규 등록. role을 ROLE_SELLER로 올린다. */
     @Override
     @Transactional

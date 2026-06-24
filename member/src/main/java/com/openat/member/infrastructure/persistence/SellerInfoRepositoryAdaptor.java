@@ -20,6 +20,11 @@ public class SellerInfoRepositoryAdaptor implements SellerInfoRepository {
     }
 
     @Override
+    public Optional<SellerInfo> findById(UUID sellerId) {
+        return sellerInfoJpaRepository.findById(sellerId);
+    }
+
+    @Override
     public List<SellerInfo> findActiveByMemberId(UUID memberId) {
         return sellerInfoJpaRepository.findByMember_IdAndDeletedAtIsNull(memberId);
     }

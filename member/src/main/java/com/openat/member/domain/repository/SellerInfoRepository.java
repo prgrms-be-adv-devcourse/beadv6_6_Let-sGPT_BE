@@ -9,6 +9,9 @@ public interface SellerInfoRepository {
 
     SellerInfo save(SellerInfo sellerInfo);
 
+    /** 판매자 정보 UUID로 단건 조회. 관리자 전용 용도. */
+    Optional<SellerInfo> findById(UUID sellerId);
+
     List<SellerInfo> findActiveByMemberId(UUID memberId);
 
     List<SellerInfo> findAllByMemberId(UUID memberId);

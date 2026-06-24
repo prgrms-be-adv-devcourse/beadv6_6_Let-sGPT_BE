@@ -8,7 +8,11 @@ import java.util.UUID;
 
 public interface SellerUseCase {
 
+    /** 본인 판매자 정보 목록 조회. isActive=false면 전체, true면 활성만. */
     List<SellerInfoResponse> getMySellerInfo(UUID memberId, boolean isActive);
+
+    /** 관리자 전용: 판매자 정보 UUID로 단건 조회. */
+    SellerInfoResponse getSellerInfoById(UUID sellerId);
 
     SellerInfoResponse create(UUID memberId, CreateSellerInfoRequest request);
 
