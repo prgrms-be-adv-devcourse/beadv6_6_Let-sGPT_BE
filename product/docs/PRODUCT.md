@@ -87,7 +87,8 @@ com.openat
 
 **컨트롤러는 얇게** — 명세 구현 + 인증 추출 + 검증 + 유스케이스 호출 + 응답 구성만. 비즈니스 로직은 service.
 - Swagger 명세 전담 인터페이스(`ProductApiSpec`)를 `implements` → 컨트롤러엔 제어 흐름만, 문서 어노테이션은 인터페이스로 분리.
-- 인증 식별자는 `@CurrentUser UUID`로 수신(게이트웨이 전달, 현재 임시 `X-User-Id`). **API 명세엔 노출하지 않는다**(내부 파라미터).
+- 인증 식별자(`@CurrentUser UUID`)는 **회원(memberId)** 이다(게이트웨이 전달, 현재 임시 `X-User-Id`). **API 명세엔 노출하지 않는다**(내부 파라미터).
+- 상품 소유 주체인 **판매자(`sellerId`)는 회원과 1:N**이라 memberId에서 곧장 얻지 못한다 — sellerId 해석 방식은 게이트웨이/JWT 인증 연동 시 확정(**열린 설계 포인트**). 현 코드는 인증 스텁 단계라 임시로 인증 주체를 sellerId로 사용.
 - 입력 검증은 `@Valid`(Bean Validation). 단일 진입 가정으로 도메인 중복 검증 생략. (`spring-boot-starter-validation`)
 
 **예외**
