@@ -5,7 +5,7 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: http://localhost:9100/oauth2/jwks
+          jwk-set-uri: http://localhost:9100/auth/jwks
   cloud:
     gateway:
       server:
@@ -24,7 +24,7 @@ spring:
             - id: member
               uri: http://localhost:9100
               predicates:
-                - Path=/api/v1/members/**,/api/v1/seller/**,/oauth2/jwks
+                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks
             - id: product
               uri: http://localhost:9110
               predicates:
