@@ -1,5 +1,0 @@
-# Configuration delivered only to the "apigateway-service" client.
-# The filename must match the client's spring.application.name
-# (i.e. the name registered in the Discovery service).
-example:
-  message: "Hello apigateway-service, this is your own config"

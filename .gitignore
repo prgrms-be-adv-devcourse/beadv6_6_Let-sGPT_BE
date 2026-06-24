@@ -6,12 +6,11 @@ build/
 !**/src/main/**/build/
 !**/src/test/**/build/
 .kotlin
+.gitattributes
+personal_workplan/
 
 ### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
+.idea
 *.iws
 *.iml
 *.ipr
@@ -43,3 +42,9 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+.claude
+/payment/
+*.html
+*.css
+*.js

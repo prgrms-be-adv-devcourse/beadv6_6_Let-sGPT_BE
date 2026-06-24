@@ -1,0 +1,194 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: dev-postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${DB_USER}"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    deploy:
+      resources:
+        limits:
+          memory: 1000M
+    restart: always
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: dev-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: 'INTERNAL://kafka:9092,CONTROLLER://kafka:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_HEAP_OPTS: "-Xms350M -Xmx500M"
+    deploy:
+      resources:
+        limits:
+          memory: 700M
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    container_name: dev-redis
+    ports:
+      - "6379:6379"
+    deploy:
+      resources:
+        limits:
+          memory: 1000M
+    restart: always
+
+  member:
+    image: ghcr.io/${GITHUB_REPOSITORY}/member:latest
+    container_name: dev-member
+    ports:
+      - "9100:9100"
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms300m -Xmx400m"
+      SPRING_PROFILES_ACTIVE: compose
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 600M
+    restart: always
+
+  product:
+    image: ghcr.io/${GITHUB_REPOSITORY}/product:latest
+    container_name: dev-product
+    ports:
+      - "9110:9110"
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms400m -Xmx500m"
+      SPRING_PROFILES_ACTIVE: compose
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 700M
+    restart: always
+
+  order:
+    image: ghcr.io/${GITHUB_REPOSITORY}/order:latest
+    container_name: dev-order
+    ports:
+      - "9120:9120"
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms400m -Xmx500m"
+      SPRING_PROFILES_ACTIVE: compose
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 700M
+    restart: always
+
+  payment:
+    image: ghcr.io/${GITHUB_REPOSITORY}/payment:latest
+    container_name: dev-payment
+    ports:
+      - "9130:9130"
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms400m -Xmx500m"
+      SPRING_PROFILES_ACTIVE: compose
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      PG_CLIENT_KEY: ${PG_CLIENT_KEY}
+      PG_SECRET_KEY: ${PG_SECRET_KEY}
+      PAYMENT_FIELD_ENCRYPTION_KEY: ${PAYMENT_FIELD_ENCRYPTION_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 700M
+    restart: always
+
+  settlement:
+    image: ghcr.io/${GITHUB_REPOSITORY}/settlement:latest
+    container_name: dev-settlement
+    ports:
+      - "9140:9140"
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms300m -Xmx400m"
+      SPRING_PROFILES_ACTIVE: compose
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 600M
+    restart: always
+
+volumes:
+  pgdata_dev:
