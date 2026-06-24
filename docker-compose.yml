@@ -51,5 +51,18 @@ services:
           memory: 1000M
     restart: always
 
+  # Redis 데이터를 swagger-ui처럼 브라우저에서 클릭해서 보기 위한 웹 UI.
+  # 인프라 컨테이너로 분류해서 1번 묶음(postgres/kafka/redis)에 같이 둠 - 필요할 때만 같이 띄우면 됨.
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: local-redis-commander
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    restart: always
+
 volumes:
   pgdata:
