@@ -1,0 +1,18 @@
+server:
+  port: 8888
+
+spring:
+  application:
+    name: config-service
+  profiles:
+    # Use the "native" backend so the server is self-contained (no external Git repo needed).
+    # Switch to a Git backend by activating a different profile / spring.cloud.config.server.git.uri.
+    active: native
+  cloud:
+    config:
+      server:
+        native:
+          # Local folder (relative to the project working directory) that holds
+          # the served config files. Not packaged into the jar / resources, so
+          # configs can be edited without rebuilding.
+          search-locations: file:./config
