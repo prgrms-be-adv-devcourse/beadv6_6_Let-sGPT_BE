@@ -6,4 +6,10 @@ import java.util.UUID;
 
 public interface CategoryRepository {
   Optional<Category> findById(UUID id);
+
+  boolean existsByName(String name);
+
+  Category save(Category category);
+
+  void delete(Category category);
 }

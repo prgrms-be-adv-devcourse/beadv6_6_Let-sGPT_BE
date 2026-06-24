@@ -12,7 +12,7 @@ spring:
       hibernate:
         default_schema: product # 스키마 분리
     hibernate:
-      ddl-auto: update
+      ddl-auto: create
     defer-datasource-initialization: true
   sql:
     init:

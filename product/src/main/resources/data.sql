@@ -1,8 +1,8 @@
-INSERT INTO product.categories (id, code, name, sort_order, created_at, updated_at) VALUES
-    (gen_random_uuid(), 'APPAREL', '의류', 1, now(), now()),
-    (gen_random_uuid(), 'ACCESSORY', '액세서리', 2, now(), now()),
-    (gen_random_uuid(), 'STATIONERY', '문구', 3, now(), now()),
-    (gen_random_uuid(), 'ELECTRONICS', '전자기기', 4, now(), now()),
-    (gen_random_uuid(), 'FIGURE', '피규어', 5, now(), now()),
-    (gen_random_uuid(), 'ETC', '기타', 6, now(), now())
-ON CONFLICT (code) DO NOTHING;
+INSERT INTO product.categories (id, name, created_at, updated_at) VALUES
+    (gen_random_uuid(), '의류', now(), now()),
+    (gen_random_uuid(), '액세서리', now(), now()),
+    (gen_random_uuid(), '문구', now(), now()),
+    (gen_random_uuid(), '전자기기', now(), now()),
+    (gen_random_uuid(), '피규어', now(), now()),
+    (gen_random_uuid(), '기타', now(), now())
+ON CONFLICT (name) DO NOTHING;
