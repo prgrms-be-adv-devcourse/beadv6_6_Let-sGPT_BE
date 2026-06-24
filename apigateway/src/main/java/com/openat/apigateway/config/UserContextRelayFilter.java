@@ -33,9 +33,7 @@ public class UserContextRelayFilter implements GlobalFilter, Ordered {
                             .collect(Collectors.joining(","));
                     return mutateWithUserHeaders(exchange, userId == null ? "" : userId, roles);
                 })
-                // 인증되지 않은 요청(permitAll 경로 포함)도 클라이언트가 직접 보낸
-                // X-User-Id/X-User-Roles를 신뢰해서는 안 되므로, 이 경우에도 항상 헤더를 제거한다.
-                // (그렇지 않으면 누구나 두 헤더를 위조해 다운스트림에서 인증된 것처럼 위장 가능)
+                // 클라이언트가 직접 보낸 헤더를 신뢰해서는 안됨. 항상 헤더 제거
                 .defaultIfEmpty(stripUserHeaders(exchange))
                 .flatMap(chain::filter);
     }

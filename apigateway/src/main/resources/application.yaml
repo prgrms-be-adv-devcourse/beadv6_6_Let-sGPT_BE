@@ -11,7 +11,5 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     urls:
-      # 게이트웨이 라우팅 prefix("/member") + member의 실제 api-docs path("/api-docs",
-      # springdoc 기본값 "/v3/api-docs"를 override함)에 맞춰야 한다.
       - name: member-service
         url: /member/api-docs
