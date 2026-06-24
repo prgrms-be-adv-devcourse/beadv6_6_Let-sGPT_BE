@@ -67,16 +67,20 @@ public class SecurityConfig {
                                 "/webjars/**").permitAll()
 
                         // 각 서비스 OpenAPI 문서 + 개별 Swagger UI
-                        // 기본값 "/v3/api-docs"가 아닌 override 사용한 것도 작성
+                        // (각 서비스가 springdoc.api-docs.path를 기본값 "/v3/api-docs"가 아닌
+                        // "/api-docs"로 override해서 쓰는 컨벤션을 따름 — member application.yml 참고)
                         .pathMatchers(
                                 "/*/api-docs/**",
                                 "/*/swagger-ui/**",
                                 "/*/swagger-ui.html").permitAll()
 
                         // member 공개 기능 (JWKS)
+                        // member route가 prefix 없이 실제 컨트롤러 경로 그대로 노출되므로
+                        // (application-local/compose.yaml의 "member" route 참고) 여기도 prefix 없이 매칭.
                         .pathMatchers("/auth/jwks").permitAll()
 
-                        // POST만 공개
+                        // 회원가입/로그인/리프레시는 토큰이 없는 상태에서 호출해야 하므로 POST만 공개
+                        // (MemberController에 통합됨 — 별도 AuthController 없음)
                         .pathMatchers(
                                 HttpMethod.POST,
                                 "/api/v1/members",

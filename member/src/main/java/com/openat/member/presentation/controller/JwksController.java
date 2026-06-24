@@ -14,7 +14,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * apigateway의 {@code spring.security.oauth2.resourceserver.jwt.jwk-set-uri}가
  * 이 엔드포인트를 호출해 RSA 공개키를 가져가 JWT 서명을 검증한다.
- * gateway 경로 "/member/oauth2/jwks"가 StripPrefix=1로 줄어든 결과가 이 경로("/oauth2/jwks")다.
+ * gateway의 member route({@code Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks})가
+ * StripPrefix 없이 그대로 전달하므로 컨트롤러 경로도 동일하게 "/auth/jwks"다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -23,7 +24,7 @@ public class JwksController {
     private final RSAPublicKey rsaPublicKey;
     private final JwtProperties jwtProperties;
 
-    @GetMapping("/oauth2/jwks")
+    @GetMapping("/auth/jwks")
     public Map<String, Object> jwks() {
         RSAKey rsaKey = new RSAKey.Builder(rsaPublicKey)
                 .keyUse(KeyUse.SIGNATURE)
