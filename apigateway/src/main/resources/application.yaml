@@ -13,3 +13,5 @@ springdoc:
     urls:
       - name: member-service
         url: /member/api-docs
+      - name: payment-service
+        url: /payment/api-docs
