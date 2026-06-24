@@ -3,6 +3,7 @@ package com.openat.settlement.infrastructure.kafka.consumer;
 import com.openat.common.exception.BusinessException;
 import com.openat.settlement.application.service.PaymentSettlementEventService;
 import com.openat.settlement.domain.exception.SettlementErrorCode;
+import com.openat.settlement.infrastructure.acl.PaymentEventAclMapper;
 import com.openat.settlement.infrastructure.kafka.event.PaymentCompletedEvent;
 import com.openat.settlement.infrastructure.kafka.event.PaymentRefundedEvent;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ public class PaymentEventConsumer {
 
     private final ObjectMapper objectMapper;
     private final PaymentSettlementEventService paymentSettlementEventService;
+    private final PaymentEventAclMapper paymentEventAclMapper;
 
     @KafkaListener(
             topics = "${settlement.kafka.topic.payment-events}",
@@ -37,7 +39,7 @@ public class PaymentEventConsumer {
 
             if (PAYMENT_COMPLETED.equals(eventType)) {
                 PaymentCompletedEvent event = objectMapper.treeToValue(root, PaymentCompletedEvent.class);
-                paymentSettlementEventService.upsertSettlementOrder(event);
+                paymentSettlementEventService.upsertSettlementOrder(paymentEventAclMapper.toCommand(event));
                 log.info("PAYMENT_COMPLETED consumed. eventId={}, orderId={}, paymentId={}",
                         event.eventId(), event.orderId(), event.paymentId());
                 return;
@@ -45,7 +47,7 @@ public class PaymentEventConsumer {
 
             if (PAYMENT_REFUNDED.equals(eventType)) {
                 PaymentRefundedEvent event = objectMapper.treeToValue(root, PaymentRefundedEvent.class);
-                paymentSettlementEventService.saveSettlementRefund(event);
+                paymentSettlementEventService.saveSettlementRefund(paymentEventAclMapper.toCommand(event));
                 log.info("PAYMENT_REFUNDED consumed. eventId={}, orderId={}, refundId={}",
                         event.eventId(), event.orderId(), event.refundId());
                 return;
