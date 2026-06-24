@@ -22,7 +22,7 @@ public class PaymentTtlScanner {
     private final TossPaymentClient tossPaymentClient;
     private final PaymentTtlFinalizer finalizer;
 
-    // N분 — 이 시간이 지난 PAYMENT_PENDING이 스캔 대상. 운영 기본값 10분, 시연/테스트 시 application-local.yml에서 짧게 오버라이드.
+    // N분 — pgPaymentKey가 NULL인 row(handleMissingKey) 기준. 운영 기본값 10분, 시연/테스트 시 application-local.yml에서 짧게 오버라이드.
     @Value("${payment.ttl-scanner.pending-timeout-minutes:10}")
     private long pendingTimeoutMinutes;
 
@@ -30,6 +30,16 @@ public class PaymentTtlScanner {
     // confirm 자체를 호출한 적이 없으면 PG에 물어볼 키가 없어 시간 기반으로만 확정할 수 있어 더 신중하게 기다린다.
     @Value("${payment.ttl-scanner.null-key-grace-minutes:5}")
     private long nullKeyGraceMinutes;
+
+    // I2 — pgPaymentKey가 있는 row는 이 시간부터 매 스캔 주기(1분)마다 PG 선제 조회를 시작한다(10분보다 이른 5분).
+    @Value("${payment.ttl-scanner.with-key-attempt-minutes:5}")
+    private long withKeyAttemptMinutes;
+
+    // I2-3 — 이 시간을 넘겼는데도 PG 조회 호출 자체가 매번 실패(예외/타임아웃)해서 결정적 응답을 못 받은 row만
+    // FAILED(FORCED_TIMEOUT)로 강제 종결한다. 조회가 정상 응답(APPROVED/FAILED/NOT_FOUND)을 준 row는 이 시각과
+    // 무관하게 그 즉시 확정되므로(handleWithKey), "TTL이 PG의 진짜 결과보다 먼저 확정"하는 위험은 없다.
+    @Value("${payment.ttl-scanner.final-timeout-minutes:8}")
+    private long finalTimeoutMinutes;
 
     public PaymentTtlScanner(PaymentRepository paymentRepository, TossPaymentClient tossPaymentClient,
             PaymentTtlFinalizer finalizer) {
@@ -40,7 +50,9 @@ public class PaymentTtlScanner {
 
     @Scheduled(fixedDelay = 60_000)
     public void scan() {
-        LocalDateTime threshold = LocalDateTime.now().minusMinutes(pendingTimeoutMinutes);
+        // I2 — 키 있는 row(5분)/키 없는 row(10분) 중 더 이른 임계값으로 한 번에 가져온 뒤, 각 핸들러가 자기 기준으로 재판단.
+        long fetchThresholdMinutes = Math.min(withKeyAttemptMinutes, pendingTimeoutMinutes);
+        LocalDateTime threshold = LocalDateTime.now().minusMinutes(fetchThresholdMinutes);
         List<Payment> stale = paymentRepository.findStalePending(threshold);
         for (Payment payment : stale) {
             try {
@@ -67,7 +79,21 @@ public class PaymentTtlScanner {
 
     // 신-하자드9 — confirm이 PG호출까지는 갔는데 우리 쪽 조건부 UPDATE가 끊긴 좁은 케이스. 키로 PG에 직접 물어 회복.
     private void handleWithKey(Payment payment) {
-        TossQueryResult result = tossPaymentClient.queryPaymentStatus(payment.getPgPaymentKey());
+        TossQueryResult result;
+        try {
+            result = tossPaymentClient.queryPaymentStatus(payment.getPgPaymentKey());
+        } catch (Exception e) {
+            // I2-3 — 조회 자체가 실패(예외/타임아웃)한 경우에만 8분 기준 강제컷오프 대상. 결정적 응답을 받은 적 없는 row.
+            LocalDateTime finalThreshold = LocalDateTime.now().minusMinutes(finalTimeoutMinutes);
+            if (payment.getCreatedAt().isBefore(finalThreshold)) {
+                log.error("[PaymentTtlScanner] {}분 경과, PG 조회 반복 실패로 강제 종결: paymentId={}",
+                        finalTimeoutMinutes, payment.getId(), e);
+                finalizer.finalizePending(payment, Payment.Status.FAILED, null, "FORCED_TIMEOUT");
+            } else {
+                log.warn("[PaymentTtlScanner] PG 조회 실패, 다음 주기에 재시도: paymentId={}", payment.getId(), e);
+            }
+            return;
+        }
         switch (result.status()) {
             case APPROVED -> finalizer.finalizePending(payment, Payment.Status.APPROVED, result.pgTxId(), null);
             case FAILED -> finalizer.finalizePending(payment, Payment.Status.FAILED, result.pgTxId(), "PG_REJECTED");

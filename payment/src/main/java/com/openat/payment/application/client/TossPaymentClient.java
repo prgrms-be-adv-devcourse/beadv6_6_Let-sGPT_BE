@@ -17,4 +17,9 @@ public interface TossPaymentClient {
 
     // 환불(결제취소, E2) — PG 환불 호출에도 멱등키 부착(#12).
     TossRefundResult refundPayment(String pgPaymentKey, Long amount, String idempotencyKey);
+
+    // I1 — 환불 웹훅 재검증용. 토스는 환불 전용 조회 API가 없고, 결제 조회 응답의 cancels 배열에서
+    // pgRefundKey(취소 transactionKey)로 매칭해 판정한다. APPROVED=취소 완료, NOT_FOUND=매칭되는 취소건 없음.
+    // pgRefundKey가 null(타임아웃으로 못 받은 케이스)이면 amount로 cancels[]를 매칭하는 폴백(plan.md P3).
+    TossQueryResult queryRefundStatus(String pgPaymentKey, String pgRefundKey, Long amount);
 }

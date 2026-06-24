@@ -3,17 +3,17 @@ package com.openat.payment.infrastructure.webhook;
 import java.util.List;
 import org.springframework.transaction.annotation.Transactional;
 
-// Template Method — payments/wallet-charge/refunds 웹훅 3종이 공유하는 서명검증→멱등→조건부UPDATE→분기 골격.
-// Strategy(PgSignatureVerifier 인터페이스)는 기각(plan.md A: PG 추가 계획 없음) — TossSignatureVerifier를 직접 사용.
+// Template Method — payments/wallet-charge/refunds 웹훅 3종이 공유하는 멱등→조건부UPDATE→분기 골격.
+// Strategy(PgSignatureVerifier 인터페이스)는 기각(plan.md A: PG 추가 계획 없음).
+// 서명검증(TossSignatureVerifier)은 제거(2026-06-24) — 실제 토스 웹훅은 우리 자체 HMAC 헤더를 보내지 않아
+// 항상 거부되던 죽은 코드였고(plan.md G3), I1로 PG 재조회(queryPaymentStatus/queryRefundStatus)가 실제
+// source of truth가 되면서 페이로드 자체를 신뢰하지 않으므로 서명검증의 역할이 대체됐다.
 // Observer(WebhookOutcomeListener)는 유지 — outbox 적재 등 후속처리가 늘어나도 본 클래스는 안 건드림.
 public abstract class AbstractPgWebhookHandler<T> {
 
-    private final TossSignatureVerifier signatureVerifier;
-
     private final List<WebhookOutcomeListener> listeners;
 
-    protected AbstractPgWebhookHandler(TossSignatureVerifier signatureVerifier, List<WebhookOutcomeListener> listeners) {
-        this.signatureVerifier = signatureVerifier;
+    protected AbstractPgWebhookHandler(List<WebhookOutcomeListener> listeners) {
         this.listeners = List.copyOf(listeners);
     }
 
@@ -21,9 +21,6 @@ public abstract class AbstractPgWebhookHandler<T> {
     // (트랜잭션 없이 @Modifying 쿼리가 실행돼 TransactionRequiredException) — final 제거, 서브클래스는 여전히 오버라이드 안 함.
     @Transactional
     public WebhookResult handle(WebhookRequest request) {
-        if (!verifySignature(request)) {
-            return WebhookResult.unauthorized();
-        }
         if (checkIdempotency(request)) {
             return WebhookResult.ok();
         }
@@ -37,10 +34,6 @@ public abstract class AbstractPgWebhookHandler<T> {
         notifyListeners(result);
 
         return WebhookResult.ok();
-    }
-
-    protected boolean verifySignature(WebhookRequest request) {
-        return signatureVerifier.verify(request.getRawBody(), request.getSignatureHeader());
     }
 
     // 같은 이벤트가 재전송됐는지(§4 토스 재전송 정책) 판단 — pgTxId 등 멱등 기준은 구체 핸들러가 정의.

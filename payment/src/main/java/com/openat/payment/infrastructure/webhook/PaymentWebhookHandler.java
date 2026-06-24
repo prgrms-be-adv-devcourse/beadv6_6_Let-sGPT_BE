@@ -1,6 +1,8 @@
 package com.openat.payment.infrastructure.webhook;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openat.payment.application.client.TossPaymentClient;
+import com.openat.payment.application.client.TossQueryResult;
 import com.openat.payment.application.dto.PaymentCompletedPayload;
 import com.openat.payment.application.dto.PaymentFailedPayload;
 import com.openat.payment.domain.model.Payment;
@@ -15,6 +17,7 @@ import org.springframework.stereotype.Component;
 // Day1 템플릿(AbstractPgWebhookHandler)의 첫 구체 구현 — payment_domain_diagrams.md §2.
 // 토스 실제 웹훅 envelope은 아직 미확정(qna.md 논의 보류) — 우리 쪽 계약(api_event_specification.md)대로 우선 구현,
 // ngrok 실연동 시 페이로드 파싱 부분만 교체하면 됨.
+// I1 — 페이로드의 status는 신뢰하지 않고 tossPaymentClient.queryPaymentStatus 조회 결과로 최종 판정한다.
 @Slf4j
 @Component
 public class PaymentWebhookHandler extends AbstractPgWebhookHandler<Payment> {
@@ -25,13 +28,16 @@ public class PaymentWebhookHandler extends AbstractPgWebhookHandler<Payment> {
     private final PaymentRepository paymentRepository;
     private final ObjectMapper objectMapper;
     private final OutboxEventWriter outboxEventWriter;
+    private final TossPaymentClient tossPaymentClient;
 
-    public PaymentWebhookHandler(TossSignatureVerifier signatureVerifier, List<WebhookOutcomeListener> listeners,
-            PaymentRepository paymentRepository, ObjectMapper objectMapper, OutboxEventWriter outboxEventWriter) {
-        super(signatureVerifier, listeners);
+    public PaymentWebhookHandler(List<WebhookOutcomeListener> listeners,
+            PaymentRepository paymentRepository, ObjectMapper objectMapper, OutboxEventWriter outboxEventWriter,
+            TossPaymentClient tossPaymentClient) {
+        super(listeners);
         this.paymentRepository = paymentRepository;
         this.objectMapper = objectMapper;
         this.outboxEventWriter = outboxEventWriter;
+        this.tossPaymentClient = tossPaymentClient;
     }
 
     @Override
@@ -59,12 +65,24 @@ public class PaymentWebhookHandler extends AbstractPgWebhookHandler<Payment> {
         }
 
         Payment payment = maybePayment.get();
-        Payment.Status newStatus = "DONE".equals(payload.status()) ? Payment.Status.APPROVED : Payment.Status.FAILED;
+
+        // I1 — 페이로드의 status는 "지금 뭔가 바뀌었다"는 트리거 신호로만 쓰고, 실제 판정은 PG 조회 결과로 한다.
+        TossQueryResult queryResult;
+        try {
+            queryResult = tossPaymentClient.queryPaymentStatus(payload.paymentKey());
+        } catch (Exception e) {
+            // 조회 실패(타임아웃/네트워크 오류) — 강제로 닫지 않고 PENDING 유지, TTL스캐너 다음 주기 재시도에 위임.
+            log.warn("[PaymentWebhookHandler] 웹훅 재검증 조회 실패, PENDING 유지: paymentId={}", payment.getId(), e);
+            return UpdateResult.failure(null, null);
+        }
+
+        Payment.Status newStatus =
+                queryResult.status() == TossQueryResult.Status.APPROVED ? Payment.Status.APPROVED : Payment.Status.FAILED;
         LocalDateTime approvedAt = newStatus == Payment.Status.APPROVED ? LocalDateTime.now() : null;
 
         // 하자드#10 — TTL스캐너(Day4)와 동시에 같은 row를 만질 수 있어 단일 조건부 UPDATE로 원자처리.
         int affected = paymentRepository.tryTransitionFromPending(
-                payment.getId(), newStatus, payload.pgTxId(), approvedAt);
+                payment.getId(), newStatus, queryResult.pgTxId(), approvedAt);
         if (affected == 0) {
             return UpdateResult.failure(payment.getId(), payment);
         }
@@ -101,7 +119,7 @@ public class PaymentWebhookHandler extends AbstractPgWebhookHandler<Payment> {
 
     private TossPaymentWebhookPayload parse(WebhookRequest request) {
         try {
-            return objectMapper.readValue(request.getRawBody(), TossPaymentWebhookPayload.class);
+            return objectMapper.readValue(request.getRawBody(), TossPaymentWebhookPayload.Envelope.class).data();
         } catch (Exception e) {
             log.error("[PaymentWebhookHandler] 페이로드 파싱 실패: {}", request.getRawBody(), e);
             return null;

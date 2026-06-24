@@ -1,6 +1,13 @@
 package com.openat.payment.infrastructure.webhook;
 
-// api_event_specification.md POST /api/v1/refunds/webhook 페이로드 — { refundKey, refundId, status }.
-// refundId가 직접 포함되어 있어 결제/충전 웹훅과 달리 키 해시 매칭이 필요 없음(findById로 바로 매칭).
-public record TossRefundWebhookPayload(String refundKey, String refundId, String status) {
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
+// 실제 토스 웹훅 envelope({createdAt, eventType, data:{...}}) — Payment/WalletCharge와 동일 패턴(2026-06-24).
+// refundId는 우리 DB 자체 PK라 토스가 보낼 수 없으므로 제거, paymentKey로만 식별한다.
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record TossRefundWebhookPayload(String paymentKey) {
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Envelope(TossRefundWebhookPayload data) {
+    }
 }

@@ -1,6 +1,13 @@
 package com.openat.payment.infrastructure.webhook;
 
-// api_event_specification.md POST /api/v1/payments/webhook 페이로드 — { paymentKey, orderId, status, pgTxId }.
-// 실제 토스 웹훅의 정확한 envelope(eventType/data 래핑 등)은 ngrok 실연동 시 확인 필요(qna.md 논의 보류 사항).
-public record TossPaymentWebhookPayload(String paymentKey, String orderId, String status, String pgTxId) {
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
+// 실제 토스 웹훅 envelope({createdAt, eventType, data:{...}}) 확인 완료(2026-06-24, ngrok 실연동) —
+// I1이 payload.status()를 더 이상 안 믿고 paymentKey로 재조회만 하므로 그 필드만 추출.
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record TossPaymentWebhookPayload(String paymentKey) {
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Envelope(TossPaymentWebhookPayload data) {
+    }
 }

@@ -16,6 +16,9 @@ public interface RefundJpaRepository extends JpaRepository<RefundJpaEntity, UUID
 
     Optional<RefundJpaEntity> findByIdempotencyKey(String idempotencyKey);
 
+    // paymentKey(웹훅) → Payment → PENDING Refund 역조회용(plan.md P2).
+    List<RefundJpaEntity> findByPaymentIdAndStatus(UUID paymentId, Refund.Status status);
+
     // PG 환불 응답/웹훅 처리(#10과 동일 원칙) — WHERE status='PENDING' 조건부 UPDATE.
     // flushAutomatically=true 필수 — RefundService.requestRefund()는 save()로 PENDING row를 만든 직후
     // 같은 트랜잭션 안에서 이 벌크 UPDATE를 실행한다. 자동 flush 없이는 아직 DB에 반영 안 된 INSERT를

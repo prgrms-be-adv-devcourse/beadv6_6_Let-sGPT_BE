@@ -16,9 +16,4 @@ public final class WebhookResult {
     public static WebhookResult ok() {
         return new WebhookResult(HttpStatus.OK);
     }
-
-    // 서명 검증 실패만 401 — PG가 아닌 발신자의 위조/재생 시도로 간주.
-    public static WebhookResult unauthorized() {
-        return new WebhookResult(HttpStatus.UNAUTHORIZED);
-    }
 }

@@ -14,6 +14,10 @@ public interface RefundRepository {
 
     Optional<Refund> findByIdempotencyKey(String idempotencyKey);
 
+    // paymentKey(웹훅) → Payment → 이 Payment의 PENDING Refund 역조회용(I1 마이그레이션, plan.md P2).
+    // 동시 PENDING이 여러 건일 수 있어(가드 없음, research.md §17.2) List로 반환 — 호출부가 정책을 정한다.
+    List<Refund> findByPaymentIdAndStatus(UUID paymentId, Refund.Status status);
+
     // PG 환불 응답 반영(#10과 동일 원칙) — WHERE status='PENDING' 조건부 UPDATE.
     int tryTransitionFromPending(UUID id, Refund.Status newStatus, String pgRefundKey, LocalDateTime completedAt);
 

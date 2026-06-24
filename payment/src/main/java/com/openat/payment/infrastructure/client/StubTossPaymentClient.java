@@ -5,11 +5,13 @@ import com.openat.payment.application.client.TossPaymentClient;
 import com.openat.payment.application.client.TossQueryResult;
 import com.openat.payment.application.client.TossRefundResult;
 import java.util.UUID;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
-// 실제 토스 confirm 호출 모양이 결정되기 전까지, 항상 승인으로 응답하는 스텁.
-// 실 연동 시: Idempotency-Key 헤더 부착(A10) + 실제 HTTP 호출(POST /v1/payments/confirm, 시크릿키 Basic 인증)로 교체, 인터페이스는 그대로 유지.
+// 항상 승인으로 응답하는 스텁 — 단위테스트가 실제 네트워크 호출 없이 빠르게 돌도록 기본 프로필에서 사용.
+// 실제 연동은 RealTossPaymentClient(G)로 분리, toss-real 프로필 활성화 시에만 그쪽으로 교체.
 @Component
+@Profile("!toss-real")
 public class StubTossPaymentClient implements TossPaymentClient {
 
     @Override
@@ -33,5 +35,12 @@ public class StubTossPaymentClient implements TossPaymentClient {
         // §3의 "신-하자드9"(confirm은 PG호출까지 갔는데 우리 기록만 끊긴 케이스)를 시연하려면 DB에서
         // pgPaymentKey만 직접 세팅해두고 호출하는 수동 테스트로 확인(day4.md 참고).
         return TossQueryResult.of(TossQueryResult.Status.NOT_FOUND, null);
+    }
+
+    @Override
+    public TossQueryResult queryRefundStatus(String pgPaymentKey, String pgRefundKey, Long amount) {
+        // I1 — 항상 승인된 취소로 응답하는 스텁(단위테스트 기본 경로). 거절/미존재 케이스는 RefundWebhookHandlerTest에서
+        // Mockito mock으로 직접 오버라이드해서 검증(이 클래스는 실제 빈 와이어링 확인용이라 분기 시연은 안 함).
+        return TossQueryResult.of(TossQueryResult.Status.APPROVED, "stub_pg_refund_tx_" + UUID.randomUUID());
     }
 }

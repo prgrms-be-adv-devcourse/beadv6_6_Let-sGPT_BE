@@ -40,6 +40,12 @@ public class RefundRepositoryAdaptor implements RefundRepository {
     }
 
     @Override
+    public List<Refund> findByPaymentIdAndStatus(UUID paymentId, Refund.Status status) {
+        return refundJpaRepository.findByPaymentIdAndStatus(paymentId, status)
+                .stream().map(RefundJpaEntity::toDomain).toList();
+    }
+
+    @Override
     public int tryTransitionFromPending(UUID id, Refund.Status newStatus, String pgRefundKey,
             LocalDateTime completedAt) {
         return refundJpaRepository.tryTransitionFromPending(id, newStatus, pgRefundKey, completedAt);

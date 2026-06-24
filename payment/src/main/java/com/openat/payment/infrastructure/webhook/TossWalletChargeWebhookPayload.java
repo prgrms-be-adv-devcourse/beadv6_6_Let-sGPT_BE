@@ -1,5 +1,13 @@
 package com.openat.payment.infrastructure.webhook;
 
-// api_event_specification.md POST /api/v1/wallet/charge/webhook 페이로드 — { paymentKey, chargeId, status }.
-public record TossWalletChargeWebhookPayload(String paymentKey, String chargeId, String status) {
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
+// 실제 토스 웹훅 envelope({createdAt, eventType, data:{...}}) 확인 완료(2026-06-24, ngrok 실연동) —
+// I1이 payload.status()를 더 이상 안 믿고 paymentKey로 재조회만 하므로 그 필드만 추출.
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record TossWalletChargeWebhookPayload(String paymentKey) {
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Envelope(TossWalletChargeWebhookPayload data) {
+    }
 }
