@@ -134,6 +134,9 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       KAFKA_BROKER: ${KAFKA_BROKER}
+      PG_CLIENT_KEY: ${PG_CLIENT_KEY}
+      PG_SECRET_KEY: ${PG_SECRET_KEY}
+      PAYMENT_FIELD_ENCRYPTION_KEY: ${PAYMENT_FIELD_ENCRYPTION_KEY}
     depends_on:
       postgres:
         condition: service_healthy

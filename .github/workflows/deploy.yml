@@ -8,48 +8,57 @@ on:
     types: [completed]
     branches: [main]
 
+permissions:
+  contents: read
+  actions: read   # workflow_run 아티팩트(deploy-matrix) 조회
+
 jobs:
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+    # self-hosted runner를 배포 대상 EC2 인스턴스에 직접 설치해서 그 위에서 돈다.
+    # 보안그룹에 SSH 인바운드가 없어도(terraform security.tf) 러너는 outbound로
+    # GitHub에 polling하므로 추가 인바운드 포트가 필요 없고, SSM/S3 경유/OIDC도
+    # 전부 불필요해진다(잡이 이미 그 박스 위에서 실행되기 때문).
+    runs-on: [self-hosted, ec2-deploy]
     steps:
       - uses: actions/checkout@v4
 
-      # ENV_SECRETS(JSON) → .env 파일로 변환. EC2의 docker-compose.dev.yml이
-      # ${DB_HOST} 등을 이 .env로 채운다. 평문 파일은 이 잡 안에서만 생성/전송되고
-      # 러너는 매번 새로 떠서 종료 시 폐기된다.
+      # CI(ci.yml)가 main에서 계산한 "이번에 실제로 바뀐 도메인" 매트릭스를 받아옴.
+      # docker-compose.dev.yml의 서비스명이 도메인명과 1:1 동일(member/order/
+      # payment/product/settlement)하므로 그대로 docker compose의 서비스 인자로 쓴다.
+      - name: Download changed-services matrix from CI run
+        uses: actions/download-artifact@v4
+        with:
+          name: deploy-matrix
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve services to restart
+        id: services
+        run: |
+          SERVICES=$(jq -r '. | join(" ")' deploy-matrix.json)
+          echo "list=$SERVICES" >> "$GITHUB_OUTPUT"
+          if [ -z "$SERVICES" ]; then
+            echo "변경된 도메인이 없어 배포를 스킵합니다."
+          else
+            echo "재기동 대상: $SERVICES"
+          fi
+
+      # ENV_SECRETS(JSON) → .env 파일로 변환. 이 값만 실제 비밀(DB/Kafka/Redis
+      # 자격증명)이라 secrets에 유지. 러너가 이미 이 박스에 있으니 전송 단계가 없다.
       - name: Render .env from ENV_SECRETS
+        if: steps.services.outputs.list != ''
         env:
           ENV_SECRETS: ${{ secrets.ENV_SECRETS }}
         run: echo "$ENV_SECRETS" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
 
-      - name: Ensure deploy dir exists on EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: mkdir -p ~/openat
-
-      # 배포 명세서(docker-compose.dev.yml)와 .env를 EC2로 동기화
-      - name: Sync deploy spec to EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "docker-compose.dev.yml,.env"
-          target: "~/openat"
-
-      # GHCR에서 방금 푸시된 latest 이미지를 받아 스택 재기동
-      - name: Pull images & restart stack
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            cd ~/openat
-            docker compose -f docker-compose.dev.yml --env-file .env pull
-            docker compose -f docker-compose.dev.yml --env-file .env up -d
-            docker image prune -f
+      # 변경된 도메인만 pull/재기동 — 나머지(postgres/kafka/redis, 변경 없는
+      # 다른 도메인)는 그대로 유지. common이 바뀐 경우엔 매트릭스 자체가
+      # 5개 전부라 의도적으로 전부 재기동됨.
+      - name: docker compose pull & restart changed services
+        if: steps.services.outputs.list != ''
+        run: |
+          SERVICES="${{ steps.services.outputs.list }}"
+          docker compose -f docker-compose.dev.yml --env-file .env pull $SERVICES
+          docker compose -f docker-compose.dev.yml --env-file .env up -d $SERVICES
+          docker image prune -f
