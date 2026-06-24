@@ -36,23 +36,28 @@ subprojects {
     }
 
     dependencies {
-        implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-        implementation("org.springframework.boot:spring-boot-starter-web")
-        // IntelliJ Run/Gradle bootRun에서도 루트 .env를 자동으로 읽어 ${DB_USER} 같은 placeholder를 채워줌
-        implementation("me.paulschwarz:springboot4-dotenv:5.1.0")
-        implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3")
         compileOnly("org.projectlombok:lombok")
-        runtimeOnly("org.postgresql:postgresql")
         annotationProcessor("org.projectlombok:lombok")
         testImplementation("org.springframework.boot:spring-boot-starter-test")
         testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    }
 
-        //Security
-        implementation("org.springframework.boot:spring-boot-starter-security")
-        //JWT
-        implementation("io.jsonwebtoken:jjwt-api:0.12.3")
-        runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.3")
-        runtimeOnly("io.jsonwebtoken:jjwt-gson:0.12.3")
+    if (project.name != "apigateway" && project.name != "common") {
+        dependencies {
+            implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+            implementation("org.springframework.boot:spring-boot-starter-web")
+            // IntelliJ Run/Gradle bootRun에서도 루트 .env를 자동으로 읽어 ${DB_USER} 같은 placeholder를 채워줌
+            implementation("me.paulschwarz:springboot4-dotenv:5.1.0")
+            implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3")
+            runtimeOnly("org.postgresql:postgresql")
+
+            //Security
+            implementation("org.springframework.boot:spring-boot-starter-security")
+            //JWT
+            implementation("io.jsonwebtoken:jjwt-api:0.12.3")
+            runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.3")
+            runtimeOnly("io.jsonwebtoken:jjwt-gson:0.12.3")
+        }
     }
 
     tasks.withType<Test> {

@@ -1,0 +1,15 @@
+server:
+  port: 8000
+
+spring:
+  profiles:
+    active: local
+  application:
+    name: apigateway
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    urls:
+      - name: member-service
+        url: /member/api-docs
