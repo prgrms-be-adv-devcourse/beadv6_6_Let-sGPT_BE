@@ -206,6 +206,7 @@
 > PK는 **UUIDv7**. 타 도메인 참조는 "값 참조"(FK 아님). 민감정보(`settlementAccount`, `pgPaymentKey`)는 **AES 암호화**.
 
 - **회원(9100):** `Member`(role[BUYER/SELLER]), `SellerProfile`(상호·사업자번호·정산계좌[암호화]), `RefreshToken`
+  - 회원:판매자 = **1:N** — `sellerId`는 `memberId`와 **별도 식별자**(한 회원이 다중 판매자 보유 가능). 판매자 엔티티(이름·필드)·역할 모델 상세는 회원 도메인 확정 TODO.
 - **상품(9110):** `Product`(상품 마스터), `Category`(상품 카테고리: name[고유]), `Drop`(**재고·오픈시각의 주인**: totalQuantity·dropPrice·openAt·closeAt·limitPerUser·status; 잔여 수량은 스냅샷 없이 `StockHistory` 합산), `StockHistory`(append-only 재고 이력)
 - **주문(9120):** `Order`(dropId·quantity·orderPrice 스냅샷·status), `OrderSagaState`(사가 진행/보상 추적)
 - **결제(9130):** `Payment`(pgPaymentKey[암호화]·idempotencyKey[UNIQUE]), `Refund`
