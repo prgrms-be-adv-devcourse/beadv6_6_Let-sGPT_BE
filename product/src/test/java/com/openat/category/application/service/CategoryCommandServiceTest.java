@@ -9,11 +9,11 @@ import static org.mockito.Mockito.never;
 
 import com.openat.category.application.dto.CategoryCreateCommand;
 import com.openat.category.application.dto.CategoryUpdateCommand;
-import com.openat.category.application.usecase.CategoryQueryUseCase;
 import com.openat.category.domain.error.CategoryErrorCode;
 import com.openat.category.domain.model.Category;
 import com.openat.category.domain.repository.CategoryRepository;
 import com.openat.common.exception.BusinessException;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -30,7 +30,6 @@ class CategoryCommandServiceTest {
 
   @InjectMocks private CategoryCommandService categoryCommandService;
   @Mock private CategoryRepository categoryRepository;
-  @Mock private CategoryQueryUseCase categoryQueryUseCase;
 
   @Nested
   @DisplayName("카테고리 생성")
@@ -82,7 +81,7 @@ class CategoryCommandServiceTest {
       String sameName = "의류";
       Category category = categoryWithId(UUID.randomUUID(), sameName);
       CategoryUpdateCommand command = new CategoryUpdateCommand(category.getId(), sameName);
-      given(categoryQueryUseCase.getById(category.getId())).willReturn(category);
+      given(categoryRepository.findById(category.getId())).willReturn(Optional.of(category));
 
       // when
       categoryCommandService.update(command);
@@ -99,7 +98,7 @@ class CategoryCommandServiceTest {
       Category category = categoryWithId(UUID.randomUUID(), "의류");
       String duplicatedName = "액세서리";
       CategoryUpdateCommand command = new CategoryUpdateCommand(category.getId(), duplicatedName);
-      given(categoryQueryUseCase.getById(category.getId())).willReturn(category);
+      given(categoryRepository.findById(category.getId())).willReturn(Optional.of(category));
       given(categoryRepository.existsByName(duplicatedName)).willReturn(true);
 
       // when & then
@@ -115,7 +114,7 @@ class CategoryCommandServiceTest {
       Category category = categoryWithId(UUID.randomUUID(), "의류");
       String newName = "액세서리";
       CategoryUpdateCommand command = new CategoryUpdateCommand(category.getId(), newName);
-      given(categoryQueryUseCase.getById(category.getId())).willReturn(category);
+      given(categoryRepository.findById(category.getId())).willReturn(Optional.of(category));
       given(categoryRepository.existsByName(newName)).willReturn(false);
 
       // when
@@ -135,7 +134,7 @@ class CategoryCommandServiceTest {
     void delete_existingId_deletesCategory() {
       // given
       Category category = categoryWithId(UUID.randomUUID(), "의류");
-      given(categoryQueryUseCase.getById(category.getId())).willReturn(category);
+      given(categoryRepository.findById(category.getId())).willReturn(Optional.of(category));
 
       // when
       categoryCommandService.delete(category.getId());
@@ -145,12 +144,11 @@ class CategoryCommandServiceTest {
     }
 
     @Test
-    @DisplayName("없는 카테고리를 삭제하면 예외가 전파되고 삭제를 호출하지 않는다")
+    @DisplayName("없는 카테고리를 삭제하면 NOT_FOUND 예외를 던지고 삭제하지 않는다")
     void delete_notFound_throwsException() {
       // given
       UUID missingId = UUID.randomUUID();
-      given(categoryQueryUseCase.getById(missingId))
-          .willThrow(new BusinessException(CategoryErrorCode.NOT_FOUND));
+      given(categoryRepository.findById(missingId)).willReturn(Optional.empty());
 
       // when & then
       assertThatThrownBy(() -> categoryCommandService.delete(missingId))
