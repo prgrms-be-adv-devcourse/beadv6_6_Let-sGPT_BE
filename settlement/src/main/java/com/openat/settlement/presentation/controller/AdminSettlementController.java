@@ -32,8 +32,8 @@ import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("${api.init}/settlements")
-public class SettlementController {
+@RequestMapping("${api.init}/admin/settlements")
+public class AdminSettlementController {
 
     private static final int DEFAULT_PAGE = 0;
     private static final int DEFAULT_SIZE = 20;
@@ -43,7 +43,7 @@ public class SettlementController {
     private final SettlementQueryUseCase settlementQueryUseCase;
 
     @Operation(
-            summary = "전체 정산 주문 목록 조회",
+            summary = "관리자용 전체 정산 주문 목록 조회",
             description = "정산월, 정산 상태, 판매자 ID, 주문 ID 조건으로 정산 주문 목록을 페이징 조회합니다. 조건을 입력하지 않으면 전체 정산 주문을 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
     )
     @GetMapping("/orders")
@@ -75,7 +75,7 @@ public class SettlementController {
     }
 
     @Operation(
-            summary = "전체 판매자 정산 결과 조회",
+            summary = "관리자용 전체 판매자 정산 결과 조회",
             description = "정산월, 판매자 ID, 판매자 정산 상태 조건으로 판매자별 월 정산 결과 목록을 페이징 조회합니다. 조건을 입력하지 않으면 전체 판매자 정산 결과를 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
     )
     @GetMapping("/sellers")
@@ -104,7 +104,7 @@ public class SettlementController {
     }
 
     @Operation(
-            summary = "월 자동 배치 결과 조회",
+            summary = "관리자용 월 자동 배치 결과 조회",
             description = "정산월과 배치 상태 조건으로 월 자동 정산 배치 실행 결과를 페이징 조회합니다. 조건을 입력하지 않으면 전체 배치 실행 결과를 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
     )
     @GetMapping("/batch-results")
