@@ -6,13 +6,15 @@ import java.util.UUID;
 public record SellerInfoResponse(
         UUID id,
         String businessNumber,
-        String storeName
+        String storeName,
+        boolean active
 ) {
     public static SellerInfoResponse from(SellerInfo sellerInfo) {
         return new SellerInfoResponse(
                 sellerInfo.getId(),
                 sellerInfo.getBusinessNumber(),
-                sellerInfo.getStoreName()
+                sellerInfo.getStoreName(),
+                !sellerInfo.isDeleted()
         );
     }
 }

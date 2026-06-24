@@ -4,7 +4,6 @@ import com.openat.common.exception.BusinessException;
 import com.openat.member.application.dto.CreateSellerInfoRequest;
 import com.openat.member.application.dto.PatchSellerInfoRequest;
 import com.openat.member.application.dto.SellerInfoResponse;
-import com.openat.member.application.dto.UpdateSellerInfoRequest;
 import com.openat.member.application.usecase.SellerUseCase;
 import com.openat.member.domain.exception.MemberErrorCode;
 import com.openat.member.domain.exception.SellerErrorCode;
@@ -12,14 +11,16 @@ import com.openat.member.domain.model.Member;
 import com.openat.member.domain.model.SellerInfo;
 import com.openat.member.domain.repository.MemberRepository;
 import com.openat.member.domain.repository.SellerInfoRepository;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * member-SellerInfo는 1:N이지만, 논리적 삭제를 활용해 "활성 SellerInfo는 회원당 최대 1개"라는
- * 불변식을 여기서 보장한다. 프론트에는 항상 활성 SellerInfo 1건(또는 없음)만 노출된다.
+ * 판매자 정보(SellerInfo) 도메인 서비스.
+ * 회원당 여러 개의 SellerInfo를 가질 수 있으며, 논리적 삭제로 이력을 보존한다.
+ * 활성 SellerInfo가 하나라도 있으면 ROLE_SELLER, 없으면 ROLE_USER로 role을 관리한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -29,42 +30,24 @@ public class SellerService implements SellerUseCase {
     private final MemberRepository memberRepository;
     private final SellerInfoRepository sellerInfoRepository;
 
-    /**
-     * 활성 SellerInfo가 없을 때만(null일 때만) 생성 가능 — 이미 있으면 PATCH/PUT을 쓰라는 의미로 충돌 처리.
-     */
+    @Override
+    public List<SellerInfoResponse> getMySellerInfo(UUID memberId, boolean isActive) {
+        if (isActive) {
+            return sellerInfoRepository.findAllByMemberId(memberId).stream()
+                    .map(SellerInfoResponse::from)
+                    .toList();
+        }
+        return sellerInfoRepository.findActiveByMemberId(memberId).stream()
+                .map(SellerInfoResponse::from)
+                .toList();
+    }
+
+    /** 판매자 정보 신규 등록. role을 ROLE_SELLER로 올린다. */
     @Override
     @Transactional
     public SellerInfoResponse create(UUID memberId, CreateSellerInfoRequest request) {
         Member member = getMember(memberId);
 
-        if (sellerInfoRepository.existsActiveByMemberId(memberId)) {
-            throw new BusinessException(SellerErrorCode.SELLER_INFO_ALREADY_EXISTS);
-        }
-
-        SellerInfo sellerInfo = SellerInfo.builder()
-                .businessNumber(request.businessNumber())
-                .storeName(request.storeName())
-                .member(member)
-                .build();
-        SellerInfo saved = sellerInfoRepository.save(sellerInfo);
-
-        member.promoteToSeller();
-
-        return SellerInfoResponse.from(saved);
-    }
-
-    /**
-     * 기존에 활성 SellerInfo가 있다면 논리적 삭제하고, 이번 PUT 요청 값으로 새로 생성한다(없었으면 그냥 생성).
-     * businessNumber까지 같이 바꿀 수 있는 유일한 방법이라 갈아끼우는 방식을 쓴다.
-     */
-    @Override
-    @Transactional
-    public SellerInfoResponse update(UUID memberId, UpdateSellerInfoRequest request) {
-        Member member = getMember(memberId);
-
-        sellerInfoRepository.findActiveByMemberId(memberId)
-                .ifPresent(SellerInfo::markDeleted);
-
         SellerInfo sellerInfo = SellerInfo.builder()
                 .businessNumber(request.businessNumber())
                 .storeName(request.storeName())
@@ -79,8 +62,8 @@ public class SellerService implements SellerUseCase {
 
     @Override
     @Transactional
-    public SellerInfoResponse patch(UUID memberId, PatchSellerInfoRequest request) {
-        SellerInfo sellerInfo = sellerInfoRepository.findActiveByMemberId(memberId)
+    public SellerInfoResponse patch(UUID memberId, UUID sellerId, PatchSellerInfoRequest request) {
+        SellerInfo sellerInfo = sellerInfoRepository.findByIdAndMemberId(sellerId, memberId)
                 .orElseThrow(() -> new BusinessException(SellerErrorCode.SELLER_INFO_NOT_FOUND));
 
         sellerInfo.changeStoreName(request.storeName());
@@ -89,18 +72,21 @@ public class SellerService implements SellerUseCase {
     }
 
     /**
-     * 논리적 삭제 후, 더 이상 활성 SellerInfo가 남지 않으므로(불변식: 회원당 활성은 최대 1개) role을 USER로 내린다.
+     * 논리적 삭제. 삭제 후 활성 건이 하나도 남지 않으면 role을 USER로 내린다.
      */
     @Override
     @Transactional
-    public void delete(UUID memberId) {
+    public void delete(UUID memberId, UUID sellerId) {
         Member member = getMember(memberId);
 
-        SellerInfo sellerInfo = sellerInfoRepository.findActiveByMemberId(memberId)
+        SellerInfo sellerInfo = sellerInfoRepository.findByIdAndMemberId(sellerId, memberId)
                 .orElseThrow(() -> new BusinessException(SellerErrorCode.SELLER_INFO_NOT_FOUND));
 
         sellerInfo.markDeleted();
-        member.demoteToUser();
+
+        if (sellerInfoRepository.findActiveByMemberId(memberId).isEmpty()) {
+            member.demoteToUser();
+        }
     }
 
     private Member getMember(UUID memberId) {
