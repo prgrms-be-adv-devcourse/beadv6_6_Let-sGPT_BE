@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [dev]
+    branches: [dev, main]
 
 env:
   REGISTRY: ghcr.io
@@ -28,7 +28,9 @@ jobs:
             settlement: ['settlement/**']
 
       # common(또는 루트 빌드 설정)이 바뀌면 전 모듈에 영향이 가므로 5개 다 빌드,
-      # 그 외에는 실제로 변경된 모듈 폴더만 매트릭스에 세팅
+      # 그 외에는 실제로 변경된 모듈 폴더만 매트릭스에 세팅. dev/main 동일 로직 —
+      # main에서는 이 매트릭스가 곧 "마지막 배포 이후 실제로 바뀐 도메인" 목록이라
+      # deploy.yml이 그 도메인만 선택적으로 재기동하는 데 그대로 쓰인다(plan.md §L).
       - name: Resolve build matrix
         id: set-matrix
         run: |
@@ -37,6 +39,18 @@ jobs:
           else
             echo 'matrix=${{ steps.filter.outputs.changes }}' >> "$GITHUB_OUTPUT"
           fi
+
+      # main의 매트릭스만 CD(deploy.yml)에 전달 — dev는 배포 대상이 아니라 불필요.
+      - name: Export matrix artifact for CD (main only)
+        if: github.ref_name == 'main'
+        run: echo '${{ steps.set-matrix.outputs.matrix }}' > deploy-matrix.json
+
+      - uses: actions/upload-artifact@v4
+        if: github.ref_name == 'main'
+        with:
+          name: deploy-matrix
+          path: deploy-matrix.json
+          retention-days: 1
 
   build-and-push:
     needs: detect-changes

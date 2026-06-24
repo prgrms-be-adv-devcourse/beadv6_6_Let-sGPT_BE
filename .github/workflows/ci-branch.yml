@@ -1,0 +1,63 @@
+name: CI (feature branch)
+
+# dev/main이 아닌 모든 브랜치 push에서 작동. 브랜치 이름과 무관하게 실제
+# 바뀐 도메인 폴더만 단독 빌드 — common이 같이 바뀌어도 5개로 확장하지
+# 않음(그건 ci-merge.yml이 실제 머지된 트리 기준으로 다시 검증하는
+# 영역이라 여기서 선반영하면 중복/느려짐). common만 단독으로 바뀐
+# 브랜치는 매트릭스가 비어 build 잡 자체가 스킵됨(의도된 동작).
+# 머지 전 단독 컴파일 검증 목적이라 이미지 빌드/푸시는 하지 않음(publish는 ci-merge.yml에서).
+on:
+  push:
+    branches-ignore: [dev, main]
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            member: ['member/**']
+            order: ['order/**']
+            payment: ['payment/**']
+            product: ['product/**']
+            settlement: ['settlement/**']
+
+      - name: Resolve build matrix
+        id: set-matrix
+        run: echo 'matrix=${{ steps.filter.outputs.changes }}' >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Build ${{ matrix.service }}
+        env:
+          SPRING_PROFILES_ACTIVE: compose
+          DB_HOST: ${{ fromJson(vars.CI_VARS).DB_HOST }}
+          DB_PORT: ${{ fromJson(vars.CI_VARS).DB_PORT }}
+          DB_NAME: ${{ fromJson(vars.CI_VARS).DB_NAME }}
+          DB_USER: ${{ fromJson(vars.CI_VARS).DB_USER }}
+          DB_PASSWORD: ${{ fromJson(vars.CI_VARS).DB_PASSWORD }}
+          KAFKA_BROKER: ${{ fromJson(vars.CI_VARS).KAFKA_BROKER }}
+          REDIS_HOST: ${{ fromJson(vars.CI_VARS).REDIS_HOST }}
+          REDIS_PORT: ${{ fromJson(vars.CI_VARS).REDIS_PORT }}
+        run: ./gradlew :${{ matrix.service }}:build

@@ -50,13 +50,3 @@ output "ssm_connect_commands" {
     k => "aws ssm start-session --target ${v.id} --region ${var.aws_region}"
   }
 }
-
-output "github_actions_role_arn" {
-  description = "GitHub Actions OIDC 인증에 사용할 IAM Role ARN (GitHub Actions workflow의 role-to-assume 값)"
-  value       = aws_iam_role.github_actions.arn
-}
-
-output "github_oidc_provider_arn" {
-  description = "GitHub OIDC Provider ARN"
-  value       = aws_iam_openid_connect_provider.github.arn
-}

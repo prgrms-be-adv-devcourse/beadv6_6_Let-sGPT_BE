@@ -44,3 +44,24 @@ usermod -aG docker ${deployer_user}
 #    에이전트가 자동으로 SSM에 등록된다.
 # =====================================================================
 systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent || true
+
+# =====================================================================
+# 4) GitHub Actions self-hosted runner 설치 (등록은 제외)
+#    등록 토큰(config.sh --token)은 발급 후 1시간만 유효한 단명 토큰이라
+#    부팅 시 1회 실행되는 user_data에 박아둘 수 없음. 바이너리 설치까지만
+#    여기서 끝내고, 인스턴스 생성 후 SSM Session Manager로 ${deployer_user}
+#    계정으로 1회 수동 등록한다:
+#      cd /home/${deployer_user}/actions-runner
+#      ./config.sh --url https://github.com/<org>/<repo> --token <TOKEN> --labels ec2-deploy --unattended
+#      sudo ./svc.sh install ${deployer_user} && sudo ./svc.sh start
+# =====================================================================
+apt-get install -y libicu-dev
+
+RUNNER_DIR=/home/${deployer_user}/actions-runner
+RUNNER_VERSION=2.319.1
+mkdir -p "$RUNNER_DIR"
+curl -fsSL -o /tmp/actions-runner.tar.gz \
+  "https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz"
+tar xzf /tmp/actions-runner.tar.gz -C "$RUNNER_DIR"
+rm -f /tmp/actions-runner.tar.gz
+chown -R ${deployer_user}:${deployer_user} "$RUNNER_DIR"

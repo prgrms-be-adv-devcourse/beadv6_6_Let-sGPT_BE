@@ -6,6 +6,10 @@ spring:
   kafka:
     bootstrap-servers: localhost:9092
 
+pg:
+  client-key: ${PG_CLIENT_KEY}
+  secret-key: ${PG_SECRET_KEY}
+
 services:
   member:
     url: http://localhost:9100                     # 타모듈 localhost
