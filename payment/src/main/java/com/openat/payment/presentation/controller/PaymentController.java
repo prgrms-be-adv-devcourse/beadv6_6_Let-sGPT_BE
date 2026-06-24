@@ -2,7 +2,6 @@ package com.openat.payment.presentation.controller;
 
 import com.openat.common.error.CommonErrorCode;
 import com.openat.common.exception.BusinessException;
-import com.openat.common.response.ApiResponse;
 import com.openat.payment.application.dto.PayWithPgCommand;
 import com.openat.payment.application.dto.PayWithWalletCommand;
 import com.openat.payment.application.dto.PaymentResult;
@@ -47,7 +46,7 @@ public class PaymentController {
                     description = "INSUFFICIENT_BALANCE(WALLET 잔액부족) / IDEMPOTENCY_KEY_CONFLICT")
     })
     @PostMapping
-    public ResponseEntity<ApiResponse<PaymentResponse>> create(
+    public ResponseEntity<PaymentResponse> create(
             @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
             @RequestHeader("X-User-Id") UUID memberId,
             @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
@@ -62,7 +61,7 @@ public class PaymentController {
         };
 
         PaymentResponse body = new PaymentResponse(result.paymentId(), result.status(), result.pgPaymentKey());
-        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.of(body, HttpStatus.CREATED));
+        return ResponseEntity.status(HttpStatus.CREATED).body(body);
     }
 
     // A16 — PG 결제 승인의 메인 경로. successUrl=(가) 프론트엔드 페이지 확정에 따라, 프론트가 이 엔드포인트를 호출.
@@ -73,7 +72,7 @@ public class PaymentController {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "NOT_FOUND(대상 결제 없음)")
     })
     @PostMapping("/confirm")
-    public ResponseEntity<ApiResponse<PaymentResponse>> confirm(
+    public ResponseEntity<PaymentResponse> confirm(
             @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
             @RequestHeader("X-User-Id") UUID memberId,
             @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
@@ -82,7 +81,7 @@ public class PaymentController {
         PaymentResult result = paymentUseCase.confirmPg(
                 new PgConfirmCommand(request.orderId(), memberId, request.amount(), request.paymentKey(), idempotencyKey));
         PaymentResponse body = PaymentResponse.of(result.paymentId(), result.status());
-        return ResponseEntity.ok(ApiResponse.ok(body));
+        return ResponseEntity.ok(body);
     }
 
     @Operation(summary = "결제 단건 조회")
@@ -91,10 +90,10 @@ public class PaymentController {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "NOT_FOUND")
     })
     @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<PaymentResponse>> get(
+    public ResponseEntity<PaymentResponse> get(
             @Parameter(description = "결제 ID") @PathVariable UUID id) {
         PaymentResult result = paymentUseCase.getPayment(id);
         PaymentResponse body = PaymentResponse.of(result.paymentId(), result.status());
-        return ResponseEntity.ok(ApiResponse.ok(body));
+        return ResponseEntity.ok(body);
     }
 }

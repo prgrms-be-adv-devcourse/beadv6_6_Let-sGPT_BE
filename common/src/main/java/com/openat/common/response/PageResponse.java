@@ -12,7 +12,7 @@ import java.util.List;
  *
  * <pre>
  * Page&lt;OrderResponse&gt; page = orderService.findMyOrders(memberId, pageable);
- * return ApiResponse.ok(PageResponse.of(page));
+ * return ResponseEntity.ok(PageResponse.of(page));
  * </pre>
  */
 public record PageResponse<T>(

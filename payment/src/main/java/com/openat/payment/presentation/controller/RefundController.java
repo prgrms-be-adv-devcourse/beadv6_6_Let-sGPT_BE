@@ -1,6 +1,5 @@
 package com.openat.payment.presentation.controller;
 
-import com.openat.common.response.ApiResponse;
 import com.openat.payment.application.dto.RefundCommand;
 import com.openat.payment.application.dto.RefundHistoryResult;
 import com.openat.payment.application.dto.RefundResult;
@@ -45,7 +44,7 @@ public class RefundController {
                     description = "EXCEED_REFUNDABLE_AMOUNT(환불 가능액 초과) / IDEMPOTENCY_KEY_CONFLICT")
     })
     @PostMapping
-    public ResponseEntity<ApiResponse<RefundResponse>> request(
+    public ResponseEntity<RefundResponse> request(
             @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
             @RequestHeader("X-User-Id") UUID memberId,
             @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
@@ -54,7 +53,7 @@ public class RefundController {
         RefundResult result = refundUseCase.requestRefund(
                 new RefundCommand(request.paymentId(), memberId, request.amount(), request.reason(), idempotencyKey));
         RefundResponse body = toResponse(result);
-        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.of(body, HttpStatus.CREATED));
+        return ResponseEntity.status(HttpStatus.CREATED).body(body);
     }
 
     @Operation(summary = "환불 단건 조회")
@@ -63,15 +62,15 @@ public class RefundController {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "NOT_FOUND")
     })
     @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<RefundResponse>> get(
+    public ResponseEntity<RefundResponse> get(
             @Parameter(description = "환불 ID") @PathVariable UUID id) {
         RefundResult result = refundUseCase.getRefund(id);
-        return ResponseEntity.ok(ApiResponse.ok(toResponse(result)));
+        return ResponseEntity.ok(toResponse(result));
     }
 
     @Operation(summary = "내 환불 이력 조회(페이징)")
     @GetMapping("/histories")
-    public ResponseEntity<ApiResponse<RefundHistoryResponse>> histories(
+    public ResponseEntity<RefundHistoryResponse> histories(
             @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
             @RequestHeader("X-User-Id") UUID memberId,
             @Parameter(description = "페이지 번호(0-base)") @RequestParam(defaultValue = "0") int page,
@@ -79,7 +78,7 @@ public class RefundController {
         RefundHistoryResult result = refundUseCase.getRefundHistories(memberId, page, size);
         RefundHistoryResponse body = new RefundHistoryResponse(
                 result.content().stream().map(RefundController::toResponse).toList(), result.totalPages());
-        return ResponseEntity.ok(ApiResponse.ok(body));
+        return ResponseEntity.ok(body);
     }
 
     private static RefundResponse toResponse(RefundResult result) {

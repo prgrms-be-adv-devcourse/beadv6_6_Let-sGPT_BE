@@ -2,7 +2,6 @@ package com.openat.payment.presentation.controller;
 
 import com.openat.common.error.CommonErrorCode;
 import com.openat.common.exception.BusinessException;
-import com.openat.common.response.ApiResponse;
 import com.openat.payment.application.dto.ChargeConfirmCommand;
 import com.openat.payment.application.dto.ChargePgCommand;
 import com.openat.payment.application.dto.ChargeWalletCommand;
@@ -42,7 +41,7 @@ public class WalletChargeController {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "IDEMPOTENCY_KEY_CONFLICT")
     })
     @PostMapping
-    public ResponseEntity<ApiResponse<WalletChargeResponse>> charge(
+    public ResponseEntity<WalletChargeResponse> charge(
             @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
             @RequestHeader("X-User-Id") UUID memberId,
             @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
@@ -57,7 +56,7 @@ public class WalletChargeController {
         };
 
         WalletChargeResponse body = new WalletChargeResponse(result.chargeId(), result.status());
-        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.of(body, HttpStatus.CREATED));
+        return ResponseEntity.status(HttpStatus.CREATED).body(body);
     }
 
     // E1 — 충전 PG 승인의 메인 경로. 프론트가 결제와 동일한 모양으로 이 엔드포인트를 호출.
@@ -67,7 +66,7 @@ public class WalletChargeController {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "NOT_FOUND(대상 충전 없음)")
     })
     @PostMapping("/confirm")
-    public ResponseEntity<ApiResponse<WalletChargeResponse>> confirm(
+    public ResponseEntity<WalletChargeResponse> confirm(
             @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
             @RequestHeader("X-User-Id") UUID memberId,
             @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
@@ -76,6 +75,6 @@ public class WalletChargeController {
         WalletChargeResult result = walletChargeUseCase.confirmCharge(new ChargeConfirmCommand(
                 request.chargeId(), memberId, request.amount(), request.paymentKey(), idempotencyKey));
         WalletChargeResponse body = new WalletChargeResponse(result.chargeId(), result.status());
-        return ResponseEntity.ok(ApiResponse.ok(body));
+        return ResponseEntity.ok(body);
     }
 }
