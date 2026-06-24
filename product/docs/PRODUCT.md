@@ -1,7 +1,7 @@
 # PRODUCT.md — 상품(product) 모듈 가이드
 
 > 담당 도메인인 **상품 모듈 내부**의 구조·컨벤션을 정리한 문서.
-> 전 서비스 공통 정보·컨벤션은 [`../../docs/PROJECT.md`](../../docs/PROJECT.md), 결정 근거는 [`DECISIONS.md`](DECISIONS.md), 재고 게이트키퍼 상세는 [`STOCK_GATEKEEPER.md`](STOCK_GATEKEEPER.md).
+> 전 서비스 공통 정보·컨벤션은 [`../../docs/PROJECT.md`](../../docs/PROJECT.md), 결정 근거는 [`DECISIONS.md`](DECISIONS.md), 재고 게이트키퍼 상세는 [`STOCK_GATEKEEPER.md`](STOCK_GATEKEEPER.md), 테스트 작성은 [`TEST_CONVENTION.md`](TEST_CONVENTION.md).
 > 여기엔 **product 내부에서만 닫히는 규칙**만 적는다(전역과 겹치면 PROJECT.md를 따른다). 내부 컨벤션을 바꾸면 `DECISIONS.md`에 근거를 남긴다.
 
 ---
@@ -135,6 +135,7 @@ com.openat
 ---
 
 ## 12. 참고
+- 테스트 작성 지침: [`TEST_CONVENTION.md`](TEST_CONVENTION.md)
 - 결정 근거: [`DECISIONS.md`](DECISIONS.md)
 - 재고 게이트키퍼 설계: [`STOCK_GATEKEEPER.md`](STOCK_GATEKEEPER.md)
 - 전역 정보·컨벤션: [`../../docs/PROJECT.md`](../../docs/PROJECT.md)

@@ -53,7 +53,7 @@
 | :-- | :-- | :-- |
 | 도메인 모델 | 의미론적 빌더·불변식 (예: `StockHistory` delta 부호, `Drop` 초기 `SCHEDULED`) | JUnit5 + AssertJ |
 | 서비스 | 비즈니스 분기·포트 상호작용 (중복검증·동일이름 early return·category null 분기) | JUnit5 + Mockito + AssertJ |
-| 영속 | 복합 unique 멱등·FK SET NULL·`@SoftDelete`·UUIDv7 | `@DataJpaTest` + Testcontainers(PostgreSQL) |
+| 영속 | 복합 unique 멱등·FK SET NULL·UUIDv7·`@SoftDelete`(미구현, 도입 시) | `@DataJpaTest` + Testcontainers(PostgreSQL) |
 | 웹 | `@Valid` 검증·상태코드(201+Location/204)·에러 매핑 | `@WebMvcTest` + MockMvc |
 
 ### 슬라이스 테스트 설정 (Spring Boot 4 / Testcontainers 2.x — 실빌드 검증)
