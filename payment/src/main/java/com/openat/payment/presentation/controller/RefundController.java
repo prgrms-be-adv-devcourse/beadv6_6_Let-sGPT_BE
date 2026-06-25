@@ -1,5 +1,7 @@
 package com.openat.payment.presentation.controller;
 
+import com.openat.common.auth.CurrentUser;
+import com.openat.common.auth.UserContext;
 import com.openat.payment.application.dto.RefundCommand;
 import com.openat.payment.application.dto.RefundHistoryResult;
 import com.openat.payment.application.dto.RefundResult;
@@ -45,11 +47,12 @@ public class RefundController {
     })
     @PostMapping
     public ResponseEntity<RefundResponse> request(
-            @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
-            @RequestHeader("X-User-Id") UUID memberId,
+            @Parameter(description = "인증된 회원 정보(게이트웨이 주입)", required = true)
+            @CurrentUser UserContext userContext,
             @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody RefundRequest request) {
+        UUID memberId = UUID.fromString(userContext.userId());
         RefundResult result = refundUseCase.requestRefund(
                 new RefundCommand(request.paymentId(), memberId, request.amount(), request.reason(), idempotencyKey));
         RefundResponse body = toResponse(result);
@@ -71,10 +74,11 @@ public class RefundController {
     @Operation(summary = "내 환불 이력 조회(페이징)")
     @GetMapping("/histories")
     public ResponseEntity<RefundHistoryResponse> histories(
-            @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
-            @RequestHeader("X-User-Id") UUID memberId,
+            @Parameter(description = "인증된 회원 정보(게이트웨이 주입)", required = true)
+            @CurrentUser UserContext userContext,
             @Parameter(description = "페이지 번호(0-base)") @RequestParam(defaultValue = "0") int page,
             @Parameter(description = "페이지 크기") @RequestParam(defaultValue = "20") int size) {
+        UUID memberId = UUID.fromString(userContext.userId());
         RefundHistoryResult result = refundUseCase.getRefundHistories(memberId, page, size);
         RefundHistoryResponse body = new RefundHistoryResponse(
                 result.content().stream().map(RefundController::toResponse).toList(), result.totalPages());

@@ -1,5 +1,7 @@
 package com.openat.payment.presentation.controller;
 
+import com.openat.common.auth.CurrentUser;
+import com.openat.common.auth.UserContext;
 import com.openat.common.error.CommonErrorCode;
 import com.openat.common.exception.BusinessException;
 import com.openat.payment.application.dto.PayWithPgCommand;
@@ -47,11 +49,12 @@ public class PaymentController {
     })
     @PostMapping
     public ResponseEntity<PaymentResponse> create(
-            @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
-            @RequestHeader("X-User-Id") UUID memberId,
+            @Parameter(description = "인증된 회원 정보(게이트웨이 주입)", required = true)
+            @CurrentUser UserContext userContext,
             @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody PaymentRequest request) {
+        UUID memberId = UUID.fromString(userContext.userId());
         PaymentResult result = switch (request.method()) {
             case "WALLET" -> paymentUseCase.payWithWallet(
                     new PayWithWalletCommand(request.orderId(), memberId, request.amount(), idempotencyKey));
@@ -73,11 +76,12 @@ public class PaymentController {
     })
     @PostMapping("/confirm")
     public ResponseEntity<PaymentResponse> confirm(
-            @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
-            @RequestHeader("X-User-Id") UUID memberId,
+            @Parameter(description = "인증된 회원 정보(게이트웨이 주입)", required = true)
+            @CurrentUser UserContext userContext,
             @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody PaymentConfirmRequest request) {
+        UUID memberId = UUID.fromString(userContext.userId());
         PaymentResult result = paymentUseCase.confirmPg(
                 new PgConfirmCommand(request.orderId(), memberId, request.amount(), request.paymentKey(), idempotencyKey));
         PaymentResponse body = PaymentResponse.of(result.paymentId(), result.status());

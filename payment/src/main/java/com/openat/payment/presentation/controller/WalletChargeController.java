@@ -1,5 +1,7 @@
 package com.openat.payment.presentation.controller;
 
+import com.openat.common.auth.CurrentUser;
+import com.openat.common.auth.UserContext;
 import com.openat.common.error.CommonErrorCode;
 import com.openat.common.exception.BusinessException;
 import com.openat.payment.application.dto.ChargeConfirmCommand;
@@ -42,11 +44,12 @@ public class WalletChargeController {
     })
     @PostMapping
     public ResponseEntity<WalletChargeResponse> charge(
-            @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
-            @RequestHeader("X-User-Id") UUID memberId,
+            @Parameter(description = "인증된 회원 정보(게이트웨이 주입)", required = true)
+            @CurrentUser UserContext userContext,
             @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody WalletChargeRequest request) {
+        UUID memberId = UUID.fromString(userContext.userId());
         WalletChargeResult result = switch (request.method()) {
             case "MOCK" -> walletChargeUseCase.chargeMock(
                     new ChargeWalletCommand(memberId, request.amount(), idempotencyKey));
@@ -67,11 +70,12 @@ public class WalletChargeController {
     })
     @PostMapping("/confirm")
     public ResponseEntity<WalletChargeResponse> confirm(
-            @Parameter(description = "인증된 회원 ID(게이트웨이 주입)", required = true)
-            @RequestHeader("X-User-Id") UUID memberId,
+            @Parameter(description = "인증된 회원 정보(게이트웨이 주입)", required = true)
+            @CurrentUser UserContext userContext,
             @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody WalletChargeConfirmRequest request) {
+        UUID memberId = UUID.fromString(userContext.userId());
         WalletChargeResult result = walletChargeUseCase.confirmCharge(new ChargeConfirmCommand(
                 request.chargeId(), memberId, request.amount(), request.paymentKey(), idempotencyKey));
         WalletChargeResponse body = new WalletChargeResponse(result.chargeId(), result.status());
