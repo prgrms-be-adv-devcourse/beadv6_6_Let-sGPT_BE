@@ -12,6 +12,10 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 /**
  * Payment Service의 Kafka 이벤트를 수신하는 정산 Consumer입니다.
@@ -33,8 +37,10 @@ import tools.jackson.databind.ObjectMapper;
 @RequiredArgsConstructor
 public class PaymentEventConsumer {
 
-    private static final String PAYMENT_COMPLETED = "PAYMENT_COMPLETED";
-    private static final String PAYMENT_REFUNDED = "PAYMENT_REFUNDED";
+    private static final String PAYMENT_COMPLETED = "PaymentSettlementCompleted";
+    private static final String PAYMENT_REFUNDED = "RefundSettlementCompleted";
+    private static final DateTimeFormatter SETTLEMENT_MONTH_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyyMM");
 
     private final ObjectMapper objectMapper;
     private final PaymentSettlementEventService paymentSettlementEventService;
@@ -50,7 +56,9 @@ public class PaymentEventConsumer {
             String eventType = root.path("eventType").asString();
 
             if (PAYMENT_COMPLETED.equals(eventType)) {
+                applyPaymentCompletedDefaults(root);
                 PaymentCompletedEvent event = objectMapper.treeToValue(root, PaymentCompletedEvent.class);
+
                 paymentSettlementEventService.upsertSettlementOrder(paymentEventAclMapper.toCommand(event));
                 log.info("PAYMENT_COMPLETED consumed. eventId={}, orderId={}, paymentId={}",
                         event.eventId(), event.orderId(), event.paymentId());
@@ -85,5 +93,31 @@ public class PaymentEventConsumer {
                     e
             );
         }
+    }
+
+    private void applyPaymentCompletedDefaults(JsonNode root) {
+        if (!(root instanceof ObjectNode objectNode)) {
+            return;
+        }
+
+        JsonNode feeAmountNode = objectNode.path("feeAmount");
+        if (feeAmountNode.isMissingNode() || feeAmountNode.isNull()) {
+            objectNode.put("feeAmount", 0L);
+        }
+
+        JsonNode settlementMonthNode = objectNode.path("settlementMonth");
+        if (!settlementMonthNode.isMissingNode()
+                && !settlementMonthNode.isNull()
+                && !settlementMonthNode.asString().isBlank()) {
+            return;
+        }
+
+        String paidAtText = objectNode.path("paidAt").asString(null);
+        if (paidAtText == null || paidAtText.isBlank()) {
+            return;
+        }
+
+        String settlementMonth = LocalDateTime.parse(paidAtText).format(SETTLEMENT_MONTH_FORMATTER);
+        objectNode.put("settlementMonth", settlementMonth);
     }
 }
