@@ -18,8 +18,12 @@ public record ProductInfo(
 
   public static ProductInfo from(Product product) {
     Category category = product.getCategory();
-    UUID categoryId = category == null ? null : category.getId();
-    String categoryName = category == null ? null : category.getName();
+    UUID categoryId = null;
+    String categoryName = null;
+    if (category != null) {
+      categoryId = category.getId();
+      categoryName = category.getName();
+    }
     return new ProductInfo(
         product.getId(),
         product.getSellerId(),

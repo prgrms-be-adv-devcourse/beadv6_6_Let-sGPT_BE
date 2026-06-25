@@ -10,8 +10,8 @@ import org.junit.jupiter.api.Test;
 class DropTest {
 
   @Test
-  @DisplayName("드롭을 예약하면 초기 상태는 SCHEDULED다")
-  void schedule_whenScheduled_hasScheduledStatus() {
+  @DisplayName("드롭을 예약하면 초기 상태는 REGISTERED다")
+  void schedule_whenScheduled_hasRegisteredStatus() {
     // when
     Drop drop =
         Drop.schedule()
@@ -24,6 +24,25 @@ class DropTest {
             .build();
 
     // then
-    assertThat(drop.getStatus()).isEqualTo(DropStatus.SCHEDULED);
+    assertThat(drop.getStatus()).isEqualTo(DropStatus.REGISTERED);
+  }
+
+  @Test
+  @DisplayName("드롭을 종료하면 상태가 CLOSE가 된다")
+  void close_whenClosed_hasCloseStatus() {
+    // given
+    Drop drop =
+        Drop.schedule()
+            .product(null)
+            .dropPrice(10_000L)
+            .totalQuantity(100)
+            .openAt(Instant.parse("2026-07-01T00:00:00Z"))
+            .build();
+
+    // when
+    drop.close();
+
+    // then
+    assertThat(drop.getStatus()).isEqualTo(DropStatus.CLOSE);
   }
 }

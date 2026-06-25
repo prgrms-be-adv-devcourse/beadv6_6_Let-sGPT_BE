@@ -18,6 +18,8 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.SoftDelete;
+import org.hibernate.annotations.SoftDeleteType;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
@@ -29,6 +31,7 @@ import org.hibernate.annotations.UuidGenerator;
       @Index(name = "idx_drops_product_id", columnList = "product_id"),
       @Index(name = "idx_drops_status_open_at", columnList = "status, open_at")
     })
+@SoftDelete(strategy = SoftDeleteType.TIMESTAMP, columnName = "deleted_at")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Drop {
 
@@ -82,6 +85,23 @@ public class Drop {
     this.limitPerUser = limitPerUser;
     this.openAt = openAt;
     this.closeAt = closeAt;
-    this.status = DropStatus.SCHEDULED;
+    this.status = DropStatus.REGISTERED;
+  }
+
+  public void close() {
+    this.status = DropStatus.CLOSE;
+  }
+
+  public boolean isBeforeOpen(Instant now) {
+    return now.isBefore(openAt);
+  }
+
+  public boolean isLive(Instant now) {
+    if (status != DropStatus.REGISTERED) {
+      return false;
+    }
+    boolean opened = !now.isBefore(openAt);
+    boolean beforeClose = closeAt == null || now.isBefore(closeAt);
+    return opened && beforeClose;
   }
 }

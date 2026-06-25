@@ -2,6 +2,7 @@ package com.openat.config;
 
 import com.openat.support.auth.CurrentUser;
 import com.openat.support.auth.CurrentUserArgumentResolver;
+import com.openat.support.web.InternalApi;
 import java.util.List;
 import org.springdoc.core.utils.SpringDocUtils;
 import org.springframework.context.annotation.Configuration;
@@ -19,7 +20,10 @@ public class WebConfig implements WebMvcConfigurer {
 
   @Override
   public void configurePathMatch(PathMatchConfigurer configurer) {
-    configurer.addPathPrefix("/api/v1", HandlerTypePredicate.forBasePackage("com.openat"));
+    configurer.addPathPrefix(
+        "/api/v1",
+        HandlerTypePredicate.forBasePackage("com.openat")
+            .and(type -> !type.isAnnotationPresent(InternalApi.class)));
   }
 
   @Override

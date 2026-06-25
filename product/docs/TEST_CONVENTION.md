@@ -25,7 +25,7 @@
 | 애플리케이션 서비스 | 단위 (협력자 mock) | JUnit5 + **Mockito** + AssertJ | `CategoryCommandServiceTest` |
 | 영속 어댑터·매핑 | 슬라이스 통합 | `@DataJpaTest` + **Testcontainers(PostgreSQL)** | `ProductRepositoryAdaptorTest` |
 | 컨트롤러·웹 | 슬라이스 | `@WebMvcTest` + **MockMvc** | `CategoryControllerTest` |
-| 재고·동시성 *(미래)* | 통합/동시성 | Testcontainers(Redis) + `ExecutorService` | `StockServiceConcurrencyTest` |
+| 재고·동시성 | 통합/동시성 | Testcontainers(Redis) + `ExecutorService` | `DropCacheRedisAdaptorTest` |
 | 부하 | 성능 E2E | **k6** (test 밖, 빌드와 분리) | `loadtest/*.js` |
 
 **네이밍 한 줄**: 메서드명 `메서드_상황_결과`(lowerCamelCase + 언더바 구획) + 한글 `@DisplayName`.
@@ -51,7 +51,7 @@
 
 | 계층 | 검증 초점 | 도구 |
 | :-- | :-- | :-- |
-| 도메인 모델 | 의미론적 빌더·불변식 (예: `StockHistory` delta 부호, `Drop` 초기 `SCHEDULED`) | JUnit5 + AssertJ |
+| 도메인 모델 | 의미론적 빌더·불변식 (예: `StockHistory` delta 부호, `Drop` 초기 `REGISTERED`) | JUnit5 + AssertJ |
 | 서비스 | 비즈니스 분기·포트 상호작용 (중복검증·동일이름 early return·category null 분기) | JUnit5 + Mockito + AssertJ |
 | 영속 | 복합 unique 멱등·FK SET NULL·UUIDv7·`@SoftDelete`(미구현, 도입 시) | `@DataJpaTest` + Testcontainers(PostgreSQL) |
 | 웹 | `@Valid` 검증·상태코드(201+Location/204)·에러 매핑 | `@WebMvcTest` + MockMvc |
@@ -199,7 +199,7 @@ class CategoryCommandServiceTest {
 ### 프로덕션 빌더 재사용이 기본
 엔티티는 의미론적 빌더(`Product.create()`·`Drop.schedule()`·`Category.create()`)가 이미 있으니 **테스트도 이 빌더를 그대로 쓴다.** 픽스처 클래스는 미리 만들지 않고, **같은 조합이 반복되면 그때** `<Entity>Fixture`로 추출한다.
 - 위치: `com.openat.<sub>.fixture.<Entity>Fixture` (test 소스)
-- 표준 인스턴스를 시나리오명 정적 팩토리로 제공 (`uncategorized()`, `scheduledDrop()`)
+- 표준 인스턴스를 시나리오명 정적 팩토리로 제공 (`uncategorized()`, `registeredDrop()`)
 
 ### 미영속 엔티티의 id·시간은 `ReflectionTestUtils`로 주입
 `@UuidGenerator`·`@CreationTimestamp`는 영속 시점에 채워지므로 미영속 엔티티는 id/시간이 `null`이다. `save(x).getId()`처럼 id가 필요하면 **`ReflectionTestUtils.setField`로 주입**한다 — 캡슐화를 깨는 테스트 전용 setter/생성자를 프로덕션에 만들지 않는다.
@@ -239,7 +239,7 @@ public final class ProductFixture {
 | 도메인 불변식 (delta 부호·초기 상태) | 단순 위임 라인 (컨트롤러→usecase 호출 자체) |
 | 영속 정합성 (멱등 unique·FK SET NULL·soft delete·UUIDv7) | 자명한 DTO 필드 복사 (`toCommand`) |
 | 웹 계약 (`@Valid`·상태코드·에러 매핑) | 설정 클래스(Security/OpenApi)·프레임워크 기본 동작 |
-| *(미래)* 동시성·멱등 (오버셀 차단·중복 차감 방지) | `data.sql` 시드 등 |
+| 동시성·멱등 (오버셀 차단·중복 차감 방지) | `data.sql` 시드 등 |
 
 ---
 
@@ -252,9 +252,9 @@ public final class ProductFixture {
 
 ---
 
-## 8. 재고·동시성·멱등 가이드 (원칙 — 구현 시 구체화)
+## 8. 재고·동시성·멱등 가이드
 
-재고 게이트키퍼는 아직 미구현이라 **원칙만** 둔다. 검증은 성격이 다른 세 축이고 **도구·위치가 다르다.**
+재고 게이트키퍼의 **정합성 축은 구현·검증됐다**(실제: `DropCacheRedisAdaptorTest` — Testcontainers+Redis+`ExecutorService`). 성능 수치(k6)·장애 회복은 예정. 검증은 성격이 다른 세 축이고 **도구·위치가 다르다.**
 
 > **두 "수치"를 혼동하지 말 것.** §0~§7의 "수치"는 **커버리지 %**(채우려 들면 안 되는 양적 지표)이고, 아래 성능 "수치"는 **TPS·latency**(반드시 측정해야 하는 검증 대상)다.
 
