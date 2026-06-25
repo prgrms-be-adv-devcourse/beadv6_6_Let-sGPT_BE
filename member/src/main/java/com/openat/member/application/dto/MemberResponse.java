@@ -12,12 +12,13 @@ public record MemberResponse(
         Role role,
         PlatformType platformType
 ) {
-    public static MemberResponse from(Member member) {
+    /** role_history에서 조회한 현재 역할을 함께 받아 생성한다. */
+    public static MemberResponse from(Member member, Role currentRole) {
         return new MemberResponse(
                 member.getId(),
                 member.getEmail(),
                 member.getNickname(),
-                member.getRole(),
+                currentRole,
                 member.getPlatformType()
         );
     }

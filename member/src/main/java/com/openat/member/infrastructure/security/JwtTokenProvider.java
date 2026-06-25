@@ -1,6 +1,7 @@
 package com.openat.member.infrastructure.security;
 
 import com.openat.member.domain.model.Member;
+import com.openat.member.domain.model.Role;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import java.security.interfaces.RSAPrivateKey;
@@ -30,14 +31,18 @@ public class JwtTokenProvider {
     private final RSAPublicKey rsaPublicKey;
     private final JwtProperties jwtProperties;
 
-    public String createAccessToken(Member member) {
+    /**
+     * @param member      토큰 subject(memberId) 추출용
+     * @param currentRole role_history에서 조회한 현재 유효 역할
+     */
+    public String createAccessToken(Member member, Role currentRole) {
         Instant now = Instant.now();
         return Jwts.builder()
                 .header().keyId(jwtProperties.keyId()).and()
                 .subject(member.getId().toString())
                 // apigateway의 jwtAuthenticationConverter가 "ROLE_"을 직접 붙이므로
-                // 여기엔 접두사 없는 이름("USER"/"SELLER")만 담는다.
-                .claim(CLAIM_ROLES, List.of(member.getRole().bareName()))
+                // 여기엔 접두사 없는 이름("USER"/"SELLER"/"ADMIN")만 담는다.
+                .claim(CLAIM_ROLES, List.of(currentRole.bareName()))
                 .claim(CLAIM_TYPE, TYPE_ACCESS)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(jwtProperties.accessTokenExpireSeconds())))

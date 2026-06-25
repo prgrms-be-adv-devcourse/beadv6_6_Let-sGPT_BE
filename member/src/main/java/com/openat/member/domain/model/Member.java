@@ -25,10 +25,6 @@ public class Member extends BaseTimeEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private Role role;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
     private PlatformType platformType;
 
     @Column(nullable = false, unique = true)
@@ -41,8 +37,7 @@ public class Member extends BaseTimeEntity {
     private String nickname;
 
     @Builder
-    private Member(Role role, PlatformType platformType, String email, String password, String nickname) {
-        this.role = role;
+    private Member(PlatformType platformType, String email, String password, String nickname) {
         this.platformType = platformType;
         this.email = email;
         this.password = password;
@@ -60,15 +55,5 @@ public class Member extends BaseTimeEntity {
 
     public void withdraw() {
         markDeleted();
-    }
-
-    /** 활성 SellerInfo를 (처음 또는 다시) 갖게 됐을 때 권한을 SELLER로 올린다. */
-    public void promoteToSeller() {
-        this.role = Role.ROLE_SELLER;
-    }
-
-    /** 활성 SellerInfo가 하나도 남지 않게 됐을 때 권한을 USER로 내린다. */
-    public void demoteToUser() {
-        this.role = Role.ROLE_USER;
     }
 }
