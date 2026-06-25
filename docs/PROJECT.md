@@ -234,7 +234,7 @@
 - 예치금·장바구니: 과제 필수지만 현재 **TODO**. 현재는 PG 직접 결제·드롭 즉시 주문.
 - 카테고리: 상품 서비스 내 **`categories` 테이블**로 분리 완료(`Product`가 `@ManyToOne`으로 **선택 참조** — nullable, 카테고리 없이 상품 등록 가능·삭제 시 미분류). 계층 구조·카테고리별 수수료는 추후 컬럼 확장으로 대응.
 - 공통 모듈 범위·QueryDSL 도입 여부: 도메인별 결정 사항.
-- **product 판매자 식별(인증 연동):** 게이트웨이는 `X-User-Id`로 **memberId만** 전달하고 `sellerId`는 주지 않는다. 회원:판매자 1:N이라 상품 등록·수정·삭제 시 **어느 `sellerId`로 행위하는지 확정하는 방법이 미정.** 후보 — ① 요청에 `sellerId` 명시 + member 내부 API로 소유권 검증(동기), ② JWT에 활성 `sellerId` 클레임 추가('판매자 전환' 개념 필요), ③ memberId를 판매자 식별자로 사용(1:N 포기). 현재 product는 임시로 `X-User-Id`(memberId)를 `sellerId` 자리에 그대로 사용(`support.auth.CurrentUserArgumentResolver`, TODO 주석) — 연동 시 `common.auth` 컨텍스트로 교체 대상.
+- **product 판매자 식별(인증 연동):** 게이트웨이는 `X-User-Id`로 **memberId만** 전달한다(회원:판매자 1:N). 회원 도메인이 **게이트웨이 신뢰 방식**을 채택 — 클라가 판매자 선택 시 회원 API로 **토큰을 재발급**받고(회원 토큰과 **독립적인 판매자 토큰**), 게이트웨이가 이를 검증해 sellerId를 전달한다. product는 게이트웨이가 보증한 sellerId를 **신뢰**(자체 소유권 검증 없음). **회원 측 판매자 토큰 구현은 미확정** — 토큰 구조·sellerId 전달 헤더 확정 후 연동. 현재 product는 임시로 `X-User-Id`(memberId)를 `sellerId` 자리에 사용(`support.auth`), 연동 시 교체. (근거: `product/docs/DECISIONS.md` 2026-06-25 #3)
 
 ---
 
