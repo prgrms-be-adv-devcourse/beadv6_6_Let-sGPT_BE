@@ -22,6 +22,11 @@ public class OrderRepositoryAdaptor implements OrderRepository {
     }
 
     @Override
+    public Order saveAndFlush(Order order) {
+        return orderJpaRepository.saveAndFlush(order);
+    }
+
+    @Override
     public Optional<Order> findById(UUID id) {
         return orderJpaRepository.findById(id);
     }
