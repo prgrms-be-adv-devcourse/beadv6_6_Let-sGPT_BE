@@ -1,4 +1,10 @@
 spring:
+  sql:
+    init:
+      # 비내장 DB(PostgreSQL)에서도 SQL init 스크립트를 실행한다.
+      # Hibernate가 create-drop으로 스키마를 매번 새로 만들므로 항상 시드가 필요.
+      mode: always
+      data-locations: classpath:sql/init-data.sql
   datasource:
     url: jdbc:postgresql://localhost:5432/openat   # 로컬 도커 DB
     username: ${DB_USER}

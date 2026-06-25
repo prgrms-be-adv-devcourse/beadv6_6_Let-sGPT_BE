@@ -17,6 +17,9 @@ spring:
         default_schema: member # 스키마 분리
     hibernate:
       ddl-auto: validate
+    # SQL init 스크립트가 Hibernate DDL 이후에 실행되도록 보장.
+    # (로컬 local 프로필에서 sql.init.mode=always 사용 시 필수)
+    defer-datasource-initialization: true
 springdoc:
   api-docs:
     path: /api-docs
