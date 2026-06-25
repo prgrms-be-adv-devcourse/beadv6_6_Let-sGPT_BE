@@ -11,6 +11,8 @@ public interface OrderRepository {
 
     Order save(Order order);
 
+    Order saveAndFlush(Order order);
+
     Optional<Order> findById(UUID id);
 
     Optional<Order> findByMemberIdAndIdempotencyKey(UUID memberId, String idempotencyKey);

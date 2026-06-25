@@ -8,6 +8,7 @@ build/
 .kotlin
 .gitattributes
 personal_workplan/
+docs/_local/
 
 ### IntelliJ IDEA ###
 .idea
