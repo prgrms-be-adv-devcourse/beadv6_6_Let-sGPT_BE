@@ -4,8 +4,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,6 +15,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @Slf4j
+@RequiredArgsConstructor
 @RestController
 public class OpenApiAggregateController {
 
@@ -23,20 +24,16 @@ public class OpenApiAggregateController {
             };
 
     private final WebClient webClient = WebClient.create();
-
-    @Value("${openapi.aggregate.member-docs-url:http://localhost:9100/api-docs}")
-    private String memberDocsUrl;
-
-    @Value("${openapi.aggregate.settlement-docs-url:http://localhost:9140/api-docs}")
-    private String settlementDocsUrl;
+    private final OpenApiAggregateProperties properties;
 
     @GetMapping(value = "/v3/api-docs/all", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Map<String, Object>> getAggregatedOpenApi() {
-        // 각 서비스를 독립적으로 요청 — 실패한 서비스는 목록에서 제외하고 나머지만 합산
-        return Flux.merge(
-                        fetchServiceOpenApi("member-service", memberDocsUrl),
-                        fetchServiceOpenApi("settlement-service", settlementDocsUrl)
-                )
+        // 설정에 등록된 서비스를 독립적으로 요청 — 실패한 서비스는 건너뛰고 나머지만 집계
+        List<Mono<ServiceOpenApi>> requests = properties.getServices().entrySet().stream()
+                .map(e -> fetchServiceOpenApi(e.getKey(), e.getValue()))
+                .toList();
+
+        return Flux.merge(requests)
                 .collectList()
                 .map(this::mergeOpenApis);
     }

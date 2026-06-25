@@ -51,5 +51,6 @@ spring:
 
 openapi:
   aggregate:
-    member-docs-url: http://member:9100/api-docs
-    settlement-docs-url: http://settlement:9140/api-docs
+    services:
+      member-service: http://member:9100/api-docs
+      settlement-service: http://settlement:9140/api-docs
