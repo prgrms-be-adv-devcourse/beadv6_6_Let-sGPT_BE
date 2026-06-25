@@ -20,4 +20,3 @@ public class ProductPortException extends RuntimeException {
         return failCode;
     }
 }
-

@@ -13,4 +13,3 @@ public interface ProductIntegrationPort {
 
     void restoreStock(UUID dropId, StockRestoreCommand command);
 }
-

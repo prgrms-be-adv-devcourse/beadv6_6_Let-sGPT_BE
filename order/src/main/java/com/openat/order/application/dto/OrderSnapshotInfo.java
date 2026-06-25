@@ -9,4 +9,3 @@ public record OrderSnapshotInfo(
         String productName,
         long unitPrice) {
 }
-
