@@ -6,6 +6,11 @@ public class ProductPortException extends RuntimeException {
 
     private final OrderFailCode failCode;
 
+    public ProductPortException(OrderFailCode failCode, String message) {
+        super(message);
+        this.failCode = failCode;
+    }
+
     public ProductPortException(OrderFailCode failCode, String message, Throwable cause) {
         super(message, cause);
         this.failCode = failCode;
