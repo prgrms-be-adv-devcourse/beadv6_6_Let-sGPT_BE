@@ -4,14 +4,17 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+@Slf4j
 @RestController
 public class OpenApiAggregateController {
 
@@ -29,21 +32,31 @@ public class OpenApiAggregateController {
 
     @GetMapping(value = "/v3/api-docs/all", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Map<String, Object>> getAggregatedOpenApi() {
-        Mono<Map<String, Object>> memberOpenApi = fetchOpenApi(memberDocsUrl);
-        Mono<Map<String, Object>> settlementOpenApi = fetchOpenApi(settlementDocsUrl);
-
-        return Mono.zip(memberOpenApi, settlementOpenApi)
-                .map(tuple -> mergeOpenApis(List.of(
-                        new ServiceOpenApi("member-service", tuple.getT1()),
-                        new ServiceOpenApi("settlement-service", tuple.getT2())
-                )));
+        // 각 서비스를 독립적으로 요청 — 실패한 서비스는 목록에서 제외하고 나머지만 합산
+        return Flux.merge(
+                        fetchServiceOpenApi("member-service", memberDocsUrl),
+                        fetchServiceOpenApi("settlement-service", settlementDocsUrl)
+                )
+                .collectList()
+                .map(this::mergeOpenApis);
     }
 
-    private Mono<Map<String, Object>> fetchOpenApi(String docsUrl) {
+    /**
+     * 서비스 OpenAPI 스펙을 가져온다.
+     * 연결 실패·타임아웃·4xx/5xx 등 어떤 오류가 나도 {@code Mono.empty()}를 반환해
+     * 해당 서비스를 조용히 건너뛰고 나머지 서비스만 집계에 포함시킨다.
+     */
+    private Mono<ServiceOpenApi> fetchServiceOpenApi(String name, String url) {
         return webClient.get()
-                .uri(docsUrl)
+                .uri(url)
                 .retrieve()
-                .bodyToMono(OPENAPI_TYPE);
+                .bodyToMono(OPENAPI_TYPE)
+                .map(spec -> new ServiceOpenApi(name, spec))
+                .onErrorResume(e -> {
+                    log.warn("[OpenAPI 집계] {} 스펙 로드 실패 — 건너뜀 (url={}, cause={})",
+                            name, url, e.getMessage());
+                    return Mono.empty();
+                });
     }
 
     private Map<String, Object> mergeOpenApis(List<ServiceOpenApi> serviceOpenApis) {
