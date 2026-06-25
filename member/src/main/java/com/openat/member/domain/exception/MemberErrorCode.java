@@ -14,7 +14,8 @@ public enum MemberErrorCode implements ErrorCode {
     MEMBER_NOT_FOUND(HttpStatus.NOT_FOUND, "MEMBER_NOT_FOUND", "회원을 찾을 수 없습니다."),
     MEMBER_INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "MEMBER_INVALID_CREDENTIALS", "이메일 또는 비밀번호가 올바르지 않습니다."),
     MEMBER_INVALID_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "MEMBER_INVALID_REFRESH_TOKEN", "유효하지 않은 리프레시 토큰입니다."),
-    MEMBER_WITHDRAWN(HttpStatus.FORBIDDEN, "MEMBER_WITHDRAWN", "탈퇴한 계정입니다.");
+    MEMBER_WITHDRAWN(HttpStatus.FORBIDDEN, "MEMBER_WITHDRAWN", "탈퇴한 계정입니다."),
+    MEMBER_ROLE_NOT_CONFIGURED(HttpStatus.INTERNAL_SERVER_ERROR, "MEMBER_ROLE_NOT_CONFIGURED", "역할 설정이 올바르지 않습니다. DB에 role 시드 데이터를 확인하세요.");
 
     private final HttpStatus httpStatus;
     private final String code;

@@ -1,5 +1,6 @@
 package com.openat.member.application.service;
 
+import com.openat.common.exception.BusinessException;
 import com.openat.member.application.dto.LoginRequest;
 import com.openat.member.application.dto.MemberResponse;
 import com.openat.member.application.dto.RefreshRequest;
@@ -11,10 +12,13 @@ import com.openat.member.domain.exception.MemberErrorCode;
 import com.openat.member.domain.model.Member;
 import com.openat.member.domain.model.PlatformType;
 import com.openat.member.domain.model.Role;
+import com.openat.member.domain.model.RoleEntity;
+import com.openat.member.domain.model.RoleHistory;
 import com.openat.member.domain.repository.MemberRepository;
 import com.openat.member.domain.repository.RefreshTokenRepository;
+import com.openat.member.domain.repository.RoleEntityRepository;
+import com.openat.member.domain.repository.RoleHistoryRepository;
 import com.openat.member.infrastructure.security.JwtTokenProvider;
-import com.openat.common.exception.BusinessException;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import java.time.Duration;
@@ -31,6 +35,8 @@ public class MemberService implements MemberUseCase {
 
     private final MemberRepository memberRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final RoleEntityRepository roleEntityRepository;
+    private final RoleHistoryRepository roleHistoryRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final PasswordEncoder passwordEncoder;
 
@@ -45,14 +51,18 @@ public class MemberService implements MemberUseCase {
         }
 
         Member member = Member.builder()
-                .role(Role.ROLE_USER)
                 .platformType(PlatformType.LOCAL)
                 .email(request.email())
                 .password(passwordEncoder.encode(request.password()))
                 .nickname(request.nickname())
                 .build();
+        Member saved = memberRepository.save(member);
 
-        return toResponse(memberRepository.save(member));
+        // 회원가입 시 ROLE_USER 이력 생성
+        RoleEntity userRole = findRoleEntity(Role.ROLE_USER);
+        roleHistoryRepository.save(RoleHistory.of(saved, userRole));
+
+        return MemberResponse.from(saved, Role.ROLE_USER);
     }
 
     @Override
@@ -63,7 +73,6 @@ public class MemberService implements MemberUseCase {
         if (member.isDeleted()) {
             throw new BusinessException(MemberErrorCode.MEMBER_WITHDRAWN);
         }
-
         if (!passwordEncoder.matches(request.password(), member.getPassword())) {
             throw new BusinessException(MemberErrorCode.MEMBER_INVALID_CREDENTIALS);
         }
@@ -113,7 +122,6 @@ public class MemberService implements MemberUseCase {
         if (request.password() != null) {
             member.changePassword(passwordEncoder.encode(request.password()));
         }
-        // 자기 자신의 현재 닉네임으로 "변경"하는 건 중복이 아니므로 실제로 바뀌는 경우만 검사.
         if (request.nickname() != null && !request.nickname().equals(member.getNickname())) {
             if (memberRepository.existsByNickname(request.nickname())) {
                 throw new BusinessException(MemberErrorCode.MEMBER_DUPLICATE_NICKNAME);
@@ -134,8 +142,13 @@ public class MemberService implements MemberUseCase {
         refreshTokenRepository.delete(memberId);
     }
 
+    // -----------------------------------------------------------------------
+    // private helpers
+    // -----------------------------------------------------------------------
+
     private TokenResponse issueTokens(Member member) {
-        String accessToken = jwtTokenProvider.createAccessToken(member);
+        Role currentRole = getCurrentRole(member.getId());
+        String accessToken = jwtTokenProvider.createAccessToken(member, currentRole);
 
         String tokenId = UUID.randomUUID().toString();
         String refreshToken = jwtTokenProvider.createRefreshToken(member.getId(), tokenId);
@@ -149,6 +162,21 @@ public class MemberService implements MemberUseCase {
     }
 
     private MemberResponse toResponse(Member member) {
-        return MemberResponse.from(member);
+        return MemberResponse.from(member, getCurrentRole(member.getId()));
+    }
+
+    /**
+     * role_history에서 현재 유효한 역할을 조회한다.
+     * 데이터 정합성 오류가 아닌 이상 항상 존재해야 하며, 없으면 서버 오류로 처리한다.
+     */
+    private Role getCurrentRole(UUID memberId) {
+        return roleHistoryRepository.findCurrentByMemberId(memberId)
+                .map(RoleHistory::getRole)
+                .orElseThrow(() -> new BusinessException(MemberErrorCode.MEMBER_NOT_FOUND));
+    }
+
+    private RoleEntity findRoleEntity(Role role) {
+        return roleEntityRepository.findByRole(role)
+                .orElseThrow(() -> new BusinessException(MemberErrorCode.MEMBER_ROLE_NOT_CONFIGURED));
     }
 }
