@@ -55,7 +55,10 @@
 - **API Gateway (Spring Cloud Gateway):** 모든 외부 요청은 Gateway 통과.
   - `/api/**` → 외부 노출 + JWT 검증.
   - `/internal/**` → 서비스 간 호출 전용, **외부 차단.**
-- **인증(JWT):** 회원 서비스가 발급, Gateway가 검증 후 사용자 정보를 **헤더로 전달**. 각 서비스는 헤더의 사용자 정보를 신뢰.
+- **인증(JWT):** 회원 서비스가 **RS256**으로 발급(`sub`=memberId, `roles`=접두사 없는 `USER`/`SELLER`/`ADMIN`), Gateway가 **JWKS**(`/auth/jwks`)로 공개키를 받아 검증·인가한 뒤 사용자 정보를 헤더로 전달한다. 미인증·위조 요청의 사용자 헤더는 강제 제거한다.
+  - **전달 헤더(서비스 간 계약, `common.auth.UserHeaders`):** `X-User-Id`(= **memberId**) · `X-User-Roles`(`ROLE_USER,ROLE_SELLER` 형식).
+  - **수신 측:** `common`의 `UserContextFilter`(자동설정)가 헤더를 읽어 `UserContextHolder`(ThreadLocal)에 `UserContext(userId, roles)`로 적재 → `@CurrentUser UserContext` 파라미터 또는 `UserContextHolder` 정적 메서드로 사용. (가이드: `common/docs/CURRENT_USER_GUIDE.md`)
+  - **식별자 주의:** 헤더가 주는 건 **memberId이며 sellerId가 아니다**(회원:판매자 1:N). 판매자 행위 식별 방법은 [§12](#12-열린-결정-사항-작업-중-합의-필요)에서 합의.
 - **통신 방식 분리 (핵심 설계):**
   - **동기 (OpenFeign 내부 API):** 즉시 성공/실패 판단이 필요한 호출. → **재고 감소·재고 롤백·재고 이력 조회.** (우리 DB라 빠르고 외부 의존 없음)
   - **비동기 (Kafka 이벤트):** 결과를 기다릴 필요 없는 전파. → **결제·환불 결과, 정산 적재, 상품 색인.** (PG처럼 느리거나 사후 통지 성격)
@@ -87,7 +90,7 @@
 | order | `PAYMENT_PENDING` / `COMPLETE` / `CANCELLED` / `PAYMENT_FAILED` / `FAILED` / `REFUND` / `REFUND_FAILED` |
 | payment | `PENDING` / `COMPLETE` / `FAILED` |
 | refund | `PENDING` / `COMPLETE` / `FAILED` |
-| member role | `BUYER` / `SELLER` |
+| member role | `USER` / `SELLER` / `ADMIN` (JWT·헤더는 `ROLE_` 접두사) |
 
 서비스 간 문자열로 주고받을 때 값이 어긋나지 않게 한다. Enum 자체는 각 도메인이 설계.
 
@@ -205,8 +208,8 @@
 
 > PK는 **UUIDv7**. 타 도메인 참조는 "값 참조"(FK 아님). 민감정보(`settlementAccount`, `pgPaymentKey`)는 **AES 암호화**.
 
-- **회원(9100):** `Member`(role[BUYER/SELLER]), `SellerProfile`(상호·사업자번호·정산계좌[암호화]), `RefreshToken`
-  - 회원:판매자 = **1:N** — `sellerId`는 `memberId`와 **별도 식별자**(한 회원이 다중 판매자 보유 가능). 판매자 엔티티(이름·필드)·역할 모델 상세는 회원 도메인 확정 TODO.
+- **회원(9100):** `Member`(role[USER/SELLER/ADMIN]), `SellerInfo`(상호[storeName]·사업자번호[businessNumber]·member 참조; 정산계좌 등은 회원 도메인 TODO), `RefreshToken`
+  - 회원:판매자 = **1:N** — `sellerId`(=`SellerInfo.id`, UUIDv7)는 `memberId`와 **별도 식별자**(한 회원이 다중 판매자 보유 가능). 활성 `SellerInfo` 유무로 role을 SELLER↔USER 승강.
 - **상품(9110):** `Product`(상품 마스터), `Category`(상품 카테고리: name[고유]), `Drop`(**재고·오픈시각의 주인**: totalQuantity·dropPrice·openAt·closeAt·limitPerUser·status; 잔여 수량은 스냅샷 없이 `StockHistory` 합산), `StockHistory`(append-only 재고 이력)
 - **주문(9120):** `Order`(dropId·quantity·orderPrice 스냅샷·status), `OrderSagaState`(사가 진행/보상 추적)
 - **결제(9130):** `Payment`(pgPaymentKey[암호화]·idempotencyKey[UNIQUE]), `Refund`
@@ -231,6 +234,7 @@
 - 예치금·장바구니: 과제 필수지만 현재 **TODO**. 현재는 PG 직접 결제·드롭 즉시 주문.
 - 카테고리: 상품 서비스 내 **`categories` 테이블**로 분리 완료(`Product`가 `@ManyToOne`으로 **선택 참조** — nullable, 카테고리 없이 상품 등록 가능·삭제 시 미분류). 계층 구조·카테고리별 수수료는 추후 컬럼 확장으로 대응.
 - 공통 모듈 범위·QueryDSL 도입 여부: 도메인별 결정 사항.
+- **product 판매자 식별(인증 연동):** 게이트웨이는 `X-User-Id`로 **memberId만** 전달하고 `sellerId`는 주지 않는다. 회원:판매자 1:N이라 상품 등록·수정·삭제 시 **어느 `sellerId`로 행위하는지 확정하는 방법이 미정.** 후보 — ① 요청에 `sellerId` 명시 + member 내부 API로 소유권 검증(동기), ② JWT에 활성 `sellerId` 클레임 추가('판매자 전환' 개념 필요), ③ memberId를 판매자 식별자로 사용(1:N 포기). 현재 product는 임시로 `X-User-Id`(memberId)를 `sellerId` 자리에 그대로 사용(`support.auth.CurrentUserArgumentResolver`, TODO 주석) — 연동 시 `common.auth` 컨텍스트로 교체 대상.
 
 ---
 

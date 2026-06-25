@@ -98,7 +98,7 @@ com.openat
 **컨트롤러는 얇게** — 명세 구현 + 인증 추출 + 검증 + 유스케이스 호출 + 응답 구성만. 비즈니스 로직은 service.
 - Swagger 명세 전담 인터페이스(`ProductApiSpec`)를 `implements` → 컨트롤러엔 제어 흐름만, 문서 어노테이션은 인터페이스로 분리.
 - 인증 식별자(`@CurrentUser UUID`)는 **회원(memberId)** 이다(게이트웨이 전달, 현재 임시 `X-User-Id`). **API 명세엔 노출하지 않는다**(내부 파라미터).
-- 상품 소유 주체인 **판매자(`sellerId`)는 회원과 1:N**이라 memberId에서 곧장 얻지 못한다 — sellerId 해석 방식은 게이트웨이/JWT 인증 연동 시 확정(**열린 설계 포인트**). 현 코드는 인증 스텁 단계라 임시로 인증 주체를 sellerId로 사용.
+- 상품 소유 주체인 **판매자(`sellerId`)는 회원과 1:N**이라 memberId에서 곧장 얻지 못한다 — sellerId 해석 방식은 게이트웨이/JWT 인증 연동 시 확정(**열린 설계 포인트**). 현 코드는 인증 스텁 단계라 임시로 인증 주체를 sellerId로 사용 — **임시 연동 방침·교체 대상은 §12.**
 - 입력 검증은 `@Valid`(Bean Validation). 단일 진입 가정으로 도메인 중복 검증 생략. (`spring-boot-starter-validation`)
 
 **예외**
@@ -118,7 +118,7 @@ com.openat
 
 ## 9. 보안 (임시)
 - 현재 `config.SecurityConfig`: `csrf` off + `anyRequest().permitAll()`.
-- **임시 베이스라인**이다 — 게이트웨이/JWT 인증(PROJECT §3)이 붙으면 교체한다.
+- **임시 베이스라인**이다 — 게이트웨이/JWT 인증(PROJECT §3)이 붙으면 교체한다. (판매자 식별 연동 방침은 §12)
 
 ---
 
@@ -144,7 +144,29 @@ com.openat
 
 ---
 
-## 12. 참고
+## 12. 인증·판매자 식별 연동 (임시 지침)
+
+> 회원 도메인의 게이트웨이/JWT 인증은 dev에 병합됐으나 **product 연동은 미완**이다. 아래는 **확정 전 임시 방침**으로, 회원 측 소유권 검증 API가 구현돼 dev에 병합되면 **그 코드 기준으로 맞춰 교체**한다. (전역 인증 계약은 PROJECT §3)
+
+**현재 상태 (임시 스텁)**
+- 게이트웨이는 `X-User-Id`로 **memberId**만 전달한다(+`X-User-Roles`). sellerId는 토큰·헤더에 없다(회원:판매자 1:N).
+- product는 임시로 `support.auth.CurrentUserArgumentResolver`가 `X-User-Id`를 `@CurrentUser UUID sellerId`에 그대로 주입 → **memberId를 sellerId로 오용**하며, 소유권 검증이 없다.
+
+**연동 방침 (미확정 — 합의된 방향)**
+- **신뢰 모델: 도메인 자체 검증(요청마다).** 게이트웨이가 sellerId를 보증하지 않으므로, product가 "인증 회원(memberId)이 행위 대상 sellerId를 실제 소유하는지"를 회원 도메인에 확인한다. (근거: DECISIONS 2026-06-25 — JWT에 sellerId를 싣는 방식은 오버엔지니어링으로 보고, 요청마다 내부 API로 검증)
+- **행위 대상 sellerId는 클라이언트가 요청에 실어 보낸다**(활성 판매자 선택). product는 소유권 검증을 통과한 뒤에만 신뢰한다.
+- **검증 경로: OpenFeign 내부 동기 API**(product→member). product의 첫 내부 동기 호출 사례가 된다.
+- **fail-closed**: 검증 호출 실패(회원 서비스 장애 등)는 거부로 처리하고, "소유 아님(정상 거부)"과 명확히 구분한다.
+- **책임 분리**: 회원 API는 "소유 여부(사실)"만 반환하고, 인가 결정(허용/거부)은 product가 내린다.
+- **미확정**: 응답 형식(boolean 여부)·수신 헤더 이름·검증 API 경로/시그니처는 **회원 도메인이 구현 시 확정** → product는 그에 맞춰 연동한다.
+
+**연동 시 교체 대상**
+- `support.auth.*`(임시 `@CurrentUser`/Resolver) → `common.auth.UserContext`로 memberId 취득 + 행위 sellerId 수신 + 소유권 검증.
+- `ProductCommandService`의 `create`(검증 없음)·`getOwnedProduct`(상품↔seller만 확인) → sellerId 신뢰 전 회원 소유권 검증 삽입.
+
+---
+
+## 13. 참고
 - 테스트 작성 지침: [`TEST_CONVENTION.md`](TEST_CONVENTION.md)
 - 결정 근거: [`DECISIONS.md`](DECISIONS.md)
 - 재고 게이트키퍼 설계: [`STOCK_GATEKEEPER.md`](STOCK_GATEKEEPER.md)

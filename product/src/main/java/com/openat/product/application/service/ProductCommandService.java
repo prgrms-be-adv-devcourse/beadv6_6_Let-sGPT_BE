@@ -24,6 +24,7 @@ public class ProductCommandService implements ProductCommandUseCase {
 
   @Override
   public UUID create(ProductCreateCommand command) {
+    // TODO: 현재 memberId가 임시로 바인딩됨 - 회원 도메인 연동 후 '회원-판매자 소유권 검증' 로직 추가 필요
     Category category = toCategory(command.categoryId());
 
     Product newProduct =
@@ -44,7 +45,7 @@ public class ProductCommandService implements ProductCommandUseCase {
     Product product = getOwnedProduct(command.id(), command.sellerId());
     Category category = toCategory(command.categoryId());
 
-    // TODO(drop): 진행 중(OPEN) 드롭이 걸린 상품의 가격 등 수정 제약 — drop 설계 시 결정
+    // TODO: 진행 중(OPEN)인 드롭이 존재할 경우 상품 수정 제약 조건 적용
     product.update(
         command.name(), command.description(), category, command.price(), command.thumbnailKey());
   }
@@ -53,7 +54,7 @@ public class ProductCommandService implements ProductCommandUseCase {
   public void delete(UUID id, UUID sellerId) {
     Product product = getOwnedProduct(id, sellerId);
 
-    // TODO(drop): 진행 중(OPEN) 드롭이 걸린 상품의 삭제 차단 + 자식 drop 하향 soft delete 전파(이벤트) — drop 설계 시 결정
+    // TODO: 진행 중(OPEN)인 드롭이 존재할 경우 삭제 차단 및 하위 드롭 Soft Delete 전파(이벤트 처리)
     productRepository.delete(product);
   }
 
@@ -65,6 +66,7 @@ public class ProductCommandService implements ProductCommandUseCase {
   }
 
   private Product getOwnedProduct(UUID id, UUID sellerId) {
+    // TODO: 회원-판매자 소유권 검증은 이 메서드 호출 전(서비스 진입부)에 선행되어야 함 (이 메서드는 상품-판매자 매핑만 검증)
     Product product =
         productRepository
             .findById(id)
