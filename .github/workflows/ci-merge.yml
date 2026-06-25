@@ -20,12 +20,13 @@ jobs:
         id: filter
         with:
           filters: |
-            common: ['common/**', 'build.gradle.kts', 'settings.gradle.kts']
-            member: ['member/**']
-            order: ['order/**']
-            payment: ['payment/**']
-            product: ['product/**']
-            settlement: ['settlement/**']
+            apigateway: ['**/apigateway/**']
+            common: ['**/common/**', 'build.gradle.kts', 'settings.gradle.kts']
+            member: ['**/member/**']
+            order: ['**/order/**']
+            payment: ['**/payment/**']
+            product: ['**/product/**']
+            settlement: ['**/settlement/**']
 
       # common(또는 루트 빌드 설정)이 바뀌면 전 모듈에 영향이 가므로 5개 다 빌드,
       # 그 외에는 실제로 변경된 모듈 폴더만 매트릭스에 세팅. dev/main 동일 로직 —
@@ -35,7 +36,7 @@ jobs:
         id: set-matrix
         run: |
           if [ "${{ steps.filter.outputs.common }}" = "true" ]; then
-            echo 'matrix=["member","order","payment","product","settlement"]' >> "$GITHUB_OUTPUT"
+            echo 'matrix=["apigateway","member","order","payment","product","settlement"]' >> "$GITHUB_OUTPUT"
           else
             echo 'matrix=${{ steps.filter.outputs.changes }}' >> "$GITHUB_OUTPUT"
           fi

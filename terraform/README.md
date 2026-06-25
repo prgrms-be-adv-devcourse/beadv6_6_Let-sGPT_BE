@@ -10,7 +10,7 @@
 | `provider.tf` | Terraform/AWS provider 설정, S3 backend(2단계 부트스트랩용) |
 | `network.tf` | VPC, 퍼블릭 서브넷 1개, IGW, 라우트 테이블, S3 Gateway VPC 엔드포인트 |
 | `security.tf` | EC2용 보안그룹 (80/443 공개, SSH 없음 - 접속은 SSM Session Manager 사용) |
-| `iam.tf` | EC2 인스턴스 프로파일(S3 접근 + SSM) + GitHub Actions OIDC Role |
+| `iam.tf` | EC2 인스턴스 프로파일(S3 접근 + SSM) |
 | `s3.tf` | S3 버킷(app 데이터 + tfstate 공용), 버전관리/암호화/Public Access Block/버킷 정책 |
 | `compute.tf` | EC2 인스턴스(들) + Elastic IP, IMDSv2 강제, user_data 로딩 |
 | `user_data.sh.tpl` | 부트스트랩 스크립트 템플릿 (Docker 설치 + deployer 계정 + SSM Agent 확인) |
@@ -76,7 +76,6 @@ terraform apply
 | `deployer_user` | 배포 전용 계정 이름 (docker 그룹만, sudo 없음) | `deployer` |
 | `s3_bucket_name` | S3 버킷 이름 (app 데이터 + tfstate 공용, 전역 유일) | (필수) |
 | `s3_app_prefix` | IAM Role이 접근 가능한 S3 prefix | `app/` |
-| `github_repo` | GitHub OIDC 신뢰 레포 (`owner/repo` 형식) | (필수) |
 
 ## SSM 접속
 
@@ -92,19 +91,11 @@ aws ssm start-session --target i-0abc1234... --region ap-northeast-2
 
 접속 명령어는 `terraform output ssm_connect_commands`에서도 확인 가능.
 
-## GitHub Actions OIDC
+## GitHub Actions 배포 (self-hosted runner)
 
-apply 후 `terraform output github_actions_role_arn` 값을 GitHub 레포 Secrets에 등록한다.
-
-```yaml
-# .github/workflows/deploy.yml
-- uses: aws-actions/configure-aws-credentials@v4
-  with:
-    role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-    aws-region: ap-northeast-2
-```
-
-GitHub Actions → AWS 인증 흐름: OIDC 토큰 발급 → `sts:AssumeRoleWithWebIdentity` → 임시 자격증명 발급 (액세스 키 저장 불필요).
+GitHub Actions는 AWS API를 직접 호출하지 않는다(OIDC/액세스 키 불필요) — self-hosted runner를
+EC2 인스턴스 위에 직접 설치해서 그 박스 안에서 잡을 실행하므로, 인증 자체가 필요 없다.
+러너 등록 절차는 `user_data.sh.tpl`의 "GitHub Actions self-hosted runner" 섹션 참고.
 
 ## 파이널 전환 시 변경할 값
 
@@ -127,7 +118,6 @@ GitHub Actions → AWS 인증 흐름: OIDC 토큰 발급 → `sts:AssumeRoleWith
 ## IAM
 
 - EC2 인스턴스 프로파일: `s3_app_prefix` 하위 S3 접근 + `AmazonSSMManagedInstanceCore` (Session Manager + Run Command).
-- GitHub Actions Role: OIDC 인증으로 assume, `ssm:SendCommand` + `ec2:Describe*` 권한 부여.
 - 액세스 키를 서버나 GitHub에 저장하지 않는다.
 
 ## S3

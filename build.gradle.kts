@@ -62,7 +62,5 @@ subprojects {
 
     tasks.withType<Test> {
         useJUnitPlatform()
-        // dotenv 플러그인이 루트 .env를 찾도록 테스트 작업 디렉터리를 루트로 고정
-        workingDir = rootProject.projectDir
     }
 }

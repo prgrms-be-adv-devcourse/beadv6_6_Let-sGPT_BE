@@ -4,7 +4,9 @@ spring:
     username: ${DB_USER}
     password: ${DB_PASSWORD}
   kafka:
-    bootstrap-servers: localhost:9092
+    # local-kafka의 INTERNAL 리스너(kafka:9092)는 도커 네트워크 내부에서만 resolve됨 — 호스트에서 직접 뜨는
+    # local 프로필은 EXTERNAL 리스너(localhost:29092, docker-compose.yml)로 붙어야 함.
+    bootstrap-servers: localhost:29092
 
 pg:
   client-key: ${PG_CLIENT_KEY}

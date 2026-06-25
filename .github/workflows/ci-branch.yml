@@ -22,11 +22,12 @@ jobs:
         id: filter
         with:
           filters: |
-            member: ['member/**']
-            order: ['order/**']
-            payment: ['payment/**']
-            product: ['product/**']
-            settlement: ['settlement/**']
+            apigateway: ['**/apigateway/**']
+            member: ['**/member/**']
+            order: ['**/order/**']
+            payment: ['**/payment/**']
+            product: ['**/product/**']
+            settlement: ['**/settlement/**']
 
       - name: Resolve build matrix
         id: set-matrix
