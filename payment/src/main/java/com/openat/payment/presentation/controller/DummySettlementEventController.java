@@ -30,7 +30,7 @@ public class DummySettlementEventController {
         for (int i = 0; i < count; i++) {
             UUID resolvedSellerId = sellerId != null ? sellerId : UUID.randomUUID();
             publisher.publishPaymentCompleted(new DummyPaymentCompletedEvent(UUID.randomUUID().toString(),
-                    "PAYMENT_COMPLETED", LocalDateTime.now(), UUID.randomUUID(), UUID.randomUUID(),
+                    "PaymentSettlementCompleted", LocalDateTime.now(), UUID.randomUUID(), UUID.randomUUID(),
                     resolvedSellerId, UUID.randomUUID(), UUID.randomUUID(), 10000L, 10000L,
                     LocalDateTime.now()));
         }
@@ -44,7 +44,7 @@ public class DummySettlementEventController {
         for (int i = 0; i < count; i++) {
             UUID resolvedSellerId = sellerId != null ? sellerId : UUID.randomUUID();
             publisher.publishPaymentRefunded(new DummyPaymentRefundedEvent(UUID.randomUUID().toString(),
-                    "PAYMENT_REFUNDED", LocalDateTime.now(), UUID.randomUUID(), UUID.randomUUID(),
+                    "RefundSettlementCompleted", LocalDateTime.now(), UUID.randomUUID(), UUID.randomUUID(),
                     UUID.randomUUID(), resolvedSellerId, UUID.randomUUID(), 5000L, "단순변심",
                     LocalDateTime.now()));
         }
