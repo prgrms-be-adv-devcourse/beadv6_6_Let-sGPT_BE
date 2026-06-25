@@ -31,8 +31,3 @@ deployer_user = "deployer"
 # ---------------------------------------------------------------------
 s3_bucket_name = "team02-letsgpt-bucket"
 s3_app_prefix  = "app/"
-
-# ---------------------------------------------------------------------
-# GitHub OIDC
-# ---------------------------------------------------------------------
-github_repo = "prgrms-be-adv-devcourse/beadv6_6_Let-sGPT_BE"
