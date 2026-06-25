@@ -12,7 +12,7 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 @RequiredArgsConstructor
-public class OrderRepositoryAdapter implements OrderRepository {
+public class OrderRepositoryAdaptor implements OrderRepository {
 
     private final OrderJpaRepository orderJpaRepository;
 

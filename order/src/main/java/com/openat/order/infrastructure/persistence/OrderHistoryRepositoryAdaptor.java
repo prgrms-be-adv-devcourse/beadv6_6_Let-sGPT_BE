@@ -7,7 +7,7 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 @RequiredArgsConstructor
-public class OrderHistoryRepositoryAdapter implements OrderHistoryRepository {
+public class OrderHistoryRepositoryAdaptor implements OrderHistoryRepository {
 
     private final OrderHistoryJpaRepository orderHistoryJpaRepository;
 

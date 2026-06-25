@@ -14,9 +14,9 @@ DB_NAME="${2:-openat}"
 docker exec -i "$CONTAINER" psql -U "${DB_USER:-postgres}" -d "$DB_NAME" <<'SQL'
 CREATE SCHEMA IF NOT EXISTS member;
 CREATE SCHEMA IF NOT EXISTS product;
-CREATE SCHEMA IF NOT EXISTS "order";
+CREATE SCHEMA IF NOT EXISTS orders;
 CREATE SCHEMA IF NOT EXISTS payment;
 CREATE SCHEMA IF NOT EXISTS settlement;
 SQL
 
-echo "5개 스키마 생성 완료 (member, product, order, payment, settlement) @ $CONTAINER/$DB_NAME"
+echo "5개 스키마 생성 완료 (member, product, orders, payment, settlement) @ $CONTAINER/$DB_NAME"

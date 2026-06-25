@@ -10,16 +10,9 @@ spring:
   jpa:
     properties:
       hibernate:
-        default_schema: order # 스키마 분리
+        default_schema: orders # 스키마 분리
     hibernate:
-      ddl-auto: update
-  kafka:
-    consumer:
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      ddl-auto: validate
 springdoc:
   api-docs:
     path: /api-docs
