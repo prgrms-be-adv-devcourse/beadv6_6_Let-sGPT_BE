@@ -99,7 +99,7 @@ public class SecurityConfig {
                         .pathMatchers(HttpMethod.GET, "/api/v1/seller/me").hasRole("SELLER")
                         .pathMatchers("/api/v1/seller/me/**").hasRole("SELLER")
 
-                        // 관리자 전용: 판매자 정보 UUID 단건 조회
+                        // 관리자 전용: userId로 해당 회원의 판매자 정보 전체 조회
                         .pathMatchers(HttpMethod.GET, "/api/v1/seller/*").hasRole("ADMIN")
 
                         // 그 외 seller 경로 (확장 대비)
