@@ -60,6 +60,24 @@ services:
           memory: 1000M
     restart: always
 
+  # DB/Kafka 연결이 없는 순수 WebFlux 라우팅·필터링 게이트웨이라
+  # JPA+Web+Kafka를 다 갖는 다른 도메인 서비스보다 메모리를 훨씬 적게 잡는다.
+  apigateway:
+    image: ghcr.io/${GITHUB_REPOSITORY}/apigateway:latest
+    container_name: dev-apigateway
+    ports:
+      - "8000:8000"
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms64m -Xmx128m"
+      SPRING_PROFILES_ACTIVE: compose
+    depends_on:
+      - member
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    restart: always
+
   member:
     image: ghcr.io/${GITHUB_REPOSITORY}/member:latest
     container_name: dev-member
