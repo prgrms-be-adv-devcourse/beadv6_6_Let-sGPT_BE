@@ -10,8 +10,14 @@ spring:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+    urls-primary-name: all-services
+    persist-authorization: true
     urls:
+      - name: all-services
+        url: /v3/api-docs/all
       - name: member-service
         url: /member/api-docs
       - name: payment-service
         url: /payment/api-docs
+      - name: settlement-service
+        url: /settlement/api-docs

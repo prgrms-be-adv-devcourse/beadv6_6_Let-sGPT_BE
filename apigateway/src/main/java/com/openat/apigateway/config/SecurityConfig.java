@@ -105,6 +105,10 @@ public class SecurityConfig {
                         // 그 외 seller 경로 (확장 대비)
                         .pathMatchers("/api/v1/seller/**").authenticated()
 
+                        // 정산 관리자 전용
+                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/admin/*").authenticated()
+                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/seller/*").authenticated()
+
 //                        // 판매자만
 //                        .pathMatchers(
 //                                /** 엔드포인트 작성 **/

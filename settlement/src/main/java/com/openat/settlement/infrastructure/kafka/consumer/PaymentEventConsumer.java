@@ -15,6 +15,18 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * Payment Service의 Kafka 이벤트를 수신하는 정산 Consumer입니다.
+ *
+ *
+ * [Kafka payment-events 토픽에서 이벤트 수신]
+ *         ↓
+ * [PaymentEventConsumer]
+ *         ↓
+ * [paymentEventAclMapper로 정산 서비스용 Command로 변환]
+ *         ↓
+ * [SettlementOrderUseCase 또는 SettlementService 호출]
+ *         ↓
+ * [settlement_order / settlement_refund 저장 또는 수정]
+ *
  */
 @Slf4j
 @Component

@@ -23,7 +23,7 @@ import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("${api.init}/seller/settlements")
+@RequestMapping("${api.init}/settlements/seller")
 public class SellerSettlementController {
 
     private static final int DEFAULT_PAGE = 0;
@@ -37,7 +37,7 @@ public class SellerSettlementController {
             summary = "판매자 정산 주문 목록 조회",
             description = "정산월, 정산 상태, 판매자 ID, 주문 ID 조건으로 정산 주문 목록을 페이징 조회합니다. 조건을 입력하지 않으면 전체 정산 주문을 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
     )
-    @GetMapping("/orders")
+    @GetMapping("orders")
     public ResponseEntity<PageResponse<SettlementOrderSummary>> findSettlementOrders(
             @Parameter(description = "정산월입니다. yyyyMM 형식으로 입력합니다. 예: 202506")
             @RequestParam(required = false) String settlementMonth,
@@ -69,7 +69,7 @@ public class SellerSettlementController {
             summary = "판매자 정산 결과 조회",
             description = "정산월, 판매자 ID, 판매자 정산 상태 조건으로 판매자별 월 정산 결과 목록을 페이징 조회합니다. 조건을 입력하지 않으면 전체 판매자 정산 결과를 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
     )
-    @GetMapping("/sellers")
+    @GetMapping("sellers")
     public ResponseEntity<PageResponse<SellerSettlementSummary>> findSellerSettlements(
             @Parameter(description = "정산월입니다. yyyyMM 형식으로 입력합니다. 예: 202506")
             @RequestParam(required = false) String settlementMonth,
