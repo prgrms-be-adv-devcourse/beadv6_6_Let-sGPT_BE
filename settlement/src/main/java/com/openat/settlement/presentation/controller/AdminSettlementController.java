@@ -32,8 +32,8 @@ import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("${api.init}/settlements")
-public class SettlementController {
+@RequestMapping("${api.init}/settlements/admin")
+public class AdminSettlementController {
 
     private static final int DEFAULT_PAGE = 0;
     private static final int DEFAULT_SIZE = 20;
@@ -43,10 +43,10 @@ public class SettlementController {
     private final SettlementQueryUseCase settlementQueryUseCase;
 
     @Operation(
-            summary = "전체 정산 주문 목록 조회",
+            summary = "관리자용 전체 정산 주문 목록 조회",
             description = "정산월, 정산 상태, 판매자 ID, 주문 ID 조건으로 정산 주문 목록을 페이징 조회합니다. 조건을 입력하지 않으면 전체 정산 주문을 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
     )
-    @GetMapping("/orders")
+    @GetMapping("orders")
     public ResponseEntity<PageResponse<SettlementOrderSummary>> findSettlementOrders(
             @Parameter(description = "정산월입니다. yyyyMM 형식으로 입력합니다. 예: 202506")
             @RequestParam(required = false) String settlementMonth,
@@ -75,10 +75,10 @@ public class SettlementController {
     }
 
     @Operation(
-            summary = "전체 판매자 정산 결과 조회",
+            summary = "관리자용 전체 판매자 정산 결과 조회",
             description = "정산월, 판매자 ID, 판매자 정산 상태 조건으로 판매자별 월 정산 결과 목록을 페이징 조회합니다. 조건을 입력하지 않으면 전체 판매자 정산 결과를 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
     )
-    @GetMapping("/sellers")
+    @GetMapping("sellers")
     public ResponseEntity<PageResponse<SellerSettlementSummary>> findSellerSettlements(
             @Parameter(description = "정산월입니다. yyyyMM 형식으로 입력합니다. 예: 202506")
             @RequestParam(required = false) String settlementMonth,
@@ -104,10 +104,10 @@ public class SettlementController {
     }
 
     @Operation(
-            summary = "월 자동 배치 결과 조회",
+            summary = "관리자용 월 자동 배치 결과 조회",
             description = "정산월과 배치 상태 조건으로 월 자동 정산 배치 실행 결과를 페이징 조회합니다. 조건을 입력하지 않으면 전체 배치 실행 결과를 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
     )
-    @GetMapping("/batch-results")
+    @GetMapping("batch-results")
     public ResponseEntity<PageResponse<SettlementBatchResultSummary>> findSettlementBatchResults(
             @Parameter(description = "정산월입니다. yyyyMM 형식으로 입력합니다. 예: 202506")
             @RequestParam(required = false) String settlementMonth,
@@ -133,7 +133,7 @@ public class SettlementController {
             summary = "실패 판매자 정산 재처리",
             description = "지정한 정산월에서 FAILED 상태인 판매자 정산 결과만 조회해 SETTLEMENT_RETRY 배치를 생성하고 재정산합니다."
     )
-    @PostMapping("/retry-failed")
+    @PostMapping("retry-failed")
     public ResponseEntity<RetryFailedSellerSettlementsResponse> retryFailedSellerSettlements(
             @Parameter(description = "재처리할 정산월입니다. yyyyMM 형식으로 입력합니다. 예: 202506", required = true)
             @RequestParam String settlementMonth

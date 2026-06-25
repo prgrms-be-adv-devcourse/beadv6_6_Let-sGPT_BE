@@ -1,5 +1,7 @@
 package com.openat.settlement.application.service;
 
+import com.openat.settlement.application.dto.RecordPaymentCompletedCommand;
+import com.openat.settlement.application.dto.RecordPaymentRefundedCommand;
 import com.openat.settlement.domain.model.RefundReflectedType;
 import com.openat.settlement.domain.model.SettlementAdjustment;
 import com.openat.settlement.domain.model.SettlementOrder;
@@ -7,8 +9,6 @@ import com.openat.settlement.domain.model.SettlementRefund;
 import com.openat.settlement.domain.repository.SettlementAdjustmentRepository;
 import com.openat.settlement.domain.repository.SettlementOrderRepository;
 import com.openat.settlement.domain.repository.SettlementRefundRepository;
-import com.openat.settlement.infrastructure.kafka.event.PaymentCompletedEvent;
-import com.openat.settlement.infrastructure.kafka.event.PaymentRefundedEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,37 +29,37 @@ public class PaymentSettlementEventService {
      * 환불 이벤트가 먼저 들어온 경우를 대비해서 기존 BEFORE_SETTLEMENT 환불 총합도 재반영합니다.
      */
     @Transactional
-    public void upsertSettlementOrder(PaymentCompletedEvent event) {
-        SettlementOrder settlementOrder = settlementOrderRepository.findByOrderId(event.orderId())
+    public void upsertSettlementOrder(RecordPaymentCompletedCommand command) {
+        SettlementOrder settlementOrder = settlementOrderRepository.findByOrderId(command.orderId())
                 .map(existingOrder -> {
                     if (existingOrder.isCompleted()) {
                         return existingOrder;
                     }
 
                     existingOrder.updateFromPaymentCompleted(
-                            event.paymentId(),
-                            event.sellerId(),
-                            event.buyerId(),
-                            event.productId(),
-                            event.settlementMonth(),
-                            event.orderAmount(),
-                            event.paidAmount(),
-                            event.feeAmount(),
-                            event.paidAt()
+                            command.paymentId(),
+                            command.sellerId(),
+                            command.buyerId(),
+                            command.productId(),
+                            command.settlementMonth(),
+                            command.orderAmount(),
+                            command.paidAmount(),
+                            command.feeAmount(),
+                            command.paidAt()
                     );
                     return existingOrder;
                 })
                 .orElseGet(() -> SettlementOrder.create(
-                        event.paymentId(),
-                        event.orderId(),
-                        event.sellerId(),
-                        event.buyerId(),
-                        event.productId(),
-                        event.settlementMonth(),
-                        event.orderAmount(),
-                        event.paidAmount(),
-                        event.feeAmount(),
-                        event.paidAt()
+                        command.paymentId(),
+                        command.orderId(),
+                        command.sellerId(),
+                        command.buyerId(),
+                        command.productId(),
+                        command.settlementMonth(),
+                        command.orderAmount(),
+                        command.paidAmount(),
+                        command.feeAmount(),
+                        command.paidAt()
                 ));
 
         if (settlementOrder.isCompleted()) {
@@ -68,7 +68,7 @@ public class PaymentSettlementEventService {
 
         long totalBeforeSettlementRefundAmount =
                 settlementRefundRepository.sumRefundAmountByOrderIdAndReflectedType(
-                        event.orderId(),
+                        command.orderId(),
                         RefundReflectedType.BEFORE_SETTLEMENT
                 );
 
@@ -82,26 +82,26 @@ public class PaymentSettlementEventService {
      * 정산 완료 후 환불이면 settlement_adjustments에 차감 보정 데이터를 생성합니다.
      */
     @Transactional
-    public void saveSettlementRefund(PaymentRefundedEvent event) {
-        if (settlementRefundRepository.existsByRefundId(event.refundId())) {
+    public void saveSettlementRefund(RecordPaymentRefundedCommand command) {
+        if (settlementRefundRepository.existsByRefundId(command.refundId())) {
             return;
         }
 
-        SettlementOrder settlementOrder = settlementOrderRepository.findByOrderId(event.orderId())
+        SettlementOrder settlementOrder = settlementOrderRepository.findByOrderId(command.orderId())
                 .orElse(null);
 
         RefundReflectedType reflectedType = determineReflectedType(settlementOrder);
 
         SettlementRefund settlementRefund = SettlementRefund.create(
-                event.refundId(),
-                event.paymentId(),
-                event.orderId(),
-                event.sellerId(),
-                event.buyerId(),
-                event.refundAmount(),
-                event.refundReason(),
+                command.refundId(),
+                command.paymentId(),
+                command.orderId(),
+                command.sellerId(),
+                command.buyerId(),
+                command.refundAmount(),
+                command.refundReason(),
                 reflectedType,
-                event.refundedAt()
+                command.refundedAt()
         );
 
         settlementRefundRepository.save(settlementRefund);
@@ -109,7 +109,7 @@ public class PaymentSettlementEventService {
         if (settlementOrder != null && settlementOrder.isReady()) {
             long totalBeforeSettlementRefundAmount =
                     settlementRefundRepository.sumRefundAmountByOrderIdAndReflectedType(
-                            event.orderId(),
+                            command.orderId(),
                             RefundReflectedType.BEFORE_SETTLEMENT
                     );
 
@@ -119,7 +119,7 @@ public class PaymentSettlementEventService {
         }
 
         if (reflectedType == RefundReflectedType.AFTER_SETTLEMENT) {
-            createPostRefundAdjustment(event);
+            createPostRefundAdjustment(command);
         }
     }
 
@@ -135,18 +135,18 @@ public class PaymentSettlementEventService {
         return RefundReflectedType.BEFORE_SETTLEMENT;
     }
 
-    private void createPostRefundAdjustment(PaymentRefundedEvent event) {
-        if (settlementAdjustmentRepository.existsByRefundId(event.refundId())) {
+    private void createPostRefundAdjustment(RecordPaymentRefundedCommand command) {
+        if (settlementAdjustmentRepository.existsByRefundId(command.refundId())) {
             return;
         }
 
         SettlementAdjustment adjustment = SettlementAdjustment.createPostRefund(
-                event.sellerId(),
-                event.orderId(),
-                event.refundId(),
-                event.settlementMonth(),
-                event.refundAmount(),
-                event.refundReason()
+                command.sellerId(),
+                command.orderId(),
+                command.refundId(),
+                command.settlementMonth(),
+                command.refundAmount(),
+                command.refundReason()
         );
 
         settlementAdjustmentRepository.save(adjustment);
