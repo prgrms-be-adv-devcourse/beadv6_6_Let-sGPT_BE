@@ -38,9 +38,18 @@ spring:
                 - Path=/payment/**
               filters:
                 - StripPrefix=1
+            - id: settlement-api
+              uri: http://settlement:9140
+              predicates:
+                - Path=/api/v1/settlements/**
             - id: settlement
               uri: http://settlement:9140
               predicates:
                 - Path=/settlement/**
               filters:
                 - StripPrefix=1
+
+openapi:
+  aggregate:
+    member-docs-url: http://member:9100/api-docs
+    settlement-docs-url: http://settlement:9140/api-docs
