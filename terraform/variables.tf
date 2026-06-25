@@ -74,16 +74,3 @@ variable "s3_app_prefix" {
   type        = string
   default     = "app/"
 }
-
-# ---------------------------------------------------------------------
-# GitHub OIDC
-# ---------------------------------------------------------------------
-
-variable "github_repo" {
-  description = <<-EOT
-    GitHub Actions OIDC 신뢰 정책에 사용할 레포지토리 (형식: "owner/repo").
-    예: "myorg/myrepo" → 해당 레포의 모든 브랜치/태그/환경에서 IAM Role을 assume할 수 있음.
-    특정 브랜치만 허용하려면 iam.tf의 sub 조건을 "repo:owner/repo:ref:refs/heads/main" 으로 변경.
-  EOT
-  type        = string
-}

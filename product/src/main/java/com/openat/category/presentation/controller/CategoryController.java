@@ -23,12 +23,14 @@ public class CategoryController implements CategoryApiSpec {
 
   private final CategoryCommandUseCase categoryCommandUseCase;
 
+  @Override
   @PostMapping
   public ResponseEntity<Void> create(@Valid @RequestBody CategoryCreateRequest request) {
     UUID categoryId = categoryCommandUseCase.create(request.toCommand());
     return ResponseEntity.created(Locations.fromCurrentRequest(categoryId)).build();
   }
 
+  @Override
   @PatchMapping("/{id}")
   public ResponseEntity<Void> update(
       @PathVariable UUID id, @Valid @RequestBody CategoryUpdateRequest request) {
@@ -36,6 +38,7 @@ public class CategoryController implements CategoryApiSpec {
     return ResponseEntity.noContent().build();
   }
 
+  @Override
   @DeleteMapping("/{id}")
   public ResponseEntity<Void> delete(@PathVariable UUID id) {
     categoryCommandUseCase.delete(id);

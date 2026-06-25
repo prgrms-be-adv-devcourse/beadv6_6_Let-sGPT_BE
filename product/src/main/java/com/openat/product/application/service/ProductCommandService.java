@@ -2,8 +2,11 @@ package com.openat.product.application.service;
 
 import com.openat.category.application.usecase.CategoryQueryUseCase;
 import com.openat.category.domain.model.Category;
+import com.openat.common.exception.BusinessException;
 import com.openat.product.application.dto.ProductCreateCommand;
+import com.openat.product.application.dto.ProductUpdateCommand;
 import com.openat.product.application.usecase.ProductCommandUseCase;
+import com.openat.product.domain.error.ProductErrorCode;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import java.util.UUID;
@@ -21,8 +24,8 @@ public class ProductCommandService implements ProductCommandUseCase {
 
   @Override
   public UUID create(ProductCreateCommand command) {
-    Category category =
-        command.categoryId() == null ? null : categoryQueryUseCase.getById(command.categoryId());
+    // TODO: 현재 memberId가 임시로 바인딩됨 - 회원 도메인 연동 후 '회원-판매자 소유권 검증' 로직 추가 필요
+    Category category = toCategory(command.categoryId());
 
     Product newProduct =
         Product.create()
@@ -35,5 +38,42 @@ public class ProductCommandService implements ProductCommandUseCase {
             .build();
 
     return productRepository.save(newProduct).getId();
+  }
+
+  @Override
+  public void update(ProductUpdateCommand command) {
+    Product product = getOwnedProduct(command.id(), command.sellerId());
+    Category category = toCategory(command.categoryId());
+
+    // TODO: 진행 중(OPEN)인 드롭이 존재할 경우 상품 수정 제약 조건 적용
+    product.update(
+        command.name(), command.description(), category, command.price(), command.thumbnailKey());
+  }
+
+  @Override
+  public void delete(UUID id, UUID sellerId) {
+    Product product = getOwnedProduct(id, sellerId);
+
+    // TODO: 진행 중(OPEN)인 드롭이 존재할 경우 삭제 차단 및 하위 드롭 Soft Delete 전파(이벤트 처리)
+    productRepository.delete(product);
+  }
+
+  private Category toCategory(UUID categoryId) {
+    if (categoryId == null) {
+      return null;
+    }
+    return categoryQueryUseCase.getById(categoryId);
+  }
+
+  private Product getOwnedProduct(UUID id, UUID sellerId) {
+    // TODO: 회원-판매자 소유권 검증은 이 메서드 호출 전(서비스 진입부)에 선행되어야 함 (이 메서드는 상품-판매자 매핑만 검증)
+    Product product =
+        productRepository
+            .findById(id)
+            .orElseThrow(() -> new BusinessException(ProductErrorCode.NOT_FOUND));
+    if (!product.getSellerId().equals(sellerId)) {
+      throw new BusinessException(ProductErrorCode.NOT_OWNER);
+    }
+    return product;
   }
 }

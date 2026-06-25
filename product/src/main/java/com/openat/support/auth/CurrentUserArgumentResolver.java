@@ -9,7 +9,7 @@ import org.springframework.web.method.support.ModelAndViewContainer;
 
 public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolver {
 
-  // TODO: 회원 도메인/게이트웨이 인증 연동 전까지 X-User-Id 헤더를 신뢰해 사용자 식별자로 사용 -> JWT 컨텍스트 추출로 교체
+  // TODO: 임시 인증 스텁 - 헤더의 X-User-Id를 검증 없이 주입 (실제 연동 시 이 클래스 삭제 및 UserContext 전환 예정)
   private static final String USER_ID_HEADER = "X-User-Id";
 
   @Override

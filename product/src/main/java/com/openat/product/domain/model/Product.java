@@ -18,6 +18,8 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
+import org.hibernate.annotations.SoftDelete;
+import org.hibernate.annotations.SoftDeleteType;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
@@ -29,6 +31,7 @@ import org.hibernate.annotations.UuidGenerator;
       @Index(name = "idx_products_seller_id", columnList = "seller_id"),
       @Index(name = "idx_products_category_id", columnList = "category_id")
     })
+@SoftDelete(strategy = SoftDeleteType.TIMESTAMP, columnName = "deleted_at")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Product {
 
@@ -74,6 +77,15 @@ public class Product {
       Long price,
       String thumbnailKey) {
     this.sellerId = sellerId;
+    this.name = name;
+    this.description = description;
+    this.category = category;
+    this.price = price;
+    this.thumbnailKey = thumbnailKey;
+  }
+
+  public void update(
+      String name, String description, Category category, Long price, String thumbnailKey) {
     this.name = name;
     this.description = description;
     this.category = category;

@@ -1,7 +1,7 @@
 # PRODUCT.md — 상품(product) 모듈 가이드
 
 > 담당 도메인인 **상품 모듈 내부**의 구조·컨벤션을 정리한 문서.
-> 전 서비스 공통 정보·컨벤션은 [`../../docs/PROJECT.md`](../../docs/PROJECT.md), 결정 근거는 [`DECISIONS.md`](DECISIONS.md), 재고 게이트키퍼 상세는 [`STOCK_GATEKEEPER.md`](STOCK_GATEKEEPER.md).
+> 전 서비스 공통 정보·컨벤션은 [`../../docs/PROJECT.md`](../../docs/PROJECT.md), 결정 근거는 [`DECISIONS.md`](DECISIONS.md), 재고 게이트키퍼 상세는 [`STOCK_GATEKEEPER.md`](STOCK_GATEKEEPER.md), 테스트 작성은 [`TEST_CONVENTION.md`](TEST_CONVENTION.md).
 > 여기엔 **product 내부에서만 닫히는 규칙**만 적는다(전역과 겹치면 PROJECT.md를 따른다). 내부 컨벤션을 바꾸면 `DECISIONS.md`에 근거를 남긴다.
 
 ---
@@ -63,11 +63,13 @@ com.openat
 ## 6. 네이밍 / 생성 컨벤션 (product 특화)
 - **엔티티 생성 = 의미론적 빌더**: `Product.create()` · `Drop.schedule()` · `StockHistory.record()`. (DECISIONS 2026-06-19 #5)
 - **CQRS 경량(서비스 분리)**: application 포트·서비스를 읽기/쓰기로 분리 — `Xxx`**`Query`**`UseCase`+`Xxx`**`Query`**`Service`(`@Transactional(readOnly = true)` 클래스 레벨) / `Xxx`**`Command`**`UseCase`+`Xxx`**`Command`**`Service`(`@Transactional`). 필요한 쪽만 생성하고, 경계를 넘는 의존은 읽기(Query) 포트로 제한. (DECISIONS 2026-06-22 #4)
+- **같은 서브도메인 내 서비스는 자기 도메인의 다른 서비스를 참조하지 않는다**: Command/Query 서비스는 각자 책임(쓰기/읽기)만 진다. Command가 엔티티를 로드해야 하면 같은 도메인 Query 서비스를 부르지 말고 **자기 `Repository.findById().orElseThrow()`를 직접** 쓴다(여러 메서드가 공유하면 private 헬퍼로 — 예: `getCategory`·`getOwnedProduct`). 서비스가 다른 서비스의 유스케이스를 참조하는 것은 **다른 서브도메인**의 application 포트에 한한다(예: `ProductCommandService` → `CategoryQueryUseCase`, §4).
 - **DTO**: presentation `~Request`/`~Response`, application 쓰기 입력 `~Command` / 읽기 입력 `~Query` / 출력 `~Info`. 생성 흐름 동사는 **`create`로 통일**(컨트롤러 메서드·usecase·빌더까지 한 단어).
 - **영속 포트 구현**: `<Aggregate>JpaRepository`(Spring Data 인터페이스) + `<Aggregate>RepositoryAdaptor`(`@Repository`, 도메인 포트 구현).
-- **조회 네이밍 — `get`/`find` 구분**: `getXxx`는 없으면 예외를 던진다(반드시 존재 보장). `findXxx`는 `Optional`을 반환한다(없을 수 있음). 예: 포트 `CategoryQueryUseCase.getById`(NOT_FOUND throw) ↔ 리포지토리 `findById`(Optional).
+- **조회 네이밍 — `get`/`find`/`search` 구분**: `getXxx`는 없으면 예외를 던진다(반드시 존재 보장). `findXxx`는 `Optional`을 반환한다(없을 수 있음). `searchXxx`는 동적 조건으로 목록을 조회한다(`Page`/`List` 반환, 결과 없으면 빈 결과). 예: 단건 `getById`(NOT_FOUND throw) ↔ 리포지토리 `findById`(Optional) ↔ 목록 `searchProducts`(동적 조건 검색). 단순 식별자 단건이 아니라 조건 기반 목록이면 `getXxx(s)`가 아니라 `searchXxx`를 쓴다.
 - **엔티티 변수명**: 로드한 **기존** 엔티티는 엔티티명 그대로(`category`), **새로 생성**(미영속) 엔티티는 `new<Entity>`(`newCategory`·`newProduct`). 단, 한 스코프에 신규·기존이 함께 있어 비교가 필요하면 맥락에 어울리는 이름으로 구분한다.
 - **메서드 본문 — 사고 흐름 단계대로**: 메서드 내부 코드는 사람의 사고 흐름 단계와 일치하도록 단계별로 작성한다. 동일 성능이면 가독성을 우선하고, 중첩 호출로 압축하기보다 단계를 지역 변수로 풀어 한 문장당 하나의 일로 읽히게 한다.
+- **로컬 헬퍼 추출 기준**: 한 메서드에서만 쓰는 로직은 private 메서드로 분리하지 않고 본문에 인라인한다(위 단계 원칙대로 푼다). **둘 이상의 메서드가 공유할 때만** private로 추출한다(예: `ProductCommandService.resolveCategory`·`findOwnedProduct`). 서브도메인을 넘어 반복되면 `support`로 승격을 검토한다.
 - **에러코드**: 서브도메인별 enum(`CategoryErrorCode` 등)이 `common.error.ErrorCode`를 구현. 클라이언트 노출 `code` 문자열은 안정적으로 유지(예: `"CATEGORY_NOT_FOUND"`).
 
 ---
@@ -78,6 +80,14 @@ com.openat
 - **인덱스**: FK 및 타 도메인 값 참조 컬럼에 부여. 이름 `idx_<table>_<column>`, 유니크 `uk_<table>_<…>`. (DECISIONS 2026-06-19 #6)
 - 타 도메인/서비스 참조는 **값 참조(UUID)**, FK 아님(예: `StockHistory.orderId`/`buyerId`).
 - **재고 이력 원장(`stock_histories`)**: append-only, 부호 있는 `quantity_delta`, `UNIQUE(order_id, change_type)`로 멱등. (DECISIONS 2026-06-22 #1, 상세 STOCK_GATEKEEPER)
+- **N+1 방어**: LAZY 연관 조회의 N+1은 전역 `default_batch_fetch_size`(IN 배치)를 안전망으로 둔다(`application.yml`). 동적·복잡 조회는 **QueryDSL**(OpenFeign 포크)로 작성한다 — 상품 목록 조회(`ProductRepositoryAdaptor.search`)부터 적용. ToOne 연관은 `fetchJoin`으로 단일 쿼리화한다.
+- **QueryDSL 작성 규칙**: 적용 대상은 **동적 조건·N+1 위험 조회만**(단순 단건·존재 조회는 Spring Data 메서드 유지).
+  - **위치**: 영속 어댑터(`<Aggregate>RepositoryAdaptor`)가 `JPAQueryFactory`로 직접 구현한다. 전용 QueryDSL 클래스·공용 유틸을 따로 두지 않고 어댑터에 응집(빈은 `config.QueryDslConfig`). 구 `QuerydslRepositorySupport`는 쓰지 않는다.
+  - **검색 조건**: 포트는 도메인 질의 명세(`~SearchCondition` @ `domain.repository`)를 받는다(application DTO를 포트로 넘기지 않음). presentation `~SearchRequest.toCondition()`으로 변환.
+  - **동적 where**: `BooleanBuilder` + `if`로 메서드 본문에서 조립한다(null/blank 조건은 추가하지 않음). content·count 쿼리가 같은 `where`를 공유.
+  - **N+1·페이징**: **ToOne 연관만 `fetchJoin`**(컬렉션은 페이징이 깨지므로 금지 → batch 안전망 사용). count는 fetchJoin 없이 분리하고 `PageableExecutionUtils.getPage`로 감싼다.
+  - **정렬**: 실제 요구가 있을 때만 도입한다(현재 상품 목록은 최신순 `createdAt desc` 고정). 사용자 선택 정렬이 필요해지면 허용 필드 화이트리스트로 변환한다.
+  - **테스트**: 영속 슬라이스는 `@Import`에 `QueryDslConfig`를 포함한다(`@DataJpaTest`는 `@Configuration`을 스캔하지 않아 `JPAQueryFactory` 빈이 없음).
 
 ---
 
@@ -88,7 +98,7 @@ com.openat
 **컨트롤러는 얇게** — 명세 구현 + 인증 추출 + 검증 + 유스케이스 호출 + 응답 구성만. 비즈니스 로직은 service.
 - Swagger 명세 전담 인터페이스(`ProductApiSpec`)를 `implements` → 컨트롤러엔 제어 흐름만, 문서 어노테이션은 인터페이스로 분리.
 - 인증 식별자(`@CurrentUser UUID`)는 **회원(memberId)** 이다(게이트웨이 전달, 현재 임시 `X-User-Id`). **API 명세엔 노출하지 않는다**(내부 파라미터).
-- 상품 소유 주체인 **판매자(`sellerId`)는 회원과 1:N**이라 memberId에서 곧장 얻지 못한다 — sellerId 해석 방식은 게이트웨이/JWT 인증 연동 시 확정(**열린 설계 포인트**). 현 코드는 인증 스텁 단계라 임시로 인증 주체를 sellerId로 사용.
+- 상품 소유 주체인 **판매자(`sellerId`)는 회원과 1:N**이라 memberId에서 곧장 얻지 못한다 — sellerId 해석 방식은 게이트웨이/JWT 인증 연동 시 확정(**열린 설계 포인트**). 현 코드는 인증 스텁 단계라 임시로 인증 주체를 sellerId로 사용 — **임시 연동 방침·교체 대상은 §12.**
 - 입력 검증은 `@Valid`(Bean Validation). 단일 진입 가정으로 도메인 중복 검증 생략. (`spring-boot-starter-validation`)
 
 **예외**
@@ -108,7 +118,7 @@ com.openat
 
 ## 9. 보안 (임시)
 - 현재 `config.SecurityConfig`: `csrf` off + `anyRequest().permitAll()`.
-- **임시 베이스라인**이다 — 게이트웨이/JWT 인증(PROJECT §3)이 붙으면 교체한다.
+- **임시 베이스라인**이다 — 게이트웨이/JWT 인증(PROJECT §3)이 붙으면 교체한다. (판매자 식별 연동 방침은 §12)
 
 ---
 
@@ -134,7 +144,30 @@ com.openat
 
 ---
 
-## 12. 참고
+## 12. 인증·판매자 식별 연동 (임시 지침)
+
+> 회원 도메인의 게이트웨이/JWT 인증은 dev에 병합됐으나 **product 연동은 미완**이다. 아래는 **확정 전 임시 방침**으로, 회원 측 소유권 검증 API가 구현돼 dev에 병합되면 **그 코드 기준으로 맞춰 교체**한다. (전역 인증 계약은 PROJECT §3)
+
+**현재 상태 (임시 스텁)**
+- 게이트웨이는 `X-User-Id`로 **memberId**만 전달한다(+`X-User-Roles`). sellerId는 토큰·헤더에 없다(회원:판매자 1:N).
+- product는 임시로 `support.auth.CurrentUserArgumentResolver`가 `X-User-Id`를 `@CurrentUser UUID sellerId`에 그대로 주입 → **memberId를 sellerId로 오용**하며, 소유권 검증이 없다.
+
+**연동 방침 (미확정 — 합의된 방향)**
+- **신뢰 모델: 도메인 자체 검증(요청마다).** 게이트웨이가 sellerId를 보증하지 않으므로, product가 "인증 회원(memberId)이 행위 대상 sellerId를 실제 소유하는지"를 회원 도메인에 확인한다. (근거: DECISIONS 2026-06-25 — JWT에 sellerId를 싣는 방식은 오버엔지니어링으로 보고, 요청마다 내부 API로 검증)
+- **행위 대상 sellerId는 클라이언트가 요청에 실어 보낸다**(활성 판매자 선택). product는 소유권 검증을 통과한 뒤에만 신뢰한다.
+- **검증 경로: OpenFeign 내부 동기 API**(product→member). product의 첫 내부 동기 호출 사례가 된다.
+- **fail-closed**: 검증 호출 실패(회원 서비스 장애 등)는 거부로 처리하고, "소유 아님(정상 거부)"과 명확히 구분한다.
+- **책임 분리**: 회원 API는 "소유 여부(사실)"만 반환하고, 인가 결정(허용/거부)은 product가 내린다.
+- **미확정**: 응답 형식(boolean 여부)·수신 헤더 이름·검증 API 경로/시그니처는 **회원 도메인이 구현 시 확정** → product는 그에 맞춰 연동한다.
+
+**연동 시 교체 대상**
+- `support.auth.*`(임시 `@CurrentUser`/Resolver) → `common.auth.UserContext`로 memberId 취득 + 행위 sellerId 수신 + 소유권 검증.
+- `ProductCommandService`의 `create`(검증 없음)·`getOwnedProduct`(상품↔seller만 확인) → sellerId 신뢰 전 회원 소유권 검증 삽입.
+
+---
+
+## 13. 참고
+- 테스트 작성 지침: [`TEST_CONVENTION.md`](TEST_CONVENTION.md)
 - 결정 근거: [`DECISIONS.md`](DECISIONS.md)
 - 재고 게이트키퍼 설계: [`STOCK_GATEKEEPER.md`](STOCK_GATEKEEPER.md)
 - 전역 정보·컨벤션: [`../../docs/PROJECT.md`](../../docs/PROJECT.md)
