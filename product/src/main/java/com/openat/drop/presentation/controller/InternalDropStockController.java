@@ -5,6 +5,7 @@ import com.openat.drop.presentation.dto.StockChangeRequest;
 import com.openat.drop.presentation.dto.StockChangeResponse;
 import com.openat.support.web.InternalApi;
 import jakarta.validation.Valid;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -27,5 +28,15 @@ public class InternalDropStockController {
       @PathVariable UUID dropId, @Valid @RequestBody StockChangeRequest request) {
     long remaining = dropStockUseCase.deduct(request.toCommand(dropId));
     return ResponseEntity.ok(new StockChangeResponse(remaining));
+  }
+
+  @PostMapping("/{dropId}/stock-rollbacks")
+  public ResponseEntity<StockChangeResponse> rollback(
+      @PathVariable UUID dropId, @Valid @RequestBody StockChangeRequest request) {
+    Optional<Long> remaining = dropStockUseCase.rollback(request.toCommand(dropId));
+    if (remaining.isEmpty()) {
+      return ResponseEntity.noContent().build();
+    }
+    return ResponseEntity.ok(new StockChangeResponse(remaining.get()));
   }
 }

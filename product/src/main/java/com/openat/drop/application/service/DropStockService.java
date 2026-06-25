@@ -4,11 +4,14 @@ import com.openat.common.exception.BusinessException;
 import com.openat.drop.application.dto.DropStockCommand;
 import com.openat.drop.application.usecase.DropStockUseCase;
 import com.openat.drop.domain.error.DropErrorCode;
+import com.openat.drop.domain.model.DropStatus;
 import com.openat.drop.domain.model.StockChangeType;
 import com.openat.drop.domain.repository.DropCacheRepository;
+import com.openat.drop.domain.repository.DropRepository;
 import com.openat.drop.domain.repository.StockCommandResult;
 import com.openat.drop.domain.repository.StockMutation;
 import java.time.Instant;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -20,6 +23,7 @@ public class DropStockService implements DropStockUseCase {
 
   private final DropCacheRepository dropCacheRepository;
   private final StockHistoryRecorder stockHistoryRecorder;
+  private final DropRepository dropRepository;
 
   @Override
   public long deduct(DropStockCommand command) {
@@ -36,6 +40,20 @@ public class DropStockService implements DropStockUseCase {
     };
   }
 
+  @Override
+  public Optional<Long> rollback(DropStockCommand command) {
+    StockMutation mutation = command.toMutation();
+    StockCommandResult restoration = dropCacheRepository.rollback(mutation);
+    return switch (restoration.status()) {
+      case OK ->
+          Optional.of(
+              persistOrCompensate(mutation, StockChangeType.ROLLBACK, restoration.remaining()));
+      case DUPLICATE -> Optional.of(restoration.remaining());
+      case NOT_CACHED -> rollbackWithoutLiveCache(mutation);
+      default -> throw new IllegalStateException("롤백에서 허용되지 않은 캐시 결과 발생: " + restoration.status());
+    };
+  }
+
   private long persistOrCompensate(
       StockMutation mutation, StockChangeType changeType, long remaining) {
     try {
@@ -48,6 +66,18 @@ public class DropStockService implements DropStockUseCase {
       compensateCache(mutation, changeType);
       throw persistenceFailure;
     }
+  }
+
+  private Optional<Long> rollbackWithoutLiveCache(StockMutation mutation) {
+    boolean dropIsActive =
+        dropRepository
+            .findById(mutation.dropId())
+            .map(drop -> drop.getStatus() != DropStatus.CLOSE)
+            .orElse(false);
+    if (dropIsActive) {
+      tryRecordHistory(mutation, StockChangeType.ROLLBACK);
+    }
+    return Optional.empty();
   }
 
   private boolean tryRecordHistory(StockMutation mutation, StockChangeType changeType) {
