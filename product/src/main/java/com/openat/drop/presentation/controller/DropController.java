@@ -8,6 +8,8 @@ import jakarta.validation.Valid;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,5 +28,12 @@ public class DropController implements DropApiSpec {
       @CurrentUser UUID sellerId, @Valid @RequestBody DropCreateRequest request) {
     UUID dropId = dropCommandUseCase.create(request.toCommand(sellerId));
     return ResponseEntity.created(Locations.fromCurrentRequest(dropId)).build();
+  }
+
+  @Override
+  @DeleteMapping("/{dropId}")
+  public ResponseEntity<Void> delete(@CurrentUser UUID sellerId, @PathVariable UUID dropId) {
+    dropCommandUseCase.delete(dropId, sellerId);
+    return ResponseEntity.noContent().build();
   }
 }

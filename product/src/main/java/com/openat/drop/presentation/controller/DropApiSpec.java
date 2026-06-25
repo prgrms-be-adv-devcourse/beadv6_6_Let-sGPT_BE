@@ -19,4 +19,11 @@ public interface DropApiSpec {
       headers = @Header(name = "Location", description = "생성된 리소스 URI"))
   @ApiErrorResponses
   ResponseEntity<Void> create(UUID sellerId, DropCreateRequest request);
+
+  @Operation(
+      summary = "드롭 삭제",
+      description = "판매자가 자신의 드롭을 삭제한다. 오픈 전이면 soft delete, 오픈 후면 종료(CLOSE) 처리한다.")
+  @ApiResponse(responseCode = "204", description = "삭제 성공")
+  @ApiErrorResponses
+  ResponseEntity<Void> delete(UUID sellerId, UUID dropId);
 }

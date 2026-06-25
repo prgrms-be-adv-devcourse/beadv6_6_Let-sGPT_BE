@@ -5,4 +5,6 @@ import java.util.UUID;
 
 public interface DropCommandUseCase {
   UUID create(DropCreateCommand command);
+
+  void delete(UUID dropId, UUID sellerId);
 }
