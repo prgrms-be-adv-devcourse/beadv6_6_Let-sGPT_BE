@@ -14,6 +14,11 @@ dependencies {
     implementation(project(":common"))
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
+    // querydsl (openfeign fork - hibernate 7 / jakarta)
+    implementation("io.github.openfeign.querydsl:querydsl-jpa:7.0")
+    annotationProcessor("io.github.openfeign.querydsl:querydsl-apt:7.0:jakarta")
+    annotationProcessor("jakarta.persistence:jakarta.persistence-api")
+    annotationProcessor("jakarta.annotation:jakarta.annotation-api")
     //redis, kafka
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.kafka:spring-kafka")

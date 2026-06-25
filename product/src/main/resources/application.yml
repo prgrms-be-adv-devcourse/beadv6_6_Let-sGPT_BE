@@ -11,6 +11,7 @@ spring:
     properties:
       hibernate:
         default_schema: product # 스키마 분리
+        default_batch_fetch_size: 100 # LAZY 연관 N+1 안전망(IN 배치 로딩)
     hibernate:
       ddl-auto: create
     defer-datasource-initialization: true

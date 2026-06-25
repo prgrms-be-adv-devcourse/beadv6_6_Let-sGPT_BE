@@ -132,7 +132,7 @@
 - **엔티티 생성(product 내부 컨벤션):** 기능명을 진입 메서드로 갖는 빌더(`@Builder(builderMethodName=...)`)로 생성 — `Product.create()…build()`·`Drop.schedule()…build()`·`Category.create()…build()`. 같은 타입 파라미터가 호출부에서 뒤섞이는 것을 필드명 명시로 차단하고, 진입 메서드 이름으로 생성 의도를 표현. (배경·트레이드오프는 `product/docs/DECISIONS.md`)
 - **검증 위치:** 입력 검증은 **컨트롤러 `@Valid`(Bean Validation)** 에서 수행하고, **HTTP 진입이 단일 경로라는 가정** 하에 도메인 팩토리의 중복 검증은 생략. (이벤트 컨슈머 등 다른 진입 경로는 [§9](#9-eda이벤트-컨벤션-반드시-준수)의 자체 방어 검증을 따른다.)
 - **예외:** 커스텀 예외 계층(`BusinessException` 등 **언체크**) + `@RestControllerAdvice` 전역 처리. 에러코드는 **공통 enum**으로 관리.
-- **테스트:** given-when-then, `@DisplayName` 한글 허용. **사가·재고·결제 핵심 로직 우선.**
+- **테스트:** given-when-then, `@DisplayName` 한글 허용. **사가·재고·결제 핵심 로직 우선.** (product 모듈 상세 지침은 [`product/docs/TEST_CONVENTION.md`](../product/docs/TEST_CONVENTION.md))
 - **포맷터:** 팀 합의 자동 포맷 도구 적용.
 
 ---
