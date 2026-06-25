@@ -10,7 +10,7 @@ spring:
   jpa:
     properties:
       hibernate:
-        default_schema: order # 스키마 분리
+        default_schema: orders # 스키마 분리
     hibernate:
       ddl-auto: validate
 springdoc:

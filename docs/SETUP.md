@@ -20,7 +20,7 @@ docker compose up -d postgres kafka redis
 ```
 
 - `postgres`는 최초 기동(빈 볼륨) 시 `db/init/01-schemas.sql`이 자동 실행되어
-  `openat` DB 안에 `member/product/order/payment/settlement` 5개 스키마가 자동 생성됨.
+  `openat` DB 안에 `member/product/orders/payment/settlement` 5개 스키마가 자동 생성됨.
 - 이미 떠 있던 볼륨이라 자동 생성이 안 됐다면:
   ```bash
   ./db/create-schemas.sh

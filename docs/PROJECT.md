@@ -87,7 +87,7 @@
 | 대상 | 값 |
 |---|---|
 | drop | `SCHEDULED` / `OPEN` / `CLOSE` / `SOLD_OUT` |
-| order | `PAYMENT_PENDING` / `COMPLETE` / `CANCELLED` / `PAYMENT_FAILED` / `FAILED` / `REFUND` / `REFUND_FAILED` |
+| order | `PAYMENT_PENDING` / `COMPLETED` / `FAILED` / `CANCELLED` / `CANCEL_REQUESTED` / `REFUND_PENDING` / `REFUNDED` / `REFUND_FAILED` |
 | payment | `PENDING` / `COMPLETE` / `FAILED` |
 | refund | `PENDING` / `COMPLETE` / `FAILED` |
 | member role | `USER` / `SELLER` / `ADMIN` (JWT·헤더는 `ROLE_` 접두사) |
@@ -104,7 +104,7 @@
 | 프레임워크 | **Spring Boot 4.1.0** | Spring Cloud 2025.1.2 |
 | 빌드 | **Gradle (Kotlin DSL)** | 모노레포 멀티모듈, 서비스별 디렉토리 |
 | DB | **PostgreSQL** | `runtimeOnly("org.postgresql:postgresql")` |
-| DB 구조 | **공유 DB(`openat`) + 서비스별 독립 스키마** | `hibernate.default_schema: <domain>`, 현재 `ddl-auto: update` |
+| DB 구조 | **공유 DB(`openat`) + 서비스별 독립 스키마** | `hibernate.default_schema: <domain>` 원칙. 주문은 예약어 회피로 `orders` 사용 |
 | ORM | **Spring Data JPA** (+ QueryDSL 도메인별) | |
 | 마이그레이션 | Flyway *(계획, 현재 deps 미포함)* | 도입 전까지 `ddl-auto: update`로 스키마 관리 |
 | PK | **UUIDv7** | 시간 정렬 UUID (인덱스 삽입 지역성 확보) |
@@ -211,7 +211,7 @@
 - **회원(9100):** `Member`(role[USER/SELLER/ADMIN]), `SellerInfo`(상호[storeName]·사업자번호[businessNumber]·member 참조; 정산계좌 등은 회원 도메인 TODO), `RefreshToken`
   - 회원:판매자 = **1:N** — `sellerId`(=`SellerInfo.id`, UUIDv7)는 `memberId`와 **별도 식별자**(한 회원이 다중 판매자 보유 가능). 활성 `SellerInfo` 유무로 role을 SELLER↔USER 승강.
 - **상품(9110):** `Product`(상품 마스터), `Category`(상품 카테고리: name[고유]), `Drop`(**재고·오픈시각의 주인**: totalQuantity·dropPrice·openAt·closeAt·limitPerUser·status; 잔여 수량은 스냅샷 없이 `StockHistory` 합산), `StockHistory`(append-only 재고 이력)
-- **주문(9120):** `Order`(dropId·quantity·orderPrice 스냅샷·status), `OrderSagaState`(사가 진행/보상 추적)
+- **주문(9120):** `Order`(dropId·productId·sellerId·quantity·unitPrice·totalPrice 스냅샷·status), `OrderHistory`(상태 변경 이력)
 - **결제(9130):** `Payment`(pgPaymentKey[암호화]·idempotencyKey[UNIQUE]), `Refund`
 - **정산(9140):** `SettlementRecord`(이벤트 적재: SALE/REFUND), `Settlement`(월 정산 결과 periodYm·수수료·실지급액)
 
