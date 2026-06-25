@@ -14,14 +14,14 @@ import com.openat.order.domain.model.OrderFailCode;
 import com.openat.order.infrastructure.client.ProductPortDtos.OrderSnapshotResponse;
 import com.openat.order.infrastructure.client.ProductPortDtos.OperationType;
 import com.openat.order.infrastructure.client.ProductPortDtos.StockChangeRequest;
+import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
-
-import java.util.UUID;
 
 @Component
 public class ProductIntegrationPortAdapter implements ProductIntegrationPort {
@@ -33,9 +33,14 @@ public class ProductIntegrationPortAdapter implements ProductIntegrationPort {
     private final RestClient productClient;
     private final ObjectMapper objectMapper;
 
-    public ProductIntegrationPortAdapter(RestClient.Builder restClientBuilder,
+    @Autowired
+    public ProductIntegrationPortAdapter(@Value("${services.product.url}") String productServiceUrl) {
+        this(RestClient.builder(), new ObjectMapper(), productServiceUrl);
+    }
+
+    ProductIntegrationPortAdapter(RestClient.Builder restClientBuilder,
             ObjectMapper objectMapper,
-            @Value("${services.product.url}") String productServiceUrl) {
+            String productServiceUrl) {
         this.productClient = restClientBuilder
                 .baseUrl(removeTrailingSlash(productServiceUrl))
                 .build();
