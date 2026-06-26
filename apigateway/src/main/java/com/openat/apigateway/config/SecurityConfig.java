@@ -106,8 +106,8 @@ public class SecurityConfig {
                         .pathMatchers("/api/v1/seller/**").authenticated()
 
                         // 정산 관리자 전용
-                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/admin/*").authenticated()
-                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/seller/*").authenticated()
+                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/admin/*").hasRole("ADMIN")
+                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/seller/*").hasRole("SELLER")
 
 //                        // 판매자만
 //                        .pathMatchers(
