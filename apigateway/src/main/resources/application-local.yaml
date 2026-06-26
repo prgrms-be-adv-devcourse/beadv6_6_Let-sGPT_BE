@@ -18,7 +18,7 @@ spring:
             - id: member
               uri: http://localhost:9100
               predicates:
-                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks
+                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks,/auth/token
             - id: product
               uri: http://localhost:9110
               predicates:
@@ -52,5 +52,8 @@ openapi:
   aggregate:
     services:
       member-service: http://localhost:9100/api-docs
+      payment-service: http://localhost:9130/api-docs
       settlement-service: http://localhost:9140/api-docs
+    prefixes:
+      payment-service: /payment
 

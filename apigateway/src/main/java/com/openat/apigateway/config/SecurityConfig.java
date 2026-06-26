@@ -2,26 +2,30 @@ package com.openat.apigateway.config;
 
 import com.openat.apigateway.error.ApiErrorResponseWriter;
 import com.openat.common.error.CommonErrorCode;
+import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.authorization.AuthorizationDecision;
+import org.springframework.security.authorization.AuthorizationResult;
+import org.springframework.security.authorization.ReactiveAuthorizationManager;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverter;
 import org.springframework.security.web.server.SecurityWebFilterChain;
-import org.springframework.security.web.server.authorization.ServerAccessDeniedHandler;
 import org.springframework.security.web.server.ServerAuthenticationEntryPoint;
+import org.springframework.security.web.server.authorization.AuthorizationContext;
+import org.springframework.security.web.server.authorization.ServerAccessDeniedHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import reactor.core.publisher.Flux;
-
-import java.util.List;
 
 @Configuration
 @EnableWebFluxSecurity
@@ -73,8 +77,8 @@ public class SecurityConfig {
                                 "/*/swagger-ui/**",
                                 "/*/swagger-ui.html").permitAll()
 
-                        // member 공개 기능 (JWKS)
-                        .pathMatchers("/auth/jwks").permitAll()
+                        // member 공개 기능 (JWKS, RFC 8693 STS)
+                        .pathMatchers("/auth/jwks", "/auth/token").permitAll()
 
                         // payment 웹훅 — Toss PG가 JWT 없이 직접 호출 (apigateway/docs/SECURITY_CONFIG_GUIDE.md 패턴)
                         // payment 라우트가 Path=/payment/**+StripPrefix=1(product/order/settlement와 동일 컨벤션,
@@ -92,18 +96,20 @@ public class SecurityConfig {
                                 "/api/v1/members/login",
                                 "/api/v1/members/refresh").permitAll()
 
-                        // 판매자 등록 — 아직 ROLE_USER인 회원도 최초 등록 가능
-                        .pathMatchers(HttpMethod.POST, "/api/v1/seller/me").authenticated()
+                        // 판매자 등록 — 아직 ROLE_USER인 회원도 최초 등록 가능.
+                        // ※ .authenticated()는 scoped 토큰도 통과시키므로 반드시 access()로 대체
+                        .pathMatchers(HttpMethod.POST, "/api/v1/seller/me").access(authenticatedAndNotScoped())
 
                         // 본인 판매자 정보 조회·수정·삭제 — 이미 판매자인 경우만
+                        // hasRole()은 roles 클레임 없는 scoped 토큰을 이미 거부하므로 안전
                         .pathMatchers(HttpMethod.GET, "/api/v1/seller/me").hasRole("SELLER")
                         .pathMatchers("/api/v1/seller/me/**").hasRole("SELLER")
 
                         // 관리자 전용: userId로 해당 회원의 판매자 정보 전체 조회
                         .pathMatchers(HttpMethod.GET, "/api/v1/seller/*").hasRole("ADMIN")
 
-                        // 그 외 seller 경로 (확장 대비)
-                        .pathMatchers("/api/v1/seller/**").authenticated()
+                        // 그 외 seller 경로 (확장 대비) — scoped 토큰 명시적 거부
+                        .pathMatchers("/api/v1/seller/**").access(authenticatedAndNotScoped())
 
                         // 정산 관리자 전용
                         .pathMatchers(HttpMethod.GET, "/api/v1/settlements/admin/*").hasRole("ADMIN")
@@ -122,8 +128,20 @@ public class SecurityConfig {
 //                                /** 엔드포인트 작성 **/
 //                        ).hasAnyRole("ADMIN", "SELLER")
 
-                        // 인증만 되면 누구나
-                        .anyExchange().authenticated())
+                        // -----------------------------------------------------------------
+                        // RFC 8693: product 판매자 write 경로 — scoped 토큰(typ=scoped) 전용
+                        // access 토큰 사용 시 거부, 반대로 scoped 토큰을 다른 경로에 쓰면 거부.
+                        // -----------------------------------------------------------------
+
+                        // product 카탈로그 읽기 — 공개
+                        .pathMatchers(HttpMethod.GET, "/product/**").permitAll()
+
+                        // product 판매자 write — scoped 토큰(typ=scoped, aud=openat-product)만 허용 (GET은 위에서 공개)
+                        .pathMatchers("/product/products", "/product/products/**").access(scopedFor("openat-product"))
+
+                        // 그 외 모든 경로: 인증 필요 + scoped 토큰 명시적 거부
+                        .anyExchange().access(authenticatedAndNotScoped())
+                )
                 .oauth2ResourceServer(oauth -> oauth
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
         return http.build();
@@ -155,6 +173,33 @@ public class SecurityConfig {
     private ServerAccessDeniedHandler accessDeniedHandler() {
         return (exchange, ex) ->
                 responseWriter.write(exchange, HttpStatus.FORBIDDEN, CommonErrorCode.FORBIDDEN);
+    }
+
+    /**
+     * scoped 토큰(typ=scoped)을 명시적으로 거부하는 공통 인가 관리자.
+     * JWT 인증이 됐더라도 scoped 토큰은 product write 경로 외에서 진입할 수 없어야 한다.
+     * 역할 없는 순수 {@code .authenticated()} 경로에서도 scoped 토큰이 새는 것을 방지한다.
+     */
+    private ReactiveAuthorizationManager<AuthorizationContext> authenticatedAndNotScoped() {
+        return (authentication, context) ->
+                authentication.<AuthorizationResult>map(auth -> new AuthorizationDecision(
+                        auth instanceof JwtAuthenticationToken jwtAuth
+                        && !"scoped".equals(jwtAuth.getToken().getClaimAsString("typ"))
+                )).defaultIfEmpty(new AuthorizationDecision(false));
+    }
+
+    /**
+     * scoped 토큰(typ=scoped)이고 지정 audience를 포함하는 경우만 허용하는 인가 관리자.
+     * product write처럼 특정 서비스 전용 scoped 토큰이 필요한 경로에 사용한다.
+     */
+    private ReactiveAuthorizationManager<AuthorizationContext> scopedFor(String audience) {
+        return (authentication, context) ->
+                authentication.<AuthorizationResult>map(auth -> new AuthorizationDecision(
+                        auth instanceof JwtAuthenticationToken jwtAuth
+                        && "scoped".equals(jwtAuth.getToken().getClaimAsString("typ"))
+                        && jwtAuth.getToken().getAudience() != null
+                        && jwtAuth.getToken().getAudience().contains(audience)
+                )).defaultIfEmpty(new AuthorizationDecision(false));
     }
 
     private ReactiveJwtAuthenticationConverter jwtAuthenticationConverter() {
