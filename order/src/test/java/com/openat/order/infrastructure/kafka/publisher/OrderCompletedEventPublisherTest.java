@@ -23,7 +23,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 class OrderCompletedEventPublisherTest {
 
-    private static final String TOPIC = "order.completed.events";
+    private static final String TOPIC = "order_completed.events";
 
     private final ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
@@ -63,7 +63,7 @@ class OrderCompletedEventPublisherTest {
 
         // when & then
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> publisher.publish(order));
-        assertThat(ex.getMessage()).isEqualTo("order.completed.events 발행에 실패했습니다.");
+        assertThat(ex.getMessage()).isEqualTo("order_completed.events 발행에 실패했습니다.");
     }
 
     private Order completedOrder() {

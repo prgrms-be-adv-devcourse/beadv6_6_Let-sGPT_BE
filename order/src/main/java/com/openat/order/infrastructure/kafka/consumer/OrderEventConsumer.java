@@ -36,13 +36,13 @@ public class OrderEventConsumer {
             orderEventService.handlePaymentCompleted(new PaymentCompletedCommand(
                     event.orderId(), event.version(), event.paymentId(), event.amount()
             ));
-            log.info("payment.complete.events consumed. orderId={}", event.orderId());
+            log.info("payment.completed.events consumed. orderId={}", event.orderId());
         } catch (BusinessException e) {
-            log.error("payment.complete.events consume failed. payload={}", payload, e);
+            log.error("payment.completed.events consume failed. payload={}", payload, e);
             throw e;
         } catch (Exception e) {
-            log.error("payment.complete.events consume failed. payload={}", payload, e);
-            throw new RuntimeException("payment.complete.events consume failed", e);
+            log.error("payment.completed.events consume failed. payload={}", payload, e);
+            throw new RuntimeException("payment.completed.events consume failed", e);
         }
     }
 
