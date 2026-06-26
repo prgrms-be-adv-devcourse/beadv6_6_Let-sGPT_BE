@@ -1,6 +1,8 @@
 package com.openat.payment.domain.repository;
 
 import com.openat.payment.domain.model.WalletCharge;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -19,4 +21,7 @@ public interface WalletChargeRepository {
 
     // 웹훅/confirm 처리(#10과 동일 원칙) — WHERE status='PENDING' 조건부 UPDATE, affected rows=0이면 이미 처리됐거나 대상 없음.
     int tryTransitionFromPending(UUID id, WalletCharge.Status newStatus, String pgTxId);
+
+    // TTL 스캐너(§5 하자드#10) — PENDING 상태이고 threshold 이전에 생성된 row 조회.
+    List<WalletCharge> findStalePending(LocalDateTime threshold);
 }

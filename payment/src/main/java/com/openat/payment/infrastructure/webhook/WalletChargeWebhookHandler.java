@@ -79,7 +79,7 @@ public class WalletChargeWebhookHandler extends AbstractPgWebhookHandler<WalletC
                         ? WalletCharge.Status.APPROVED
                         : WalletCharge.Status.FAILED;
 
-        int affected = walletChargeRepository.tryTransitionFromPending(charge.getId(), newStatus, null);
+        int affected = walletChargeRepository.tryTransitionFromPending(charge.getId(), newStatus, queryResult.pgTxId());
         if (affected == 0) {
             return UpdateResult.failure(charge.getId(), charge);
         }

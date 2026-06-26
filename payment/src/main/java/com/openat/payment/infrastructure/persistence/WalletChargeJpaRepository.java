@@ -2,6 +2,8 @@ package com.openat.payment.infrastructure.persistence;
 
 import com.openat.payment.domain.model.WalletCharge;
 import com.openat.payment.infrastructure.persistence.entity.WalletChargeJpaEntity;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -28,4 +30,8 @@ public interface WalletChargeJpaRepository extends JpaRepository<WalletChargeJpa
             + "WHERE c.id = :id AND c.status = 'PENDING'")
     int tryTransitionFromPending(@Param("id") UUID id, @Param("newStatus") WalletCharge.Status newStatus,
             @Param("pgTxId") String pgTxId);
+
+    // TTL 스캐너 — PENDING 상태이고 threshold 이전에 생성된 row 조회.
+    @Query("SELECT c FROM WalletChargeJpaEntity c WHERE c.status = 'PENDING' AND c.createdAt < :threshold")
+    List<WalletChargeJpaEntity> findStalePending(@Param("threshold") LocalDateTime threshold);
 }

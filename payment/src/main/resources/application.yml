@@ -3,7 +3,7 @@ server:
 
 spring:
   profiles:
-    active: local
+    active: local,toss-real,order-real
   application:
     name: payment-service
   jpa:
@@ -24,9 +24,14 @@ payment:
     key: ${PAYMENT_FIELD_ENCRYPTION_KEY} # pgPaymentKey/pgRefundKey AES-GCM 키(Base64, 32바이트) — .env/docker-compose 쪽 값 추가 필요(dev-infra)
 pg:
   secret-key: ${PG_SECRET_KEY} # 웹훅 HMAC-SHA256 서명 검증용 공유 비밀키(.env/docker-compose — dev-infra A12)
+
+
 springdoc:
   api-docs:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui.html
     operations-sorter: method
+    # 스웨거 UI 내부에서 API를 호출할 때 프리픽스로 /payment를 무조건 붙여서 쏘도록 강제
+    #config-url: /payment/v3/api-docs/swagger-config
+    #disable-swagger-default-url: true
