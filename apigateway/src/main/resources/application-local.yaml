@@ -39,16 +39,17 @@ spring:
                 - Path=/order/**
               filters:
                 - StripPrefix=1
+            - id: payment-docs
+              uri: http://localhost:9130
+              predicates:
+                - Path=/payment/v3/api-docs/**,/payment/swagger-ui.html,/payment/swagger-ui/**,/payment/webjars/**
+              filters:
+                - StripPrefix=1
             - id: payment-api
               uri: http://localhost:9130
               predicates:
                 - Path=/api/v1/payments/**,/api/v1/refunds/**,/api/v1/wallet/**
-            - id: payment
-              uri: http://localhost:9130
-              predicates:
-                - Path=/payment/**
-              filters:
-                - StripPrefix=1
+
             - id: settlement-api
               uri: http://localhost:9140
               predicates:
@@ -68,6 +69,3 @@ openapi:
       order-service: http://localhost:9120/api-docs
       payment-service: http://localhost:9130/api-docs
       settlement-service: http://localhost:9140/api-docs
-    prefixes:
-      payment-service: /payment
-
