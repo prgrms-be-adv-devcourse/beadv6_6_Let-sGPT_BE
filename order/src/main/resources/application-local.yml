@@ -4,7 +4,7 @@ spring:
     username: ${DB_USER}
     password: ${DB_PASSWORD}
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: localhost:29092
   data:
     redis:
       host: localhost
