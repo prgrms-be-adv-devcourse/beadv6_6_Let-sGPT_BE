@@ -3,6 +3,14 @@ server:
 
 
 spring:
+  kafka:
+    consumer:
+      group-id: order-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
   profiles:
     active: local
   application:
@@ -19,3 +27,11 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     operations-sorter: method
+
+order:
+  kafka:
+    topic:
+      payment-complete: payment.complete.events
+      payment-failed: payment.failed.events
+      refund-completed: refund.completed.events
+      refund-failed: refund.failed.events
