@@ -40,8 +40,7 @@ public class OrderCompletedEventPublisher implements OrderCompletedEventPublishP
                     order.getSellerId(),
                     order.getProductId(),
                     order.getMemberId(),
-                    order.getTotalPrice(),
-                    order.getCompletedAt()
+                    order.getTotalPrice()
             ));
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("주문 완료 이벤트 payload 생성에 실패했습니다.", e);

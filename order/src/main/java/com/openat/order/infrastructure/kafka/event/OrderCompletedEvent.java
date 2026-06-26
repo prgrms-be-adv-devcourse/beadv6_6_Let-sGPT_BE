@@ -1,6 +1,5 @@
 package com.openat.order.infrastructure.kafka.event;
 
-import java.time.Instant;
 import java.util.UUID;
 
 public record OrderCompletedEvent(
@@ -8,7 +7,6 @@ public record OrderCompletedEvent(
         UUID sellerId,
         UUID productId,
         UUID memberId,
-        long amount,
-        Instant completedAt
+        long amount
 ) {
 }
