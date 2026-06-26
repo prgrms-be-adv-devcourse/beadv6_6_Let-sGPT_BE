@@ -14,7 +14,7 @@ INSERT INTO member.member (id, email, password, nickname, platform_type, created
 VALUES (
     '00000000-0000-7000-8000-000000000001',
     'admin@test.com',
-    '$2a$10$eACCYoNOHEqXve8aIWT8Nu3PkMXWBaObN5REkGFbtJKTKMDoFAWRS',
+    '$2a$10$KDnPKcU1E4yQQHgFLISooOX2tVUwM2pM8NXwpaALb/Fbb1bfKWc/G',
     'admin',
     'LOCAL',
     CURRENT_TIMESTAMP,
