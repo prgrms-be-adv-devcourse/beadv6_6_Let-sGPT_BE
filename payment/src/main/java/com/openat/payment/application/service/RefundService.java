@@ -37,7 +37,8 @@ public class RefundService implements RefundUseCase {
 
     private static final String COMPLETED_TOPIC = "refund.completed.events";
     private static final String FAILED_TOPIC = "refund.failed.events";
-    private static final String SETTLEMENT_SOURCE_TOPIC = "refund.settlement-source.events";
+    private static final String SETTLEMENT_SOURCE_TOPIC = "payment.settlement.events";
+    private static final String SETTLEMENT_EVENT_TYPE = "RefundSettlementCompleted";
 
     private final RefundRepository refundRepository;
     private final PaymentRepository paymentRepository;
@@ -144,6 +145,7 @@ public class RefundService implements RefundUseCase {
 
         // B6/A6 — sellerId가 사후채움 전이라 null이어도 그대로 발행(정산 쪽 보류/재시도 전제, plan.md B6).
         outboxEventWriter.write("REFUND", pending.getId(), SETTLEMENT_SOURCE_TOPIC, new RefundSettlementSourcePayload(
+                UUID.randomUUID().toString(), SETTLEMENT_EVENT_TYPE, LocalDateTime.now(),
                 pending.getId(), payment.getId(), payment.getOrderId(), payment.getSellerId(),
                 payment.getMemberId(), pending.getAmount(), pending.getReason(), Refund.Status.COMPLETE.name(),
                 completedAt));

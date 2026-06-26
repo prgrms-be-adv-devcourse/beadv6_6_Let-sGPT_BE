@@ -19,7 +19,7 @@ public class OrderCompletedEventConsumer {
         this.objectMapper = objectMapper;
     }
 
-    @KafkaListener(topics = "order_completed.events", groupId = "payment-service")
+    @KafkaListener(topics = "order.completed.events", groupId = "payment-service")
     public void onOrderCompleted(String message) {
         try {
             OrderCompletedEvent event = objectMapper.readValue(message, OrderCompletedEvent.class);
