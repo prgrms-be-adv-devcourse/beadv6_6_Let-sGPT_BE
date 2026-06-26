@@ -3,7 +3,6 @@ package com.openat.order.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -13,10 +12,7 @@ import com.openat.order.application.dto.PaymentCompletedCommand;
 import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
-import com.openat.order.application.dto.StockRestoreCommand;
 import com.openat.order.application.port.OrderCompletedEventPublishPort;
-import com.openat.order.application.port.ProductIntegrationPort;
-import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderFailCode;
@@ -45,9 +41,6 @@ class OrderEventServiceTest {
 
     @Mock
     private OrderHistoryRepository orderHistoryRepository;
-
-    @Mock
-    private ProductIntegrationPort productIntegrationPort;
 
     @Mock
     private OrderCompletedEventPublishPort orderCompletedEventPublishPort;
@@ -97,13 +90,12 @@ class OrderEventServiceTest {
 
         // then
         verify(orderHistoryRepository, never()).save(any(OrderHistory.class));
-        verify(productIntegrationPort, never()).restoreStock(any(), any());
         verify(orderCompletedEventPublishPort, never()).publish(any());
     }
 
     @Test
-    @DisplayName("결제 실패 이벤트는 재고 롤백 후 주문 실패로 전이한다")
-    void paymentFailed_restoresStockAndFailsOrder() {
+    @DisplayName("결제 실패 이벤트는 주문을 닫지 않고 시도 실패 이력만 남긴다")
+    void paymentFailed_recordsAttemptFailureWithoutClosingOrder() {
         // given
         Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
         UUID orderId = order.getId();
@@ -116,13 +108,13 @@ class OrderEventServiceTest {
         orderEventService.handlePaymentFailed(command);
 
         // then
-        assertThat(order.getStatus()).isEqualTo(OrderStatus.FAILED);
-        assertThat(order.getFailCode()).isEqualTo(OrderFailCode.PAYMENT_FAILED);
-        ArgumentCaptor<StockRestoreCommand> restoreCommand = ArgumentCaptor.forClass(StockRestoreCommand.class);
-        verify(productIntegrationPort).restoreStock(any(), restoreCommand.capture());
-        assertThat(restoreCommand.getValue().orderId()).isEqualTo(orderId);
-        assertThat(restoreCommand.getValue().quantity()).isEqualTo(order.getQuantity());
-        verify(orderHistoryRepository).save(any(OrderHistory.class));
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(order.getFailCode()).isNull();
+        ArgumentCaptor<OrderHistory> history = ArgumentCaptor.forClass(OrderHistory.class);
+        verify(orderHistoryRepository).save(history.capture());
+        assertThat(history.getValue().getPreviousStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(history.getValue().getNewStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(history.getValue().getReasonCode()).isEqualTo("PAYMENT_ATTEMPT_FAILED");
     }
 
     @Test
@@ -217,32 +209,8 @@ class OrderEventServiceTest {
     }
 
     @Test
-    @DisplayName("결제 실패 이벤트에서 재고 복구가 실패하면 포트 예외로 처리한다")
-    void paymentFailed_whenStockRestoreFails_throwPortError() {
-        // given
-        Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
-        UUID orderId = order.getId();
-
-        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
-        doThrow(new ProductPortException(OrderFailCode.STOCK_ROLLBACK_FAILED, "restore failed"))
-                .when(productIntegrationPort)
-                .restoreStock(any(), any());
-
-        PaymentFailedCommand command = new PaymentFailedCommand(orderId, "v1", UUID.randomUUID(), "PG_TIMEOUT");
-
-        // when
-        BusinessException ex = assertThrows(BusinessException.class,
-                () -> orderEventService.handlePaymentFailed(command));
-
-        // then
-        assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.PORT_ERROR);
-        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
-        verify(orderHistoryRepository, never()).save(any(OrderHistory.class));
-    }
-
-    @Test
-    @DisplayName("결제 완료 상태의 주문에 결제 실패 이벤트가 오면 예외가 발생한다")
-    void paymentFailed_whenAlreadyCompleted_throwInvalidStatus() {
+    @DisplayName("결제 완료 상태의 주문에 결제 실패 이벤트가 오면 무시한다")
+    void paymentFailed_whenAlreadyCompleted_ignoreStaleFailure() {
         // given
         Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
         order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
@@ -253,12 +221,10 @@ class OrderEventServiceTest {
         PaymentFailedCommand command = new PaymentFailedCommand(orderId, "v1", UUID.randomUUID(), "PG_TIMEOUT");
 
         // when
-        BusinessException ex = assertThrows(BusinessException.class,
-                () -> orderEventService.handlePaymentFailed(command));
+        orderEventService.handlePaymentFailed(command);
 
         // then
-        assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_STATUS);
-        verify(productIntegrationPort, never()).restoreStock(any(), any());
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.COMPLETED);
         verify(orderHistoryRepository, never()).save(any(OrderHistory.class));
     }
 

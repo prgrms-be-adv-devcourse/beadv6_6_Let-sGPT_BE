@@ -6,7 +6,9 @@ import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openat.order.application.dto.PaymentCompletedCommand;
+import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
+import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.service.OrderEventService;
 import java.util.UUID;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -46,6 +48,45 @@ class OrderEventConsumerTest {
         // then
         verify(orderEventService).handlePaymentCompleted(
                 new PaymentCompletedCommand(orderId, "v1", paymentId, 10_000L)
+        );
+    }
+
+    @Test
+    @DisplayName("결제 실패 이벤트 payload를 application command로 변환해 위임한다")
+    void onPaymentFailed_delegatesCommand() {
+        // given
+        UUID orderId = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        String payload = """
+                {"orderId":"%s","version":"v1","paymentId":"%s","reason":"PG_TIMEOUT"}
+                """.formatted(orderId, paymentId);
+
+        // when
+        orderEventConsumer.onPaymentFailed(record("payment.failed.events", payload));
+
+        // then
+        verify(orderEventService).handlePaymentFailed(
+                new PaymentFailedCommand(orderId, "v1", paymentId, "PG_TIMEOUT")
+        );
+    }
+
+    @Test
+    @DisplayName("환불 완료 이벤트 payload를 application command로 변환해 위임한다")
+    void onRefundCompleted_delegatesCommand() {
+        // given
+        UUID orderId = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        UUID refundId = UUID.randomUUID();
+        String payload = """
+                {"orderId":"%s","version":"v1","paymentId":"%s","refundId":"%s","amount":10000}
+                """.formatted(orderId, paymentId, refundId);
+
+        // when
+        orderEventConsumer.onRefundCompleted(record("refund.completed.events", payload));
+
+        // then
+        verify(orderEventService).handleRefundCompleted(
+                new RefundCompletedCommand(orderId, "v1", paymentId, 10_000L, refundId)
         );
     }
 
