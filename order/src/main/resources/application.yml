@@ -35,3 +35,4 @@ order:
       payment-failed: payment.failed.events
       refund-completed: refund.completed.events
       refund-failed: refund.failed.events
+      order-completed: order.completed.events

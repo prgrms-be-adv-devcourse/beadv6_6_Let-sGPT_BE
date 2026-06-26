@@ -6,6 +6,7 @@ import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
 import com.openat.order.application.dto.StockRestoreCommand;
+import com.openat.order.application.port.OrderCompletedEventPublishPort;
 import com.openat.order.application.port.ProductIntegrationPort;
 import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.exception.OrderErrorCode;
@@ -20,6 +21,8 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @RequiredArgsConstructor
@@ -32,6 +35,7 @@ public class OrderEventService {
     private final OrderRepository orderRepository;
     private final OrderHistoryRepository orderHistoryRepository;
     private final ProductIntegrationPort productIntegrationPort;
+    private final OrderCompletedEventPublishPort orderCompletedEventPublishPort;
 
     @Transactional
     public void handlePaymentCompleted(PaymentCompletedCommand command) {
@@ -66,6 +70,8 @@ public class OrderEventService {
                         .sourceEventKey(eventSourceKey("payment-complete", command.version(), command.orderId(), command.paymentId()))
                         .build()
         );
+
+        publishOrderCompletedAfterCommit(order);
     }
 
     @Transactional
@@ -211,5 +217,14 @@ public class OrderEventService {
 
     private String stockRestoreIdempotencyKey(UUID orderId) {
         return STOCK_RESTORE_IDEMPOTENCY_PREFIX + orderId;
+    }
+
+    private void publishOrderCompletedAfterCommit(Order order) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                orderCompletedEventPublishPort.publish(order);
+            }
+        });
     }
 }

@@ -14,6 +14,7 @@ import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
 import com.openat.order.application.dto.StockRestoreCommand;
+import com.openat.order.application.port.OrderCompletedEventPublishPort;
 import com.openat.order.application.port.ProductIntegrationPort;
 import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.exception.OrderErrorCode;
@@ -33,6 +34,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class OrderEventServiceTest {
@@ -45,6 +48,9 @@ class OrderEventServiceTest {
 
     @Mock
     private ProductIntegrationPort productIntegrationPort;
+
+    @Mock
+    private OrderCompletedEventPublishPort orderCompletedEventPublishPort;
 
     @InjectMocks
     private OrderEventService orderEventService;
@@ -62,7 +68,7 @@ class OrderEventServiceTest {
         PaymentCompletedCommand command = new PaymentCompletedCommand(orderId, "v1", paymentId, 10_000L);
 
         // when
-        orderEventService.handlePaymentCompleted(command);
+        withTransactionSynchronization(() -> orderEventService.handlePaymentCompleted(command));
 
         // then
         assertThat(order.getStatus()).isEqualTo(OrderStatus.COMPLETED);
@@ -70,6 +76,7 @@ class OrderEventServiceTest {
         ArgumentCaptor<OrderHistory> history = ArgumentCaptor.forClass(OrderHistory.class);
         verify(orderHistoryRepository).save(history.capture());
         assertThat(history.getValue().getSourceEventKey()).hasSizeLessThanOrEqualTo(100);
+        verify(orderCompletedEventPublishPort).publish(order);
     }
 
     @Test
@@ -91,6 +98,7 @@ class OrderEventServiceTest {
         // then
         verify(orderHistoryRepository, never()).save(any(OrderHistory.class));
         verify(productIntegrationPort, never()).restoreStock(any(), any());
+        verify(orderCompletedEventPublishPort, never()).publish(any());
     }
 
     @Test
@@ -307,5 +315,17 @@ class OrderEventServiceTest {
                 .idempotencyKey("idem-001")
                 .now(now)
                 .build();
+    }
+
+    private void withTransactionSynchronization(Runnable action) {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            action.run();
+            for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+                synchronization.afterCommit();
+            }
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 }
