@@ -13,6 +13,10 @@ public record JwtProperties(
         String privateKey,
         String publicKey,
         long accessTokenExpireSeconds,
-        long refreshTokenExpireSeconds
+        long refreshTokenExpireSeconds,
+        /** 토큰 발급자 URI (iss 클레임). 예: http://localhost:9100 */
+        String issuer,
+        /** RFC 8693 scoped 토큰 만료 초. 기본값 120초 */
+        long scopedTokenExpireSeconds
 ) {
 }

@@ -33,4 +33,9 @@ public class SellerInfoRepositoryAdaptor implements SellerInfoRepository {
     public Optional<SellerInfo> findByIdAndMemberId(UUID sellerId, UUID memberId) {
         return sellerInfoJpaRepository.findByIdAndMember_Id(sellerId, memberId);
     }
+
+    @Override
+    public Optional<SellerInfo> findActiveByIdAndMemberId(UUID sellerId, UUID memberId) {
+        return sellerInfoJpaRepository.findByIdAndMember_IdAndDeletedAtIsNull(sellerId, memberId);
+    }
 }
