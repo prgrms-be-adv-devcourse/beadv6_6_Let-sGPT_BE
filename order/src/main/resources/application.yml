@@ -31,8 +31,8 @@ springdoc:
 order:
   kafka:
     topic:
-      payment-complete: payment.complete.events
+      payment-complete: payment.completed.events
       payment-failed: payment.failed.events
       refund-completed: refund.completed.events
       refund-failed: refund.failed.events
-      order-completed: order.completed.events
+      order-completed: order_completed.events

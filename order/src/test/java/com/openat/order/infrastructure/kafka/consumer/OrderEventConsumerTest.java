@@ -41,7 +41,7 @@ class OrderEventConsumerTest {
                 """.formatted(orderId, paymentId);
 
         // when
-        orderEventConsumer.onPaymentCompleted(record("payment.complete.events", payload));
+        orderEventConsumer.onPaymentCompleted(record("payment.completed.events", payload));
 
         // then
         verify(orderEventService).handlePaymentCompleted(
@@ -74,7 +74,7 @@ class OrderEventConsumerTest {
     void onPaymentCompleted_whenPayloadInvalid_throwRuntimeException() {
         // when & then
         assertThrows(RuntimeException.class,
-                () -> orderEventConsumer.onPaymentCompleted(record("payment.complete.events", "invalid-json")));
+                () -> orderEventConsumer.onPaymentCompleted(record("payment.completed.events", "invalid-json")));
         verify(orderEventService, org.mockito.Mockito.never()).handlePaymentCompleted(any());
     }
 
