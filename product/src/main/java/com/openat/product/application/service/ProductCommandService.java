@@ -7,10 +7,12 @@ import com.openat.product.application.dto.ProductCreateCommand;
 import com.openat.product.application.dto.ProductUpdateCommand;
 import com.openat.product.application.usecase.ProductCommandUseCase;
 import com.openat.product.domain.error.ProductErrorCode;
+import com.openat.product.domain.event.ProductDeletedEvent;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +23,7 @@ public class ProductCommandService implements ProductCommandUseCase {
 
   private final ProductRepository productRepository;
   private final CategoryQueryUseCase categoryQueryUseCase;
+  private final ApplicationEventPublisher eventPublisher;
 
   @Override
   public UUID create(ProductCreateCommand command) {
@@ -45,7 +48,6 @@ public class ProductCommandService implements ProductCommandUseCase {
     Product product = getOwnedProduct(command.id(), command.sellerId());
     Category category = toCategory(command.categoryId());
 
-    // TODO: 진행 중(OPEN)인 드롭이 존재할 경우 상품 수정 제약 조건 적용
     product.update(
         command.name(), command.description(), category, command.price(), command.thumbnailKey());
   }
@@ -53,9 +55,8 @@ public class ProductCommandService implements ProductCommandUseCase {
   @Override
   public void delete(UUID id, UUID sellerId) {
     Product product = getOwnedProduct(id, sellerId);
-
-    // TODO: 진행 중(OPEN)인 드롭이 존재할 경우 삭제 차단 및 하위 드롭 Soft Delete 전파(이벤트 처리)
     productRepository.delete(product);
+    eventPublisher.publishEvent(new ProductDeletedEvent(id));
   }
 
   private Category toCategory(UUID categoryId) {

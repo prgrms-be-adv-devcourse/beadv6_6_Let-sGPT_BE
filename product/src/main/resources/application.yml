@@ -13,7 +13,7 @@ spring:
         default_schema: product # 스키마 분리
         default_batch_fetch_size: 100 # LAZY 연관 N+1 안전망(IN 배치 로딩)
     hibernate:
-      ddl-auto: create
+      ddl-auto: update # 부팅 간 재고 이력 보존(콜드부팅 복구 검증) — create는 매 기동 원장 삭제
     defer-datasource-initialization: true
   sql:
     init:
@@ -24,3 +24,9 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     operations-sorter: method
+
+drop:
+  warm-before: 5m # 오픈 전 캐시 워밍 선행 시간
+  close-margin: 10m # 종료 후 캐시 TTL 여유 (결제 마진)
+  null-close-ttl: 7d # closeAt 미지정 드롭의 기본 캐시 TTL
+  idempotency-ttl: 1h # order 멱등키 TTL

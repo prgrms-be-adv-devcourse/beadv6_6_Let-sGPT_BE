@@ -14,6 +14,7 @@ import com.openat.common.exception.BusinessException;
 import com.openat.product.application.dto.ProductCreateCommand;
 import com.openat.product.application.dto.ProductUpdateCommand;
 import com.openat.product.domain.error.ProductErrorCode;
+import com.openat.product.domain.event.ProductDeletedEvent;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.fixture.ProductFixture;
@@ -27,6 +28,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("상품 명령 서비스")
@@ -35,6 +37,7 @@ class ProductCommandServiceTest {
   @InjectMocks private ProductCommandService productCommandService;
   @Mock private ProductRepository productRepository;
   @Mock private CategoryQueryUseCase categoryQueryUseCase;
+  @Mock private ApplicationEventPublisher eventPublisher;
 
   @Nested
   @DisplayName("상품 등록")
@@ -179,6 +182,7 @@ class ProductCommandServiceTest {
 
       // then
       then(productRepository).should().delete(product);
+      then(eventPublisher).should().publishEvent(any(ProductDeletedEvent.class));
     }
 
     @Test

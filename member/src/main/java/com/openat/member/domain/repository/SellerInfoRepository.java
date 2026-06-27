@@ -14,4 +14,7 @@ public interface SellerInfoRepository {
     List<SellerInfo> findAllByMemberId(UUID memberId);
 
     Optional<SellerInfo> findByIdAndMemberId(UUID sellerId, UUID memberId);
+
+    /** STS 소유권 검증 전용: 활성(soft-delete 제외) 판매자만 조회 */
+    Optional<SellerInfo> findActiveByIdAndMemberId(UUID sellerId, UUID memberId);
 }

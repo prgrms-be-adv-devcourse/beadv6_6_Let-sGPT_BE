@@ -76,7 +76,7 @@
 4. 결제 결과를 **이벤트로 수신**
    - COMPLETE → `order.complete` + `order_completed` 이벤트 발행 (→ 정산)
    - FAILED → **재고 롤백(보상)** + `order.cancelled` / `payment_failed`
-5. 결제 미회신 시간초과 → 주문 TTL 보정 처리 → 주문 `order.failed` + 재고 롤백 보상 요청
+5. 결제 미회신 시간초과 → **주문(order)이 TTL 기준으로 타임아웃 감지** → 상품 재고 롤백(보상) API 호출 → `order.failed`. (상품은 롤백 API만 제공하고 타임아웃을 감지하지 않음 — 재고 통신은 동기 API 단일 경로)
 6. 주문 취소 → 환불 요청 → 환불 결과 이벤트 (COMPLETE: `order.refund` / FAILED: `order.refund_failed` 수동 처리)
 7. 월 정산: `order_completed`·`refund_completed` 적재 → **Spring Batch** (`cron 0 3 5 * *`)로 수수료·환불 차감 정산
 
@@ -86,8 +86,8 @@
 
 | 대상 | 값 |
 |---|---|
-| drop | `SCHEDULED` / `OPEN` / `CLOSE` / `SOLD_OUT` |
-| order | `PAYMENT_PENDING` / `COMPLETED` / `FAILED` / `CANCELLED` / `CANCEL_REQUESTED` / `REFUND_PENDING` / `REFUNDED` / `REFUND_FAILED` |
+| drop | `REGISTERED` / `OPEN` / `CLOSE` / `SOLD_OUT` (DB 저장은 영구 마일스톤 `REGISTERED`·`CLOSE`만, `OPEN`·`SOLD_OUT`은 캐시 잔여+시각으로 파생) |
+| order | `PAYMENT_PENDING` / `COMPLETE` / `CANCELLED` / `PAYMENT_FAILED` / `FAILED` / `REFUND` / `REFUND_FAILED` |
 | payment | `PENDING` / `COMPLETE` / `FAILED` |
 | refund | `PENDING` / `COMPLETE` / `FAILED` |
 | member role | `USER` / `SELLER` / `ADMIN` (JWT·헤더는 `ROLE_` 접두사) |
@@ -151,13 +151,13 @@
   { /* 리소스 본문 */ }
   ```
 
-- **에러 응답:** 도메인별 error enum. (HTTP 상태코드는 상태 라인으로 전달)
+- **에러 응답:** 도메인별 error enum. **클라 노출 `code`에는 도메인 접두사를 일관 적용**(예: `DROP_*`·`PRODUCT_*`·`PAYMENT_*`). (HTTP 상태코드는 상태 라인으로 전달)
 
   ```json
-  { "error": "SOLD_OUT", "message": "재고가 없습니다" }
+  { "error": "DROP_SOLD_OUT", "message": "재고가 없습니다" }
   ```
 
-  주요 코드 예: `SOLD_OUT`, `NOT_OPEN`, `LIMIT_EXCEEDED`, `PAY_FAILED`.
+  주요 코드 예: `DROP_SOLD_OUT`, `DROP_NOT_OPEN`, `DROP_LIMIT_EXCEEDED`, `PAYMENT_FAILED`.
 - **상태코드:** 표준 준수. (품절 `409` / 미오픈 `400` / 없음 `404`)
 - **페이징:** 오프셋 기반 `?page=&size=`, 응답 `{ content, totalPages, totalElements }`.
 - **날짜·시간:** ISO 8601 + **UTC**.
@@ -229,12 +229,12 @@
 
 ## 12. 열린 결정 사항 (작업 중 합의 필요)
 
-- 결제 이벤트 미회신 시 주문 TTL 기준 만료 보정 방식과 재고 롤백 보상 정책.
+- 결제 이벤트 미회신 시 정리: **주문(order)이 TTL 기준으로 타임아웃을 감지해 상품 재고 롤백 API를 호출**하는 방식으로 합의(상품은 롤백 API만 제공). 타임아웃 기준 시간은 주문 도메인이 정의.
 - 결제 결과 사용자 응답 경로(리다이렉트 successUrl/failUrl) vs 백엔드 이벤트 전파의 역할 분담.
 - 예치금·장바구니: 과제 필수지만 현재 **TODO**. 현재는 PG 직접 결제·드롭 즉시 주문.
 - 카테고리: 상품 서비스 내 **`categories` 테이블**로 분리 완료(`Product`가 `@ManyToOne`으로 **선택 참조** — nullable, 카테고리 없이 상품 등록 가능·삭제 시 미분류). 계층 구조·카테고리별 수수료는 추후 컬럼 확장으로 대응.
 - 공통 모듈 범위·QueryDSL 도입 여부: 도메인별 결정 사항.
-- **product 판매자 식별(인증 연동):** 게이트웨이는 `X-User-Id`로 **memberId만** 전달한다(회원:판매자 1:N). 회원 도메인이 **게이트웨이 신뢰 방식**을 채택 — 클라가 판매자 선택 시 회원 API로 **토큰을 재발급**받고(회원 토큰과 **독립적인 판매자 토큰**), 게이트웨이가 이를 검증해 sellerId를 전달한다. product는 게이트웨이가 보증한 sellerId를 **신뢰**(자체 소유권 검증 없음). **회원 측 판매자 토큰 구현은 미확정** — 토큰 구조·sellerId 전달 헤더 확정 후 연동. 현재 product는 임시로 `X-User-Id`(memberId)를 `sellerId` 자리에 사용(`support.auth`), 연동 시 교체. (근거: `product/docs/DECISIONS.md` 2026-06-25 #3)
+- **product 판매자 식별(인증 연동):** 게이트웨이는 `X-User-Id`로 **memberId만** 전달한다(회원:판매자 1:N). 회원 도메인이 **게이트웨이 신뢰 방식**을 채택 — 클라가 판매자 선택 시 회원 API로 **토큰을 재발급**받고(회원 토큰과 **독립적인 판매자 토큰**), 게이트웨이가 이를 검증해 sellerId를 전달한다. product는 게이트웨이가 보증한 sellerId의 **진위**를 신뢰한다(자체 진위 검증 없음) — 단, 상품·드롭의 **리소스 소유**는 product가 검증한다(`getOwnedProduct`). **회원 측 판매자 토큰 구현은 미확정** — 토큰 구조·sellerId 전달 헤더 확정 후 연동. 현재 product는 임시로 `X-User-Id`(memberId)를 `sellerId` 자리에 사용(`support.auth`), 연동 시 교체. (근거: `product/docs/DECISIONS.md` 2026-06-25 #3)
 
 ---
 

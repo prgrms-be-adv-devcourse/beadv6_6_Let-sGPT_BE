@@ -35,3 +35,5 @@ jwt:
   public-key: ${JWT_PUBLIC_KEY}
   access-token-expire-seconds: 1800       # 30분
   refresh-token-expire-seconds: 1209600   # 14일
+  issuer: ${JWT_ISSUER:http://localhost:9100}
+  scoped-token-expire-seconds: 120        # RFC 8693 scoped 토큰 단명(2분)
