@@ -1,0 +1,13 @@
+package com.openat.order.domain.model;
+
+public enum OrderFailCode {
+    SOLD_OUT,
+    DROP_NOT_OPEN,
+    LIMIT_EXCEEDED,
+    PAYMENT_FAILED,
+    PAYMENT_EXPIRED,
+    PAYMENT_STATUS_CHECK_FAILED,
+    PG_ERROR,
+    PRODUCT_INTEGRATION_FAILED,
+    STOCK_ROLLBACK_FAILED
+}

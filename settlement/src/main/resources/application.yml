@@ -51,10 +51,10 @@ api:
 settlement:
   kafka:
     topic:
-      payment-events: payment-events
+      payment-events: payment.settlement.events
   batch:
     #monthly-cron: "0 0 3 1 * *"
-    monthly-cron: 0 25 12 23 * *
+    monthly-cron: 0 0 3 1 * *
     seller-partition-size: 50
     seller-order-chunk-size: 1000
     grid-size: 2

@@ -19,7 +19,7 @@ spring:
             - id: member
               uri: http://member:9100
               predicates:
-                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks
+                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks,/auth/token
             - id: product
               uri: http://product:9110
               predicates:
@@ -38,9 +38,22 @@ spring:
                 - Path=/payment/**
               filters:
                 - StripPrefix=1
+            - id: settlement-api
+              uri: http://settlement:9140
+              predicates:
+                - Path=/api/v1/settlements/**
             - id: settlement
               uri: http://settlement:9140
               predicates:
                 - Path=/settlement/**
               filters:
                 - StripPrefix=1
+
+openapi:
+  aggregate:
+    services:
+      member-service: http://member:9100/api-docs
+      payment-service: http://payment:9130/api-docs
+      settlement-service: http://settlement:9140/api-docs
+    prefixes:
+      payment-service: /payment

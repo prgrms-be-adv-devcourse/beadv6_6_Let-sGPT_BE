@@ -49,7 +49,7 @@ public class SellerController {
 
     /**
      * 판매자 정보 신규 등록. 성공 시 role이 ROLE_SELLER로 승격된다.
-     * Location 헤더는 관리자 단건 조회 경로({@code GET /api/v1/seller/{id}})를 가리킨다.
+     * Location 헤더는 관리자 전체 조회 경로({@code GET /api/v1/seller/{userId}})를 가리킨다.
      */
     @PostMapping("/me")
     public ResponseEntity<SellerInfoResponse> create(
@@ -58,7 +58,7 @@ public class SellerController {
     ) {
         UUID memberId = UUID.fromString(userContext.userId());
         SellerInfoResponse response = sellerUseCase.create(memberId, request);
-        return ResponseEntity.created(Locations.fromPath("/api/v1/seller", response.id())).body(response);
+        return ResponseEntity.created(Locations.fromPath("/api/v1/seller", memberId)).body(response);
     }
 
     /** 특정 SellerInfo의 storeName 수정. 본인 소유가 아니거나 존재하지 않으면 404. */
@@ -88,11 +88,11 @@ public class SellerController {
     // -----------------------------------------------------------------------
 
     /**
-     * 판매자 정보 UUID로 단건 조회 (관리자 전용).
-     * 게이트웨이에서 ROLE_ADMIN 인가를 강제하며, 소유자 제한 없이 조회 가능하다.
+     * 특정 회원의 판매자 정보 전체 조회 (관리자 전용).
+     * 게이트웨이에서 ROLE_ADMIN 인가를 강제하며, 삭제된 이력까지 모두 반환한다.
      */
-    @GetMapping("/{sellerId}")
-    public ResponseEntity<SellerInfoResponse> getSellerInfo(@PathVariable UUID sellerId) {
-        return ResponseEntity.ok(sellerUseCase.getSellerInfoById(sellerId));
+    @GetMapping("/{userId}")
+    public ResponseEntity<List<SellerInfoResponse>> getSellerInfosByUserId(@PathVariable UUID userId) {
+        return ResponseEntity.ok(sellerUseCase.getSellerInfosByUserId(userId));
     }
 }

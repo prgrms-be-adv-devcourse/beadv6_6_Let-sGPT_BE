@@ -3,6 +3,14 @@ server:
 
 
 spring:
+  kafka:
+    consumer:
+      group-id: order-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
   profiles:
     active: local
   application:
@@ -10,7 +18,7 @@ spring:
   jpa:
     properties:
       hibernate:
-        default_schema: order # 스키마 분리
+        default_schema: orders # 스키마 분리
     hibernate:
       ddl-auto: validate
 springdoc:
@@ -19,3 +27,12 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     operations-sorter: method
+
+order:
+  kafka:
+    topic:
+      payment-complete: payment.completed.events
+      payment-failed: payment.failed.events
+      refund-completed: refund.completed.events
+      refund-failed: refund.failed.events
+      order-completed: order_completed.events

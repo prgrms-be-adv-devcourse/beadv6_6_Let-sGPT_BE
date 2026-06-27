@@ -17,6 +17,9 @@ spring:
         default_schema: member # 스키마 분리
     hibernate:
       ddl-auto: validate
+    # SQL init 스크립트가 Hibernate DDL 이후에 실행되도록 보장.
+    # (로컬 local 프로필에서 sql.init.mode=always 사용 시 필수)
+    defer-datasource-initialization: true
 springdoc:
   api-docs:
     path: /api-docs
@@ -32,3 +35,5 @@ jwt:
   public-key: ${JWT_PUBLIC_KEY}
   access-token-expire-seconds: 1800       # 30분
   refresh-token-expire-seconds: 1209600   # 14일
+  issuer: ${JWT_ISSUER:http://localhost:9100}
+  scoped-token-expire-seconds: 120        # RFC 8693 scoped 토큰 단명(2분)

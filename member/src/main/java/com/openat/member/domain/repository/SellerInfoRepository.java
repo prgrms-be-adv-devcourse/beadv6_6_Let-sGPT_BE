@@ -9,16 +9,12 @@ public interface SellerInfoRepository {
 
     SellerInfo save(SellerInfo sellerInfo);
 
-    /** 판매자 정보 UUID로 단건 조회. 관리자 전용 용도. */
-    Optional<SellerInfo> findById(UUID sellerId);
-
     List<SellerInfo> findActiveByMemberId(UUID memberId);
 
     List<SellerInfo> findAllByMemberId(UUID memberId);
 
-    /**
-     * sellerId와 memberId가 모두 일치하는 건 조회.
-     * 존재하지 않거나 해당 회원 소유가 아니면 empty.
-     */
     Optional<SellerInfo> findByIdAndMemberId(UUID sellerId, UUID memberId);
+
+    /** STS 소유권 검증 전용: 활성(soft-delete 제외) 판매자만 조회 */
+    Optional<SellerInfo> findActiveByIdAndMemberId(UUID sellerId, UUID memberId);
 }
