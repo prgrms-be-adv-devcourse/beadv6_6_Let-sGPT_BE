@@ -14,7 +14,7 @@ public final class ProductPortDtos {
             long unitPrice) {
     }
 
-    public record StockChangeRequest(UUID orderId, int quantity, String idempotencyKey) {
+    public record StockChangeRequest(UUID orderId, UUID buyerId, int quantity) {
     }
 
     public enum OperationType {

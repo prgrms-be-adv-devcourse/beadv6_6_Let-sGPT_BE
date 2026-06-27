@@ -34,8 +34,6 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class OrderService implements OrderUseCase {
 
-    private static final String STOCK_RESTORE_IDEMPOTENCY_PREFIX = "restore-";
-
     private final OrderRepository orderRepository;
     private final OrderHistoryRepository orderHistoryRepository;
     private final ProductIntegrationPort productIntegrationPort;
@@ -58,7 +56,7 @@ public class OrderService implements OrderUseCase {
         try {
             productIntegrationPort.decreaseStock(
                     order.getDropId(),
-                    new StockDecreaseCommand(order.getId(), memberId, order.getQuantity(), command.idempotencyKey())
+                    new StockDecreaseCommand(order.getId(), memberId, order.getQuantity())
             );
         } catch (ProductPortException e) {
             orderFailureRecorder.recordCreateFailure(order.getId(), e.getFailCode(), e.getMessage(), now);
@@ -150,7 +148,7 @@ public class OrderService implements OrderUseCase {
         try {
             productIntegrationPort.restoreStock(
                     order.getDropId(),
-                    new StockRestoreCommand(order.getId(), order.getQuantity(), stockRestoreIdempotencyKey(order.getId()))
+                    new StockRestoreCommand(order.getId(), order.getMemberId(), order.getQuantity())
             );
         } catch (ProductPortException e) {
             throw new BusinessException(OrderErrorCode.PORT_ERROR, e.getMessage(), e);
@@ -179,14 +177,11 @@ public class OrderService implements OrderUseCase {
         }
     }
 
-    private String stockRestoreIdempotencyKey(UUID orderId) {
-        return STOCK_RESTORE_IDEMPOTENCY_PREFIX + orderId;
-    }
-
     private OrderErrorCode toOrderErrorCode(OrderFailCode failCode) {
         return switch (failCode) {
             case SOLD_OUT -> OrderErrorCode.SOLD_OUT;
             case DROP_NOT_OPEN -> OrderErrorCode.DROP_NOT_OPEN;
+            case DROP_CLOSED -> OrderErrorCode.DROP_CLOSED;
             case LIMIT_EXCEEDED -> OrderErrorCode.LIMIT_EXCEEDED;
             default -> OrderErrorCode.PORT_ERROR;
         };

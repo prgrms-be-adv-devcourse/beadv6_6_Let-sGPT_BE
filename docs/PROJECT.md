@@ -71,12 +71,12 @@
 ## 4. 핵심 비즈니스 흐름 (드롭 즉시 주문 사가)
 
 1. 주문 생성 (`status=PAYMENT_PENDING`) → 사가 시작
-2. **재고 감소** (상품 서비스 **동기** 호출). 품절·미오픈·한도초과면 즉시 실패(`order.failed`)
+2. **재고 감소** (상품 서비스 **동기** 호출). 품절·미오픈·드롭종료·한도초과면 즉시 실패(`order.failed`)
 3. 재고 성공 → 결제 진입 (결제 서비스가 PG 결제창 호출 → 승인)
 4. 결제 결과를 **이벤트로 수신**
    - COMPLETE → `order.complete` + `order_completed` 이벤트 발행 (→ 정산)
    - FAILED → **재고 롤백(보상)** + `order.cancelled` / `payment_failed`
-5. 결제 미회신 시간초과 → 상품이 `stock_timeout` 이벤트 발행 → 주문 `order.failed` (재고 자동 정리)
+5. 결제 미회신 시간초과 → 주문 TTL 보정 처리 → 주문 `order.failed` + 재고 롤백 보상 요청
 6. 주문 취소 → 환불 요청 → 환불 결과 이벤트 (COMPLETE: `order.refund` / FAILED: `order.refund_failed` 수동 처리)
 7. 월 정산: `order_completed`·`refund_completed` 적재 → **Spring Batch** (`cron 0 3 5 * *`)로 수수료·환불 차감 정산
 
@@ -229,7 +229,7 @@
 
 ## 12. 열린 결정 사항 (작업 중 합의 필요)
 
-- 결제 이벤트 미회신 시 정리 시점/방식 (`stock_timeout` 트리거 기준 시간 등).
+- 결제 이벤트 미회신 시 주문 TTL 기준 만료 보정 방식과 재고 롤백 보상 정책.
 - 결제 결과 사용자 응답 경로(리다이렉트 successUrl/failUrl) vs 백엔드 이벤트 전파의 역할 분담.
 - 예치금·장바구니: 과제 필수지만 현재 **TODO**. 현재는 PG 직접 결제·드롭 즉시 주문.
 - 카테고리: 상품 서비스 내 **`categories` 테이블**로 분리 완료(`Product`가 `@ManyToOne`으로 **선택 참조** — nullable, 카테고리 없이 상품 등록 가능·삭제 시 미분류). 계층 구조·카테고리별 수수료는 추후 컬럼 확장으로 대응.

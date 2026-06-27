@@ -57,8 +57,8 @@ class OrderServiceTest {
     private OrderService orderService;
 
     @Test
-    @DisplayName("주문 생성 시 상품 재고 감소 요청에 구매자 식별자와 멱등키를 전달한다")
-    void createOrder_decreasesStockWithBuyerIdAndIdempotencyKey() {
+    @DisplayName("주문 생성 시 상품 재고 감소 요청에 주문 식별자와 구매자 식별자를 전달한다")
+    void createOrder_decreasesStockWithOrderIdAndBuyerId() {
         // given
         UUID memberId = UUID.randomUUID();
         CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 2, "idem-001");
@@ -80,7 +80,6 @@ class OrderServiceTest {
         assertThat(stockCommand.getValue().orderId()).isEqualTo(order.getId());
         assertThat(stockCommand.getValue().buyerId()).isEqualTo(memberId);
         assertThat(stockCommand.getValue().quantity()).isEqualTo(command.quantity());
-        assertThat(stockCommand.getValue().idempotencyKey()).isEqualTo(command.idempotencyKey());
     }
 
     @Test
@@ -129,6 +128,31 @@ class OrderServiceTest {
     }
 
     @Test
+    @DisplayName("드롭 종료로 재고 감소가 실패하면 닫힌 드롭 오류로 변환한다")
+    void createOrder_whenDropClosed_throwsDropClosedError() {
+        // given
+        UUID memberId = UUID.randomUUID();
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
+        OrderSnapshotInfo snapshot = snapshot(command.dropId());
+        Order order = createOrder(memberId, snapshot, command.quantity(), command.idempotencyKey());
+
+        when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
+                .thenReturn(Optional.empty());
+        when(productIntegrationPort.fetchOrderSnapshot(command.dropId())).thenReturn(snapshot);
+        when(pendingOrderCreator.create(any(), any(), any(), any())).thenReturn(order);
+        doThrow(new ProductPortException(OrderFailCode.DROP_CLOSED, "drop closed"))
+                .when(productIntegrationPort)
+                .decreaseStock(any(), any());
+
+        // when
+        BusinessException ex = assertThrows(BusinessException.class, () -> orderService.createOrder(memberId, command));
+
+        // then
+        assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.DROP_CLOSED);
+        verify(orderFailureRecorder).recordCreateFailure(any(), any(), any(), any());
+    }
+
+    @Test
     @DisplayName("결제 대기 주문 취소 시 재고 복구를 요청하고 취소 이력을 남긴다")
     void cancelOrder_whenPaymentPending_restoresStockAndCancelsOrder() {
         // given
@@ -146,8 +170,8 @@ class OrderServiceTest {
         ArgumentCaptor<StockRestoreCommand> restoreCommand = ArgumentCaptor.forClass(StockRestoreCommand.class);
         verify(productIntegrationPort).restoreStock(any(), restoreCommand.capture());
         assertThat(restoreCommand.getValue().orderId()).isEqualTo(orderId);
+        assertThat(restoreCommand.getValue().buyerId()).isEqualTo(memberId);
         assertThat(restoreCommand.getValue().quantity()).isEqualTo(order.getQuantity());
-        assertThat(restoreCommand.getValue().idempotencyKey()).isEqualTo("restore-" + orderId);
         verify(orderHistoryRepository).save(any(OrderHistory.class));
     }
 

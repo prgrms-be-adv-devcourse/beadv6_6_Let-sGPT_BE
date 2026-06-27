@@ -3,6 +3,7 @@ package com.openat.order.domain.model;
 public enum OrderFailCode {
     SOLD_OUT,
     DROP_NOT_OPEN,
+    DROP_CLOSED,
     LIMIT_EXCEEDED,
     PAYMENT_FAILED,
     PAYMENT_EXPIRED,

@@ -44,8 +44,7 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
         try {
             productInternalApiClient.decreaseStock(
                     dropId,
-                    command.buyerId(),
-                    new StockChangeRequest(command.orderId(), command.quantity(), command.idempotencyKey())
+                    new StockChangeRequest(command.orderId(), command.buyerId(), command.quantity())
             );
         } catch (FeignException e) {
             throw toProductPortException(OperationType.DECREASE_STOCK, e);
@@ -57,7 +56,7 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
         try {
             productInternalApiClient.restoreStock(
                     dropId,
-                    new StockChangeRequest(command.orderId(), command.quantity(), command.idempotencyKey())
+                    new StockChangeRequest(command.orderId(), command.buyerId(), command.quantity())
             );
         } catch (FeignException e) {
             throw toProductPortException(OperationType.RESTORE_STOCK, e);
@@ -80,13 +79,16 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
     }
 
     private OrderFailCode toOrderFailCode(OperationType operationType, String failCode) {
-        if ("SOLD_OUT".equals(failCode)) {
+        if ("DROP_SOLD_OUT".equals(failCode) || "SOLD_OUT".equals(failCode)) {
             return OrderFailCode.SOLD_OUT;
         }
         if ("DROP_NOT_OPEN".equals(failCode) || "NOT_OPEN".equals(failCode)) {
             return OrderFailCode.DROP_NOT_OPEN;
         }
-        if ("LIMIT_EXCEEDED".equals(failCode)) {
+        if ("DROP_CLOSED".equals(failCode) || "CLOSED".equals(failCode)) {
+            return OrderFailCode.DROP_CLOSED;
+        }
+        if ("DROP_LIMIT_EXCEEDED".equals(failCode) || "LIMIT_EXCEEDED".equals(failCode)) {
             return OrderFailCode.LIMIT_EXCEEDED;
         }
         if (operationType == OperationType.RESTORE_STOCK) {
