@@ -5,13 +5,9 @@ import com.openat.order.application.dto.PaymentCompletedCommand;
 import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
-import com.openat.order.application.dto.StockRestoreCommand;
 import com.openat.order.application.port.OrderCompletedEventPublishPort;
-import com.openat.order.application.port.ProductIntegrationPort;
-import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
-import com.openat.order.domain.model.OrderFailCode;
 import com.openat.order.domain.model.OrderHistory;
 import com.openat.order.domain.model.OrderStatus;
 import com.openat.order.domain.repository.OrderHistoryRepository;
@@ -28,13 +24,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @RequiredArgsConstructor
 public class OrderEventService {
 
-    private static final String STOCK_RESTORE_IDEMPOTENCY_PREFIX = "restore-";
     private static final String EVENT_IDEMPOTENCY_DELIMITER = "-";
     private static final int SOURCE_EVENT_KEY_MAX_LENGTH = 100;
 
     private final OrderRepository orderRepository;
     private final OrderHistoryRepository orderHistoryRepository;
-    private final ProductIntegrationPort productIntegrationPort;
     private final OrderCompletedEventPublishPort orderCompletedEventPublishPort;
 
     @Transactional
@@ -78,31 +72,18 @@ public class OrderEventService {
     public void handlePaymentFailed(PaymentFailedCommand command) {
         Order order = getOrder(command.orderId());
 
-        if (order.getStatus() == OrderStatus.FAILED || order.getStatus() == OrderStatus.CANCELLED) {
+        if (order.getStatus() != OrderStatus.PAYMENT_PENDING) {
             return;
         }
 
-        if (order.getStatus() != OrderStatus.PAYMENT_PENDING) {
-            throw new BusinessException(
-                    OrderErrorCode.INVALID_STATUS,
-                    "결제 실패 이벤트 처리 가능한 상태가 아닙니다: orderId=%s, status=%s"
-                            .formatted(command.orderId(), order.getStatus())
-            );
-        }
-
-        restoreStock(order);
         OrderStatus before = order.getStatus();
-
-        if (!order.fail(OrderFailCode.PAYMENT_FAILED, command.reason(), Instant.now())) {
-            throw new BusinessException(OrderErrorCode.INVALID_STATUS);
-        }
 
         orderHistoryRepository.save(
                 OrderHistory.record()
                         .orderId(order.getId())
                         .previousStatus(before)
                         .newStatus(order.getStatus())
-                        .reasonCode("PAYMENT_FAILED")
+                        .reasonCode("PAYMENT_ATTEMPT_FAILED")
                         .reasonMessage(command.reason())
                         .sourceEventKey(eventSourceKey("payment-failed", command.version(), command.orderId(), command.paymentId()))
                         .build()
@@ -202,21 +183,6 @@ public class OrderEventService {
     private Order getOrder(UUID orderId) {
         return orderRepository.findById(orderId)
                 .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
-    }
-
-    private void restoreStock(Order order) {
-        try {
-            productIntegrationPort.restoreStock(
-                    order.getDropId(),
-                    new StockRestoreCommand(order.getId(), order.getQuantity(), stockRestoreIdempotencyKey(order.getId()))
-            );
-        } catch (ProductPortException e) {
-            throw new BusinessException(OrderErrorCode.PORT_ERROR, e.getMessage(), e);
-        }
-    }
-
-    private String stockRestoreIdempotencyKey(UUID orderId) {
-        return STOCK_RESTORE_IDEMPOTENCY_PREFIX + orderId;
     }
 
     private void publishOrderCompletedAfterCommit(Order order) {

@@ -50,7 +50,7 @@ class OrderCompletedEventPublisherTest {
         assertThat(json.get("productId").asText()).isEqualTo(order.getProductId().toString());
         assertThat(json.get("memberId").asText()).isEqualTo(order.getMemberId().toString());
         assertThat(json.get("amount").asLong()).isEqualTo(order.getTotalPrice());
-        assertThat(json.get("completedAt").asText()).isEqualTo(order.getCompletedAt().toString());
+        assertThat(json.has("completedAt")).isFalse();
     }
 
     @Test
