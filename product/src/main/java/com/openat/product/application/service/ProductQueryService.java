@@ -23,16 +23,27 @@ public class ProductQueryService implements ProductQueryUseCase {
 
   @Override
   public ProductInfo getById(UUID id) {
-    Product product =
-        productRepository
-            .findById(id)
-            .orElseThrow(() -> new BusinessException(ProductErrorCode.NOT_FOUND));
-    return ProductInfo.from(product);
+    return ProductInfo.from(getProductOrThrow(id));
+  }
+
+  @Override
+  public Product getOwnedProduct(UUID id, UUID sellerId) {
+    Product product = getProductOrThrow(id);
+    if (!product.getSellerId().equals(sellerId)) {
+      throw new BusinessException(ProductErrorCode.NOT_OWNER);
+    }
+    return product;
   }
 
   @Override
   public Page<ProductInfo> searchProducts(ProductSearchCondition condition, Pageable pageable) {
     Page<Product> productPage = productRepository.search(condition, pageable);
     return productPage.map(ProductInfo::from);
+  }
+
+  private Product getProductOrThrow(UUID id) {
+    return productRepository
+        .findById(id)
+        .orElseThrow(() -> new BusinessException(ProductErrorCode.NOT_FOUND));
   }
 }

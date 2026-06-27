@@ -18,7 +18,7 @@ class StockHistoryTest {
     // when
     StockHistory history =
         StockHistory.record()
-            .drop(null)
+            .dropId(UUID.randomUUID())
             .orderId(UUID.randomUUID())
             .buyerId(UUID.randomUUID())
             .changeType(StockChangeType.DEDUCT)
@@ -38,7 +38,7 @@ class StockHistoryTest {
     // when
     StockHistory history =
         StockHistory.record()
-            .drop(null)
+            .dropId(UUID.randomUUID())
             .orderId(UUID.randomUUID())
             .buyerId(UUID.randomUUID())
             .changeType(StockChangeType.ROLLBACK)

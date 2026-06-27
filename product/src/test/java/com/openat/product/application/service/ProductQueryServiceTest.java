@@ -82,4 +82,47 @@ class ProductQueryServiceTest {
     assertThat(result.getContent()).hasSize(1);
     assertThat(result.getContent().get(0).sellerId()).isEqualTo(sellerId);
   }
+
+  @Test
+  @DisplayName("소유 상품을 조회하면 상품 엔티티를 반환한다")
+  void getOwnedProduct_owned_returnsEntity() {
+    // given
+    UUID id = UUID.randomUUID();
+    UUID sellerId = UUID.randomUUID();
+    Product product = ProductFixture.persisted(id, sellerId);
+    given(productRepository.findById(id)).willReturn(Optional.of(product));
+
+    // when
+    Product result = productQueryService.getOwnedProduct(id, sellerId);
+
+    // then
+    assertThat(result).isSameAs(product);
+  }
+
+  @Test
+  @DisplayName("없는 상품을 소유 조회하면 NOT_FOUND 예외를 던진다")
+  void getOwnedProduct_notFound_throwsException() {
+    // given
+    UUID missingId = UUID.randomUUID();
+    given(productRepository.findById(missingId)).willReturn(Optional.empty());
+
+    // when & then
+    assertThatThrownBy(() -> productQueryService.getOwnedProduct(missingId, UUID.randomUUID()))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.NOT_FOUND);
+  }
+
+  @Test
+  @DisplayName("소유자가 아니면 NOT_OWNER 예외를 던진다")
+  void getOwnedProduct_notOwner_throwsException() {
+    // given
+    UUID id = UUID.randomUUID();
+    Product product = ProductFixture.persisted(id, UUID.randomUUID());
+    given(productRepository.findById(id)).willReturn(Optional.of(product));
+
+    // when & then
+    assertThatThrownBy(() -> productQueryService.getOwnedProduct(id, UUID.randomUUID()))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.NOT_OWNER);
+  }
 }
