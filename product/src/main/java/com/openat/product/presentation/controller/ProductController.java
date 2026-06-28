@@ -59,6 +59,17 @@ public class ProductController implements ProductApiSpec {
   }
 
   @Override
+  @GetMapping("/me")
+  public ResponseEntity<PageResponse<ProductResponse>> searchMyProducts(
+      @CurrentUser UUID sellerId, @ModelAttribute ProductSearchRequest request, Pageable pageable) {
+    Page<ProductResponse> page =
+        productQueryUseCase
+            .searchProducts(request.toCondition(sellerId), pageable)
+            .map(ProductResponse::from);
+    return ResponseEntity.ok(PageResponse.of(page));
+  }
+
+  @Override
   @PatchMapping("/{id}")
   public ResponseEntity<Void> update(
       @CurrentUser UUID sellerId,

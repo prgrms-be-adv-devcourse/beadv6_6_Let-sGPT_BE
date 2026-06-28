@@ -7,6 +7,7 @@ import com.openat.category.domain.model.Category;
 import com.openat.category.domain.repository.CategoryRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.util.List;
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -51,6 +52,23 @@ class CategoryRepositoryAdaptorTest {
     // then
     assertThat(saved.getId()).isNotNull();
     assertThat(saved.getCreatedAt()).isNotNull();
+  }
+
+  @Test
+  @DisplayName("findAll은 이름 오름차순으로 전체를 반환한다")
+  void findAll_returnsAllOrderedByName() {
+    // given
+    categoryRepository.save(Category.create().name("의류").build());
+    categoryRepository.save(Category.create().name("가방").build());
+    categoryRepository.save(Category.create().name("문구").build());
+    entityManager.flush();
+    entityManager.clear();
+
+    // when
+    List<Category> result = categoryRepository.findAll();
+
+    // then
+    assertThat(result).extracting(Category::getName).containsExactly("가방", "문구", "의류");
   }
 
   @Test

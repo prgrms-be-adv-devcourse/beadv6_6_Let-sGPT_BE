@@ -14,7 +14,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(
     properties = {
       "spring.profiles.active=test",
-      "spring.jpa.properties.hibernate.hbm2ddl.create_namespaces=true"
+      "spring.jpa.properties.hibernate.hbm2ddl.create_namespaces=true",
+      "spring.kafka.listener.auto-startup=false",
+      "product.image.local-dir=${java.io.tmpdir}/openat-test-images"
     })
 @Testcontainers
 @DisplayName("애플리케이션 컨텍스트")

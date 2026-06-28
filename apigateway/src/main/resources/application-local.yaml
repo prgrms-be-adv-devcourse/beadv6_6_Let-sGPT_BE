@@ -19,18 +19,30 @@ spring:
               uri: http://localhost:9100
               predicates:
                 - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks,/auth/token
+            - id: product-api
+              uri: http://localhost:9110
+              predicates:
+                - Path=/api/v1/products/**,/api/v1/drops/**,/api/v1/categories/**
             - id: product
               uri: http://localhost:9110
               predicates:
                 - Path=/product/**
               filters:
                 - StripPrefix=1
+            - id: order-api
+              uri: http://localhost:9120
+              predicates:
+                - Path=/api/v1/orders/**
             - id: order
               uri: http://localhost:9120
               predicates:
                 - Path=/order/**
               filters:
                 - StripPrefix=1
+            - id: payment-api
+              uri: http://localhost:9130
+              predicates:
+                - Path=/api/v1/payments/**,/api/v1/refunds/**,/api/v1/wallet/**
             - id: payment
               uri: http://localhost:9130
               predicates:
@@ -52,6 +64,8 @@ openapi:
   aggregate:
     services:
       member-service: http://localhost:9100/api-docs
+      product-service: http://localhost:9110/api-docs
+      order-service: http://localhost:9120/api-docs
       payment-service: http://localhost:9130/api-docs
       settlement-service: http://localhost:9140/api-docs
     prefixes:

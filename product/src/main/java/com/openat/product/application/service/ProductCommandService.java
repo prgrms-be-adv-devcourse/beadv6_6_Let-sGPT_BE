@@ -38,6 +38,7 @@ public class ProductCommandService implements ProductCommandUseCase {
             .category(category)
             .price(command.price())
             .thumbnailKey(command.thumbnailKey())
+            .imageKeys(command.imageKeys())
             .build();
 
     return productRepository.save(newProduct).getId();
@@ -49,7 +50,12 @@ public class ProductCommandService implements ProductCommandUseCase {
     Category category = toCategory(command.categoryId());
 
     product.update(
-        command.name(), command.description(), category, command.price(), command.thumbnailKey());
+        command.name(),
+        command.description(),
+        category,
+        command.price(),
+        command.thumbnailKey(),
+        command.imageKeys());
   }
 
   @Override

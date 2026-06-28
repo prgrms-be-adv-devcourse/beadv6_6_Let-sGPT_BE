@@ -54,4 +54,13 @@ public class TokenExchangeController {
         );
         return ResponseEntity.ok(tokenExchangeUseCase.exchange(request));
     }
+
+    // TODO(fe-api): FE 가 RFC8693 form 교환(/auth/token) 대신 '스토어 범위 판매자 토큰 재발급'으로 전환함.
+    //   필요: POST /api/v1/auth/seller-token  (회원 JWT 인증: Authorization: Bearer <회원 accessToken>)
+    //     body(JSON): { sellerInfoId }
+    //     resp(JSON): { tokenType, accessToken, expiresIn }   // 해당 스토어(sellerInfoId) 범위 판매자 JWT
+    //   - 회원은 스토어 1:N, FE 는 활성 스토어 전환 시 재발급(짧은 수명 OK: 선갱신 + 401 재시도).
+    //   - 내부적으로 기존 TokenExchangeUseCase 재사용 가능(audience/scope/resource 를 sellerInfoId 로 서버가 구성).
+    //   - 게이트웨이는 판매자 토큰의 스토어 스코프를 검증해 product 도메인에 @CurrentUser=sellerInfoId 로 주입 전제.
+    //   - (구) /auth/token RFC8693 교환은 FE 미사용 → 폐기 여부 BE 판단. 상세: FE docs/auth.md.
 }

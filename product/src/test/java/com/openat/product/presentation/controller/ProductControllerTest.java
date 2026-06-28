@@ -85,7 +85,7 @@ class ProductControllerTest {
     void create_blankName_returns400() throws Exception {
       // given
       UUID sellerId = UUID.randomUUID();
-      ProductCreateRequest request = new ProductCreateRequest("  ", "설명", null, 1_000L, null);
+      ProductCreateRequest request = new ProductCreateRequest("  ", "설명", null, 1_000L, null, null);
 
       // when & then
       mockMvc
@@ -104,7 +104,8 @@ class ProductControllerTest {
     void create_negativePrice_returns400() throws Exception {
       // given
       UUID sellerId = UUID.randomUUID();
-      ProductCreateRequest request = new ProductCreateRequest("한정판 스니커즈", "설명", null, -1L, null);
+      ProductCreateRequest request =
+          new ProductCreateRequest("한정판 스니커즈", "설명", null, -1L, null, null);
 
       // when & then
       mockMvc
@@ -135,7 +136,8 @@ class ProductControllerTest {
           .perform(get("/api/v1/products/{id}", info.id()))
           .andExpect(status().isOk())
           .andExpect(jsonPath("$.id").value(info.id().toString()))
-          .andExpect(jsonPath("$.name").value("한정판 스니커즈"));
+          .andExpect(jsonPath("$.name").value("한정판 스니커즈"))
+          .andExpect(jsonPath("$.sellerName").value("오픈앳 스튜디오"));
     }
 
     @Test
@@ -204,6 +206,30 @@ class ProductControllerTest {
       assertThat(conditionCaptor.getValue().categoryId()).isEqualTo(categoryId);
       assertThat(conditionCaptor.getValue().keyword()).isEqualTo(keyword);
     }
+
+    @Test
+    @DisplayName("본인 상품 조회는 헤더의 sellerId를 검색 조건에 바인딩한다")
+    void searchMyProducts_bindsSellerId() throws Exception {
+      // given
+      UUID sellerId = UUID.randomUUID();
+      given(
+              productQueryUseCase.searchProducts(
+                  any(ProductSearchCondition.class), any(Pageable.class)))
+          .willReturn(new PageImpl<>(List.<ProductInfo>of(), PageRequest.of(0, 10), 0));
+
+      // when
+      mockMvc
+          .perform(get("/api/v1/products/me").header(USER_ID_HEADER, sellerId))
+          .andExpect(status().isOk());
+
+      // then
+      ArgumentCaptor<ProductSearchCondition> conditionCaptor =
+          ArgumentCaptor.forClass(ProductSearchCondition.class);
+      then(productQueryUseCase)
+          .should()
+          .searchProducts(conditionCaptor.capture(), any(Pageable.class));
+      assertThat(conditionCaptor.getValue().sellerId()).isEqualTo(sellerId);
+    }
   }
 
   @Nested
@@ -254,7 +280,7 @@ class ProductControllerTest {
       // given
       UUID sellerId = UUID.randomUUID();
       UUID productId = UUID.randomUUID();
-      ProductUpdateRequest request = new ProductUpdateRequest("  ", "설명", null, 1_000L, null);
+      ProductUpdateRequest request = new ProductUpdateRequest("  ", "설명", null, 1_000L, null, null);
 
       // when & then
       mockMvc
@@ -305,23 +331,25 @@ class ProductControllerTest {
   }
 
   private ProductCreateRequest validRequest() {
-    return new ProductCreateRequest("한정판 스니커즈", "설명", null, 219_000L, null);
+    return new ProductCreateRequest("한정판 스니커즈", "설명", null, 219_000L, null, null);
   }
 
   private ProductUpdateRequest updateRequest() {
-    return new ProductUpdateRequest("수정된 상품", "수정 설명", null, 150_000L, null);
+    return new ProductUpdateRequest("수정된 상품", "수정 설명", null, 150_000L, null, null);
   }
 
   private ProductInfo sampleInfo() {
     return new ProductInfo(
         UUID.randomUUID(),
         UUID.randomUUID(),
+        "오픈앳 스튜디오",
         "한정판 스니커즈",
         "설명",
         null,
         null,
         219_000L,
         null,
+        List.of(),
         Instant.parse("2026-01-01T00:00:00Z"));
   }
 }

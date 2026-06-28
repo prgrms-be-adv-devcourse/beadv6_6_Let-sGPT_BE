@@ -9,8 +9,8 @@ import org.springframework.web.method.support.ModelAndViewContainer;
 
 public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolver {
 
-  // TODO: 임시 인증 스텁 - 헤더의 X-User-Id를 검증 없이 주입 (실제 연동 시 이 클래스 삭제).
-  //   게이트웨이가 판매자 토큰 기반 sellerId를 헤더로 전달하면 그것을 신뢰한다.
+  // TODO: 임시 인증 스텁 - 헤더의 X-User-Id를 검증 없이 sellerId(활성 스토어 sellerInfoId)로 주입 (실제 연동 시 삭제).
+  //   게이트웨이가 판매자 토큰의 스토어 스코프(sellerInfoId)를 검증해 전달하면 그것을 신뢰한다.
   private static final String USER_ID_HEADER = "X-User-Id";
 
   @Override

@@ -37,6 +37,12 @@ public interface ProductApiSpec {
   ResponseEntity<PageResponse<ProductResponse>> searchProducts(
       @ParameterObject ProductSearchRequest request, Pageable pageable);
 
+  @Operation(summary = "본인 상품 목록 조회", description = "판매자가 자신이 등록한 상품을 페이징·검색 조회한다.")
+  @ApiResponse(responseCode = "200", description = "조회 성공")
+  @ApiErrorResponses
+  ResponseEntity<PageResponse<ProductResponse>> searchMyProducts(
+      UUID sellerId, @ParameterObject ProductSearchRequest request, Pageable pageable);
+
   @Operation(summary = "상품 수정", description = "판매자가 자신의 상품 정보를 수정한다.")
   @ApiResponse(responseCode = "204", description = "수정 성공")
   @ApiErrorResponses
@@ -46,4 +52,17 @@ public interface ProductApiSpec {
   @ApiResponse(responseCode = "204", description = "삭제 성공")
   @ApiErrorResponses
   ResponseEntity<Void> delete(UUID sellerId, UUID id);
+
+  // NOTE(auth): @CurrentUser UUID sellerId = 활성 스토어 sellerInfoId(판매자 토큰 스코프). 상품은 회원이 아니라
+  //   스토어(SellerInfo)에 귀속되며 write(create/update/delete)·본인 목록(/me)의 소유·필터 기준으로 쓴다.
+  //   게이트웨이가 판매자 토큰의 스토어 스코프를 검증해 주입하는 전제(임시 주입: CurrentUserArgumentResolver 스텁).
+  //   상세: FE docs/auth.md.
+  //
+  // NOTE(sellerName): 판매자 표시명(ProductResponse.sellerName)은 member 스토어 이벤트를 소비한 로컬 투영
+  //   (seller 서브도메인 SellerStore)에서 배치 해석한다 — N+1·런타임 결합 없음. member 가 seller_registered/updated
+  //   이벤트(payload: sellerInfoId, storeName)를 발행해야 실제로 채워짐(로컬은 시드로 표시). 상세: DECISIONS.md.
+  //
+  // NOTE(image): 이미지 업로드/조회는 ProductImageController(POST·GET /api/v1/products/images)로 구현됨.
+  //   imageKeys·thumbnailKey 에 반환 키를 사용한다. 세미 단계는 백엔드 부팅 서버 로컬 파일시스템 저장
+  //   (ImageStorageUseCase 포트). TODO(final): 배포 시 AWS S3 스토리지 어댑터로 교체. [screens/14]
 }

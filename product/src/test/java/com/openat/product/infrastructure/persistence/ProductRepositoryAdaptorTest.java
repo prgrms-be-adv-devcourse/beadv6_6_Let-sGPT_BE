@@ -127,7 +127,8 @@ class ProductRepositoryAdaptorTest {
 
     // then
     Page<Product> result =
-        productRepository.search(new ProductSearchCondition(null, null), PageRequest.of(0, 10));
+        productRepository.search(
+            new ProductSearchCondition(null, null, null), PageRequest.of(0, 10));
     assertThat(result.getTotalElements()).isZero();
   }
 
@@ -157,7 +158,7 @@ class ProductRepositoryAdaptorTest {
       entityManager.clear();
 
       // when
-      ProductSearchCondition condition = new ProductSearchCondition(clothes.getId(), null);
+      ProductSearchCondition condition = new ProductSearchCondition(clothes.getId(), null, null);
       Page<Product> result = productRepository.search(condition, PageRequest.of(0, 10));
 
       // then
@@ -179,12 +180,33 @@ class ProductRepositoryAdaptorTest {
       entityManager.clear();
 
       // when
-      ProductSearchCondition condition = new ProductSearchCondition(null, "스니커즈");
+      ProductSearchCondition condition = new ProductSearchCondition(null, "스니커즈", null);
       Page<Product> result = productRepository.search(condition, PageRequest.of(0, 10));
 
       // then
       assertThat(result.getContent()).hasSize(1);
       assertThat(result.getContent().get(0).getName()).isEqualTo("한정판 스니커즈");
+    }
+
+    @Test
+    @DisplayName("sellerId로 필터하면 그 판매자의 상품만 반환한다")
+    void search_bySellerId_returnsOwnProducts() {
+      // given
+      UUID sellerId = UUID.randomUUID();
+      productRepository.save(
+          Product.create().sellerId(sellerId).name("내 상품").price(1_000L).build());
+      productRepository.save(
+          Product.create().sellerId(UUID.randomUUID()).name("남 상품").price(1_000L).build());
+      entityManager.flush();
+      entityManager.clear();
+
+      // when
+      ProductSearchCondition condition = new ProductSearchCondition(null, null, sellerId);
+      Page<Product> result = productRepository.search(condition, PageRequest.of(0, 10));
+
+      // then
+      assertThat(result.getContent()).hasSize(1);
+      assertThat(result.getContent().get(0).getSellerId()).isEqualTo(sellerId);
     }
 
     @Test
@@ -201,7 +223,8 @@ class ProductRepositoryAdaptorTest {
 
       // when
       Page<Product> result =
-          productRepository.search(new ProductSearchCondition(null, null), PageRequest.of(0, 2));
+          productRepository.search(
+              new ProductSearchCondition(null, null, null), PageRequest.of(0, 2));
 
       // then
       assertThat(result.getTotalElements()).isEqualTo(3);

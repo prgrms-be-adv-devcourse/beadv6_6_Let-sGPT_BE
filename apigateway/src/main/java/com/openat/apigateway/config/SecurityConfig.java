@@ -133,11 +133,19 @@ public class SecurityConfig {
                         // access 토큰 사용 시 거부, 반대로 scoped 토큰을 다른 경로에 쓰면 거부.
                         // -----------------------------------------------------------------
 
-                        // product 카탈로그 읽기 — 공개
+                        // product 카탈로그 읽기 — 공개 (/product 내부 컨벤션 + /api/v1 FE 컨벤션)
                         .pathMatchers(HttpMethod.GET, "/product/**").permitAll()
+                        .pathMatchers(
+                                HttpMethod.GET,
+                                "/api/v1/products/**",
+                                "/api/v1/drops/**",
+                                "/api/v1/categories/**").permitAll()
 
                         // product 판매자 write — scoped 토큰(typ=scoped, aud=openat-product)만 허용 (GET은 위에서 공개)
                         .pathMatchers("/product/products", "/product/products/**").access(scopedFor("openat-product"))
+                        .pathMatchers(
+                                "/api/v1/products", "/api/v1/products/**",
+                                "/api/v1/drops", "/api/v1/drops/**").access(scopedFor("openat-product"))
 
                         // 그 외 모든 경로: 인증 필요 + scoped 토큰 명시적 거부
                         .anyExchange().access(authenticatedAndNotScoped())

@@ -104,4 +104,20 @@ public class Drop {
     boolean beforeClose = closeAt == null || now.isBefore(closeAt);
     return opened && beforeClose;
   }
+
+  public DropStatus resolveStatus(Instant now, long remaining) {
+    if (status == DropStatus.CLOSE) {
+      return DropStatus.CLOSE;
+    }
+    if (isBeforeOpen(now)) {
+      return DropStatus.REGISTERED;
+    }
+    if (isLive(now)) {
+      if (remaining > 0) {
+        return DropStatus.OPEN;
+      }
+      return DropStatus.SOLD_OUT;
+    }
+    return DropStatus.CLOSE;
+  }
 }

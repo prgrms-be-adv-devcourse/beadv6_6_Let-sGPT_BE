@@ -9,6 +9,7 @@ import com.openat.drop.domain.repository.StockCommandResult;
 import com.openat.drop.domain.repository.StockMutation;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -245,6 +246,31 @@ class DropCacheRedisAdaptorTest {
     assertThat(fresh.status()).isEqualTo(StockCommandStatus.CLOSED);
     StockCommandResult retry = deduct(dropId, inflightOrder, buyer, 1);
     assertThat(retry.status()).isEqualTo(StockCommandStatus.DUPLICATE);
+  }
+
+  @Test
+  @DisplayName("워밍된 드롭들의 잔여를 배치로 조회하고 미워밍 드롭은 결과에서 제외한다")
+  void findRemaining_returnsWarmedOnly() {
+    // given
+    UUID warmedA = UUID.randomUUID();
+    UUID warmedB = UUID.randomUUID();
+    UUID missing = UUID.randomUUID();
+    adaptor.warm(openState(warmedA, 10, null));
+    adaptor.warm(openState(warmedB, 3, null));
+
+    // when
+    Map<UUID, Long> remaining = adaptor.findRemaining(List.of(warmedA, warmedB, missing));
+
+    // then
+    assertThat(remaining).containsOnlyKeys(warmedA, warmedB);
+    assertThat(remaining.get(warmedA)).isEqualTo(10);
+    assertThat(remaining.get(warmedB)).isEqualTo(3);
+  }
+
+  @Test
+  @DisplayName("빈 목록이면 빈 맵을 반환한다")
+  void findRemaining_empty_returnsEmptyMap() {
+    assertThat(adaptor.findRemaining(List.of())).isEmpty();
   }
 
   private DropCacheState openState(UUID dropId, long remaining, Integer limitPerUser) {

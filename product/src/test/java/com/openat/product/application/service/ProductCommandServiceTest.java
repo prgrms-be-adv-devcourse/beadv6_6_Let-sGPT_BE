@@ -18,6 +18,7 @@ import com.openat.product.domain.event.ProductDeletedEvent;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.fixture.ProductFixture;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -90,6 +91,26 @@ class ProductCommandServiceTest {
     }
 
     @Test
+    @DisplayName("이미지 키 목록을 함께 등록하면 갤러리로 저장한다")
+    void create_withImageKeys_savesGallery() {
+      // given
+      UUID sellerId = UUID.randomUUID();
+      given(productRepository.save(any(Product.class)))
+          .willReturn(ProductFixture.persisted(UUID.randomUUID(), sellerId));
+      ProductCreateCommand command =
+          new ProductCreateCommand(
+              sellerId, "갤러리 상품", "설명", null, 10_000L, "thumb", List.of("img-1", "img-2"));
+
+      // when
+      productCommandService.create(command);
+
+      // then
+      ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
+      then(productRepository).should().save(productCaptor.capture());
+      assertThat(productCaptor.getValue().getImageKeys()).containsExactly("img-1", "img-2");
+    }
+
+    @Test
     @DisplayName("없는 카테고리를 지정하면 예외가 전파되고 저장하지 않는다")
     void create_categoryNotFound_throwsException() {
       // given
@@ -120,7 +141,8 @@ class ProductCommandServiceTest {
       Product product = ProductFixture.persisted(productId, sellerId);
       given(productRepository.findById(productId)).willReturn(Optional.of(product));
       ProductUpdateCommand command =
-          new ProductUpdateCommand(productId, sellerId, "수정된 상품", "수정 설명", null, 5_000L, null);
+          new ProductUpdateCommand(
+              productId, sellerId, "수정된 상품", "수정 설명", null, 5_000L, null, null);
 
       // when
       productCommandService.update(command);
@@ -137,7 +159,8 @@ class ProductCommandServiceTest {
       UUID productId = UUID.randomUUID();
       given(productRepository.findById(productId)).willReturn(Optional.empty());
       ProductUpdateCommand command =
-          new ProductUpdateCommand(productId, UUID.randomUUID(), "수정", null, null, null, null);
+          new ProductUpdateCommand(
+              productId, UUID.randomUUID(), "수정", null, null, null, null, null);
 
       // when & then
       assertThatThrownBy(() -> productCommandService.update(command))
@@ -155,7 +178,7 @@ class ProductCommandServiceTest {
       Product product = ProductFixture.persisted(productId, ownerId);
       given(productRepository.findById(productId)).willReturn(Optional.of(product));
       ProductUpdateCommand command =
-          new ProductUpdateCommand(productId, otherSellerId, "수정", null, null, null, null);
+          new ProductUpdateCommand(productId, otherSellerId, "수정", null, null, null, null, null);
 
       // when & then
       assertThatThrownBy(() -> productCommandService.update(command))
@@ -216,10 +239,10 @@ class ProductCommandServiceTest {
   }
 
   private ProductCreateCommand uncategorizedCommand(UUID sellerId) {
-    return new ProductCreateCommand(sellerId, "기본 굿즈", "설명", null, 10_000L, null);
+    return new ProductCreateCommand(sellerId, "기본 굿즈", "설명", null, 10_000L, null, null);
   }
 
   private ProductCreateCommand categorizedCommand(UUID sellerId, UUID categoryId) {
-    return new ProductCreateCommand(sellerId, "기본 굿즈", "설명", categoryId, 10_000L, null);
+    return new ProductCreateCommand(sellerId, "기본 굿즈", "설명", categoryId, 10_000L, null, null);
   }
 }

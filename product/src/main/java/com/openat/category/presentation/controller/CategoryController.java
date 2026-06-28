@@ -1,14 +1,18 @@
 package com.openat.category.presentation.controller;
 
 import com.openat.category.application.usecase.CategoryCommandUseCase;
+import com.openat.category.application.usecase.CategoryQueryUseCase;
 import com.openat.category.presentation.dto.CategoryCreateRequest;
+import com.openat.category.presentation.dto.CategoryResponse;
 import com.openat.category.presentation.dto.CategoryUpdateRequest;
 import com.openat.common.web.Locations;
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,6 +26,15 @@ import org.springframework.web.bind.annotation.RestController;
 public class CategoryController implements CategoryApiSpec {
 
   private final CategoryCommandUseCase categoryCommandUseCase;
+  private final CategoryQueryUseCase categoryQueryUseCase;
+
+  @Override
+  @GetMapping
+  public ResponseEntity<List<CategoryResponse>> getCategories() {
+    List<CategoryResponse> categories =
+        categoryQueryUseCase.getAll().stream().map(CategoryResponse::from).toList();
+    return ResponseEntity.ok(categories);
+  }
 
   @Override
   @PostMapping
