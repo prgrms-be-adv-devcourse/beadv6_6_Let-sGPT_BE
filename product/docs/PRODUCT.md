@@ -22,7 +22,8 @@ com.openat
 ├── support/               공통 지원 (auth · web · docs) — @CurrentUser · @InternalApi 등
 ├── product/               상품             — domain · application · infrastructure · presentation
 ├── drop/                  재고/드롭(게이트키퍼 본진) — domain · application · infrastructure · presentation
-└── category/              카테고리          — domain · application · infrastructure · presentation
+├── category/              카테고리          — domain · application · infrastructure · presentation
+└── seller/                판매자 스토어 표시명 읽기 모델(member 이벤트 투영) — domain · application · infrastructure
 ```
 
 - `@SpringBootApplication`을 `com.openat` 루트에 둔다 → 엔티티·Spring Data 리포지토리 스캔이 기본값으로 전 서브도메인을 덮는다(common엔 엔티티·리포지토리 없음).
@@ -36,8 +37,10 @@ com.openat
 | `product` | 상품 마스터 등록·조회 |
 | `drop` | 한정 드롭 판매 + 재고(이력 원장). 재고 게이트키퍼 본진 |
 | `category` | 상품 카테고리(참조 데이터) + 존재 판정 |
+| `seller` | 판매자 스토어 표시명(`storeName`) 로컬 읽기 모델 — member 스토어 이벤트(Kafka) 투영. 카탈로그 벤더 표기 N+1 회피 |
 
 - **의존 방향은 단방향: `drop → product → category`.** 역참조 금지(순환 차단). FK 방향(`drops.product_id`, `products.category_id`)과 일치.
+- **`seller`는 product·drop가 표시명 조회(읽기 포트 `SellerStoreQueryUseCase`)로만 의존하는 리프 읽기 모델**이다. 자체 비즈니스 데이터를 소유하지 않고 member 이벤트로만 채워지며(역참조·역방향 의존 없음), member `SellerInfo.id`를 PK(값 참조)로 둔다.
 - **`products.category_id`는 선택 참조(nullable).** 카테고리 없이 상품 등록 가능(미분류), 카테고리 삭제 시 SET NULL로 미분류 전환. (§11 삭제 전략)
 
 ---
@@ -127,6 +130,7 @@ com.openat
 ## 10. 설정 / 시드
 - `application.yml`: `default_schema=product`, `ddl-auto=update`(콜드부팅 재고 이력 복구를 검증하려면 부팅 간 원장이 보존돼야 해 `create`→`update` 전환; PROJECT §6 전역 기본과 일치), `defer-datasource-initialization=true` + `sql.init.mode=always`.
 - `data.sql`: `categories` 시드(의류·액세서리·문구·전자기기·피규어·기타), `ON CONFLICT (name) DO NOTHING`.
+- **데모 시드(`support.seed.SeedDataRunner`)**: `local`/`dev` 한정 `ApplicationRunner`(`@Order(0)`, 부트스트랩보다 먼저). 상품이 비었을 때만 멱등 삽입 — 상품 16·드롭 10·`SellerStore` 데모 1. OPEN/SOLD_OUT 드롭의 잔여는 **재고 이력 원장 DEDUCT로 선반영**해 기동 워밍이 `총량+원장`으로 계산하게 한다(직접 캐시 워밍은 부트스트랩에 덮임).
 
 ---
 

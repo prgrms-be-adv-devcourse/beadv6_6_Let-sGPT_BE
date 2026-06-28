@@ -45,4 +45,70 @@ class DropTest {
     // then
     assertThat(drop.getStatus()).isEqualTo(DropStatus.CLOSE);
   }
+
+  @Test
+  @DisplayName("종료된 드롭은 잔여와 무관하게 CLOSE로 파생된다")
+  void resolveStatus_closed_returnsClose() {
+    // given
+    Drop drop = liveDrop();
+    drop.close();
+
+    // when & then
+    assertThat(drop.resolveStatus(Instant.now(), 10)).isEqualTo(DropStatus.CLOSE);
+  }
+
+  @Test
+  @DisplayName("오픈 전이면 REGISTERED로 파생된다")
+  void resolveStatus_beforeOpen_returnsRegistered() {
+    // given
+    Drop drop = dropOpeningAt(Instant.now().plusSeconds(3600), null);
+
+    // when & then
+    assertThat(drop.resolveStatus(Instant.now(), 100)).isEqualTo(DropStatus.REGISTERED);
+  }
+
+  @Test
+  @DisplayName("오픈 구간이고 잔여가 있으면 OPEN으로 파생된다")
+  void resolveStatus_liveWithStock_returnsOpen() {
+    // given
+    Drop drop = liveDrop();
+
+    // when & then
+    assertThat(drop.resolveStatus(Instant.now(), 5)).isEqualTo(DropStatus.OPEN);
+  }
+
+  @Test
+  @DisplayName("오픈 구간이고 잔여가 없으면 SOLD_OUT으로 파생된다")
+  void resolveStatus_liveWithoutStock_returnsSoldOut() {
+    // given
+    Drop drop = liveDrop();
+
+    // when & then
+    assertThat(drop.resolveStatus(Instant.now(), 0)).isEqualTo(DropStatus.SOLD_OUT);
+  }
+
+  @Test
+  @DisplayName("종료 시각이 지났으면 상태가 REGISTERED여도 CLOSE로 파생된다")
+  void resolveStatus_afterCloseAt_returnsClose() {
+    // given
+    Instant now = Instant.now();
+    Drop drop = dropOpeningAt(now.minusSeconds(7200), now.minusSeconds(3600));
+
+    // when & then
+    assertThat(drop.resolveStatus(now, 10)).isEqualTo(DropStatus.CLOSE);
+  }
+
+  private Drop liveDrop() {
+    return dropOpeningAt(Instant.now().minusSeconds(60), null);
+  }
+
+  private Drop dropOpeningAt(Instant openAt, Instant closeAt) {
+    return Drop.schedule()
+        .product(null)
+        .dropPrice(10_000L)
+        .totalQuantity(100)
+        .openAt(openAt)
+        .closeAt(closeAt)
+        .build();
+  }
 }

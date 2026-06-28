@@ -6,14 +6,17 @@ import com.openat.drop.domain.repository.DropCacheRepository;
 import com.openat.drop.domain.repository.DropCacheState;
 import com.openat.drop.domain.repository.StockCommandResult;
 import com.openat.drop.domain.repository.StockMutation;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Repository;
@@ -23,6 +26,7 @@ import org.springframework.stereotype.Repository;
 public class DropCacheRedisAdaptor implements DropCacheRepository {
 
   private static final String UNSET_SENTINEL = "-1";
+  private static final String REMAINING_FIELD = "remaining";
 
   private final StringRedisTemplate redisTemplate;
   private final DropProperties properties;
@@ -51,6 +55,35 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
     }
   }
 
+  @Override
+  public Map<UUID, Long> findRemaining(Collection<UUID> dropIds) {
+    if (dropIds.isEmpty()) {
+      return Map.of();
+    }
+    List<UUID> ids = List.copyOf(dropIds);
+    byte[] field = REMAINING_FIELD.getBytes(StandardCharsets.UTF_8);
+    List<Object> results =
+        redisTemplate.executePipelined(
+            (RedisCallback<Object>)
+                connection -> {
+                  for (UUID id : ids) {
+                    connection
+                        .hashCommands()
+                        .hGet(dropKey(id).getBytes(StandardCharsets.UTF_8), field);
+                  }
+                  return null;
+                });
+
+    Map<UUID, Long> remainingByDrop = new HashMap<>();
+    for (int index = 0; index < ids.size(); index++) {
+      Object value = results.get(index);
+      if (value != null) {
+        remainingByDrop.put(ids.get(index), Long.parseLong(value.toString()));
+      }
+    }
+    return remainingByDrop;
+  }
+
   private Map<String, String> dropFields(DropCacheState state) {
     String closeAt = UNSET_SENTINEL;
     if (state.closeAt() != null) {
@@ -63,7 +96,7 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
     }
 
     Map<String, String> fields = new HashMap<>();
-    fields.put("remaining", Long.toString(state.remaining()));
+    fields.put(REMAINING_FIELD, Long.toString(state.remaining()));
     fields.put("openAt", Long.toString(state.openAt().toEpochMilli()));
     fields.put("closeAt", closeAt);
     fields.put("limitPerUser", limitPerUser);

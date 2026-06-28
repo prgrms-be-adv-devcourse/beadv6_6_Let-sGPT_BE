@@ -1,10 +1,14 @@
 package com.openat.drop.domain.repository;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.Map;
 import java.util.UUID;
 
 public interface DropCacheRepository {
   void warm(DropCacheState state);
+
+  Map<UUID, Long> findRemaining(Collection<UUID> dropIds);
 
   void markClosed(UUID dropId, Instant now);
 
