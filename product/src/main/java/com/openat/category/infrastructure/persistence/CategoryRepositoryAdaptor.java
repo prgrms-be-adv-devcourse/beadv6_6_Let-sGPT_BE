@@ -2,9 +2,11 @@ package com.openat.category.infrastructure.persistence;
 
 import com.openat.category.domain.model.Category;
 import com.openat.category.domain.repository.CategoryRepository;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -16,6 +18,11 @@ public class CategoryRepositoryAdaptor implements CategoryRepository {
   @Override
   public Optional<Category> findById(UUID id) {
     return categoryJpaRepository.findById(id);
+  }
+
+  @Override
+  public List<Category> findAll() {
+    return categoryJpaRepository.findAll(Sort.by(Sort.Direction.ASC, "name"));
   }
 
   @Override

@@ -1,17 +1,24 @@
 package com.openat.category.presentation.controller;
 
 import com.openat.category.presentation.dto.CategoryCreateRequest;
+import com.openat.category.presentation.dto.CategoryResponse;
 import com.openat.category.presentation.dto.CategoryUpdateRequest;
 import com.openat.support.docs.ApiErrorResponses;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.headers.Header;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 
 @Tag(name = "Category", description = "카테고리 API")
 public interface CategoryApiSpec {
+
+  @Operation(summary = "카테고리 목록 조회", description = "전체 카테고리를 이름순으로 조회한다.")
+  @ApiResponse(responseCode = "200", description = "조회 성공")
+  @ApiErrorResponses
+  ResponseEntity<List<CategoryResponse>> getCategories();
 
   @Operation(summary = "카테고리 등록", description = "신규 상품 카테고리를 등록한다.")
   @ApiResponse(

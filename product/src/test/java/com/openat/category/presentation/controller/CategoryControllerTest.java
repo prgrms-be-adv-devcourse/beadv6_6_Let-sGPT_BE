@@ -7,6 +7,7 @@ import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -16,12 +17,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openat.category.application.dto.CategoryCreateCommand;
 import com.openat.category.application.usecase.CategoryCommandUseCase;
+import com.openat.category.application.usecase.CategoryQueryUseCase;
 import com.openat.category.domain.error.CategoryErrorCode;
+import com.openat.category.domain.model.Category;
 import com.openat.category.presentation.dto.CategoryCreateRequest;
 import com.openat.category.presentation.dto.CategoryUpdateRequest;
 import com.openat.common.exception.BusinessException;
 import com.openat.common.exception.GlobalExceptionHandler;
 import com.openat.config.WebConfig;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -42,7 +46,29 @@ class CategoryControllerTest {
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private CategoryCommandUseCase categoryCommandUseCase;
+  @MockitoBean private CategoryQueryUseCase categoryQueryUseCase;
   private final ObjectMapper objectMapper = new ObjectMapper();
+
+  @Nested
+  @DisplayName("카테고리 목록 조회")
+  class GetList {
+
+    @Test
+    @DisplayName("이름순 카테고리 목록을 200으로 반환한다")
+    void getCategories_returns200() throws Exception {
+      // given
+      given(categoryQueryUseCase.getAll())
+          .willReturn(
+              List.of(Category.create().name("문구").build(), Category.create().name("의류").build()));
+
+      // when & then
+      mockMvc
+          .perform(get("/api/v1/categories"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$[0].name").value("문구"))
+          .andExpect(jsonPath("$[1].name").value("의류"));
+    }
+  }
 
   @Nested
   @DisplayName("카테고리 등록")

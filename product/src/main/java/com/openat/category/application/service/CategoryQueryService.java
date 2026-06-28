@@ -5,6 +5,7 @@ import com.openat.category.domain.error.CategoryErrorCode;
 import com.openat.category.domain.model.Category;
 import com.openat.category.domain.repository.CategoryRepository;
 import com.openat.common.exception.BusinessException;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -22,5 +23,10 @@ public class CategoryQueryService implements CategoryQueryUseCase {
     return categoryRepository
         .findById(id)
         .orElseThrow(() -> new BusinessException(CategoryErrorCode.NOT_FOUND));
+  }
+
+  @Override
+  public List<Category> getAll() {
+    return categoryRepository.findAll();
   }
 }

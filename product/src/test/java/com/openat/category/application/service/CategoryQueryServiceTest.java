@@ -8,6 +8,7 @@ import com.openat.category.domain.error.CategoryErrorCode;
 import com.openat.category.domain.model.Category;
 import com.openat.category.domain.repository.CategoryRepository;
 import com.openat.common.exception.BusinessException;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -50,5 +51,20 @@ class CategoryQueryServiceTest {
     assertThatThrownBy(() -> categoryQueryService.getById(missingId))
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", CategoryErrorCode.NOT_FOUND);
+  }
+
+  @Test
+  @DisplayName("전체 카테고리를 조회한다")
+  void getAll_returnsAllCategories() {
+    // given
+    given(categoryRepository.findAll())
+        .willReturn(
+            List.of(Category.create().name("문구").build(), Category.create().name("의류").build()));
+
+    // when
+    List<Category> result = categoryQueryService.getAll();
+
+    // then
+    assertThat(result).hasSize(2);
   }
 }
