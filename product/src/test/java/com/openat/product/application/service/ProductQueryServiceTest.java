@@ -2,6 +2,7 @@ package com.openat.product.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 
 import com.openat.common.exception.BusinessException;
@@ -11,7 +12,9 @@ import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.domain.repository.ProductSearchCondition;
 import com.openat.product.fixture.ProductFixture;
+import com.openat.seller.application.usecase.SellerStoreQueryUseCase;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -31,6 +34,7 @@ class ProductQueryServiceTest {
 
   @InjectMocks private ProductQueryService productQueryService;
   @Mock private ProductRepository productRepository;
+  @Mock private SellerStoreQueryUseCase sellerStoreQueryUseCase;
 
   @Test
   @DisplayName("존재하는 상품을 조회하면 상품 정보를 반환한다")
@@ -40,6 +44,7 @@ class ProductQueryServiceTest {
     UUID sellerId = UUID.randomUUID();
     Product product = ProductFixture.persisted(id, sellerId);
     given(productRepository.findById(id)).willReturn(Optional.of(product));
+    given(sellerStoreQueryUseCase.findStoreNames(any())).willReturn(Map.of(sellerId, "오픈앳 스튜디오"));
 
     // when
     ProductInfo info = productQueryService.getById(id);
@@ -48,6 +53,7 @@ class ProductQueryServiceTest {
     assertThat(info.id()).isEqualTo(id);
     assertThat(info.sellerId()).isEqualTo(sellerId);
     assertThat(info.name()).isEqualTo("기본 굿즈");
+    assertThat(info.sellerName()).isEqualTo("오픈앳 스튜디오");
   }
 
   @Test
@@ -69,10 +75,11 @@ class ProductQueryServiceTest {
     // given
     UUID sellerId = UUID.randomUUID();
     Product product = ProductFixture.persisted(UUID.randomUUID(), sellerId);
-    ProductSearchCondition condition = new ProductSearchCondition(null, null);
+    ProductSearchCondition condition = new ProductSearchCondition(null, null, null);
     Pageable pageable = PageRequest.of(0, 10);
     given(productRepository.search(condition, pageable))
         .willReturn(new PageImpl<>(List.of(product), pageable, 1));
+    given(sellerStoreQueryUseCase.findStoreNames(any())).willReturn(Map.of(sellerId, "오픈앳 스튜디오"));
 
     // when
     Page<ProductInfo> result = productQueryService.searchProducts(condition, pageable);

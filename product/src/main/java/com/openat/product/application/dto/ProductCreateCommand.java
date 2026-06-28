@@ -1,5 +1,6 @@
 package com.openat.product.application.dto;
 
+import java.util.List;
 import java.util.UUID;
 
 public record ProductCreateCommand(
@@ -8,4 +9,5 @@ public record ProductCreateCommand(
     String description,
     UUID categoryId,
     Long price,
-    String thumbnailKey) {}
+    String thumbnailKey,
+    List<String> imageKeys) {}

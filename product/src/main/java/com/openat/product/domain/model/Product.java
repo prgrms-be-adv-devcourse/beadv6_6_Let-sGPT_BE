@@ -1,15 +1,20 @@
 package com.openat.product.domain.model;
 
 import com.openat.category.domain.model.Category;
+import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -60,6 +65,15 @@ public class Product {
   @Column(name = "thumbnail_key", length = 512, comment = "썸네일 이미지 키")
   private String thumbnailKey;
 
+  @ElementCollection
+  @CollectionTable(
+      name = "product_images",
+      joinColumns = @JoinColumn(name = "product_id"),
+      indexes = @Index(name = "idx_product_images_product_id", columnList = "product_id"))
+  @OrderColumn(name = "image_order")
+  @Column(name = "image_key", length = 512, comment = "추가 이미지 키")
+  private List<String> imageKeys;
+
   @CreationTimestamp
   @Column(name = "created_at", nullable = false, updatable = false, comment = "생성 일시")
   private Instant createdAt;
@@ -75,21 +89,35 @@ public class Product {
       String description,
       Category category,
       Long price,
-      String thumbnailKey) {
+      String thumbnailKey,
+      List<String> imageKeys) {
     this.sellerId = sellerId;
     this.name = name;
     this.description = description;
     this.category = category;
     this.price = price;
     this.thumbnailKey = thumbnailKey;
+    this.imageKeys = new ArrayList<>();
+    if (imageKeys != null) {
+      this.imageKeys.addAll(imageKeys);
+    }
   }
 
   public void update(
-      String name, String description, Category category, Long price, String thumbnailKey) {
+      String name,
+      String description,
+      Category category,
+      Long price,
+      String thumbnailKey,
+      List<String> imageKeys) {
     this.name = name;
     this.description = description;
     this.category = category;
     this.price = price;
     this.thumbnailKey = thumbnailKey;
+    this.imageKeys.clear();
+    if (imageKeys != null) {
+      this.imageKeys.addAll(imageKeys);
+    }
   }
 }

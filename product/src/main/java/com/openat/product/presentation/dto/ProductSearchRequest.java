@@ -9,6 +9,10 @@ public record ProductSearchRequest(
     @Schema(description = "상품명 검색어, null: 전체", example = "스니커즈") String keyword) {
 
   public ProductSearchCondition toCondition() {
-    return new ProductSearchCondition(categoryId, keyword);
+    return new ProductSearchCondition(categoryId, keyword, null);
+  }
+
+  public ProductSearchCondition toCondition(UUID sellerId) {
+    return new ProductSearchCondition(categoryId, keyword, sellerId);
   }
 }

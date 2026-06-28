@@ -45,6 +45,9 @@ public class ProductRepositoryAdaptor implements ProductRepository {
     if (StringUtils.hasText(condition.keyword())) {
       where.and(product.name.contains(condition.keyword()));
     }
+    if (condition.sellerId() != null) {
+      where.and(product.sellerId.eq(condition.sellerId()));
+    }
 
     List<Product> content =
         queryFactory

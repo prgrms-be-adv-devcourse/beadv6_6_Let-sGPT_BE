@@ -7,6 +7,9 @@ import com.openat.product.domain.error.ProductErrorCode;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.domain.repository.ProductSearchCondition;
+import com.openat.seller.application.usecase.SellerStoreQueryUseCase;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -20,10 +23,16 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProductQueryService implements ProductQueryUseCase {
 
   private final ProductRepository productRepository;
+  private final SellerStoreQueryUseCase sellerStoreQueryUseCase;
 
   @Override
   public ProductInfo getById(UUID id) {
-    return ProductInfo.from(getProductOrThrow(id));
+    Product product = getProductOrThrow(id);
+    String sellerName =
+        sellerStoreQueryUseCase
+            .findStoreNames(List.of(product.getSellerId()))
+            .get(product.getSellerId());
+    return ProductInfo.from(product, sellerName);
   }
 
   @Override
@@ -38,7 +47,11 @@ public class ProductQueryService implements ProductQueryUseCase {
   @Override
   public Page<ProductInfo> searchProducts(ProductSearchCondition condition, Pageable pageable) {
     Page<Product> productPage = productRepository.search(condition, pageable);
-    return productPage.map(ProductInfo::from);
+    Map<UUID, String> storeNames =
+        sellerStoreQueryUseCase.findStoreNames(
+            productPage.getContent().stream().map(Product::getSellerId).toList());
+    return productPage.map(
+        product -> ProductInfo.from(product, storeNames.get(product.getSellerId())));
   }
 
   private Product getProductOrThrow(UUID id) {
