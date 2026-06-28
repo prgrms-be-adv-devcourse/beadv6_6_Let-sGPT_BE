@@ -36,6 +36,9 @@ public class WalletChargeController {
         this.walletChargeUseCase = walletChargeUseCase;
     }
 
+    // TODO(fe-api): 지갑 잔액 조회 API 미구현. FE 마이페이지(screens/10) 잔액 표기에 필요.
+    //   GET /api/v1/wallet -> { balance: long }(인증 회원 기준). (현재 FE 는 MSW provisional 로 구동)
+
     @Operation(summary = "지갑 충전 생성", description = "MOCK은 즉시 승인, PG는 PENDING row만 생성하며 승인은 /confirm에서 처리한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "생성 성공"),
