@@ -136,6 +136,13 @@ public class SecurityConfig {
                         // product 카탈로그 읽기 — 공개
                         .pathMatchers(HttpMethod.GET, "/product/**").permitAll()
 
+                        // TODO(fe-api): FE 는 계약대로 /api/v1/{도메인} 을 직접 호출한다(products·drops·categories).
+                        //   현재 공개 GET permitAll 이 /product/**(StripPrefix 컨벤션)에만 있어, GET /api/v1/products 가
+                        //   아래 anyExchange 로 빠져 401(인증요구)이 난다. /api/v1 컨벤션에도 규칙이 필요하다:
+                        //     - 공개 GET permitAll: /api/v1/products/**, /api/v1/drops/**, /api/v1/categories
+                        //     - 판매자 write(scoped): /api/v1/products(POST/PATCH/DELETE), /api/v1/drops(POST/DELETE)
+                        //   (drops·categories 는 라우팅도 누락 → application-local.yaml product-api predicate 참고)
+
                         // product 판매자 write — scoped 토큰(typ=scoped, aud=openat-product)만 허용 (GET은 위에서 공개)
                         .pathMatchers("/product/products", "/product/products/**").access(scopedFor("openat-product"))
 

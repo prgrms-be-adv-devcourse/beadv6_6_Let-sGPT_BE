@@ -19,6 +19,9 @@ spring:
               uri: http://localhost:9100
               predicates:
                 - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks,/auth/token
+            # TODO(fe-api): drops·categories 도 product-service(9110)인데 predicate 가 products 만 잡아
+            #   GET /api/v1/drops·/api/v1/categories 가 404. FE(계약: /api/v1/{도메인}) 정합 위해 확장 필요:
+            #   Path=/api/v1/products/**,/api/v1/drops/**,/api/v1/categories/**
             - id: product-api
               uri: http://localhost:9110
               predicates:
