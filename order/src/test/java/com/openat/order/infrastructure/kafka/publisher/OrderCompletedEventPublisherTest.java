@@ -73,7 +73,6 @@ class OrderCompletedEventPublisherTest {
                 .dropId(UUID.randomUUID())
                 .productId(UUID.randomUUID())
                 .sellerId(UUID.randomUUID())
-                .productName("테스트 상품")
                 .quantity(2)
                 .unitPrice(5_000L)
                 .idempotencyKey("idem-001")

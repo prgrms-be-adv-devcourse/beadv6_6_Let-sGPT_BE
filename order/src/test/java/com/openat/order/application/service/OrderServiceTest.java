@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -33,6 +34,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -63,7 +65,7 @@ class OrderServiceTest {
         UUID memberId = UUID.randomUUID();
         CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 2, "idem-001");
         OrderSnapshotInfo snapshot = snapshot(command.dropId());
-        Order order = createOrder(memberId, snapshot, command.quantity(), command.idempotencyKey());
+        Order order = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
 
         when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
                 .thenReturn(Optional.empty());
@@ -88,7 +90,7 @@ class OrderServiceTest {
         // given
         UUID memberId = UUID.randomUUID();
         CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
-        Order existing = createOrder(memberId, snapshot(command.dropId()), command.quantity(), command.idempotencyKey());
+        Order existing = createOrder(memberId, command.dropId(), snapshot(command.dropId()), command.quantity(), command.idempotencyKey());
 
         when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
                 .thenReturn(Optional.of(existing));
@@ -103,13 +105,37 @@ class OrderServiceTest {
     }
 
     @Test
+    @DisplayName("동시 주문 생성으로 멱등키 유니크 충돌이 발생하면 기존 주문을 반환하고 재고를 다시 차감하지 않는다")
+    void createOrder_whenConcurrentSameIdempotencyKey_returnExistingOrderWithoutStockDecrease() {
+        // given
+        UUID memberId = UUID.randomUUID();
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
+        OrderSnapshotInfo snapshot = snapshot(command.dropId());
+        Order existing = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
+
+        when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(existing));
+        when(productIntegrationPort.fetchOrderSnapshot(command.dropId())).thenReturn(snapshot);
+        when(pendingOrderCreator.create(eq(memberId), eq(command), eq(snapshot), any()))
+                .thenThrow(new DataIntegrityViolationException("duplicate idempotency key"));
+
+        // when
+        CreateOrderResult result = orderService.createOrder(memberId, command);
+
+        // then
+        assertThat(result.orderId()).isEqualTo(existing.getId());
+        verify(productIntegrationPort, never()).decreaseStock(any(), any());
+    }
+
+    @Test
     @DisplayName("재고 감소 실패 시 주문 실패 이력을 기록하고 주문 오류로 변환한다")
     void createOrder_whenStockDecreaseFails_recordsFailureAndThrowsOrderError() {
         // given
         UUID memberId = UUID.randomUUID();
         CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
         OrderSnapshotInfo snapshot = snapshot(command.dropId());
-        Order order = createOrder(memberId, snapshot, command.quantity(), command.idempotencyKey());
+        Order order = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
 
         when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
                 .thenReturn(Optional.empty());
@@ -134,7 +160,7 @@ class OrderServiceTest {
         UUID memberId = UUID.randomUUID();
         CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
         OrderSnapshotInfo snapshot = snapshot(command.dropId());
-        Order order = createOrder(memberId, snapshot, command.quantity(), command.idempotencyKey());
+        Order order = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
 
         when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
                 .thenReturn(Optional.empty());
@@ -157,7 +183,8 @@ class OrderServiceTest {
     void cancelOrder_whenPaymentPending_restoresStockAndCancelsOrder() {
         // given
         UUID memberId = UUID.randomUUID();
-        Order order = createOrder(memberId, snapshot(UUID.randomUUID()), 2, "idem-001");
+        UUID dropId = UUID.randomUUID();
+        Order order = createOrder(memberId, dropId, snapshot(dropId), 2, "idem-001");
         UUID orderId = order.getId();
 
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
@@ -180,7 +207,8 @@ class OrderServiceTest {
     void getPaymentValidationInfo_returnsAmountAndStatus() {
         // given
         UUID memberId = UUID.randomUUID();
-        Order order = createOrder(memberId, snapshot(UUID.randomUUID()), 2, "idem-001");
+        UUID dropId = UUID.randomUUID();
+        Order order = createOrder(memberId, dropId, snapshot(dropId), 2, "idem-001");
         UUID orderId = order.getId();
 
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
@@ -197,17 +225,16 @@ class OrderServiceTest {
     }
 
     private OrderSnapshotInfo snapshot(UUID dropId) {
-        return new OrderSnapshotInfo(dropId, UUID.randomUUID(), UUID.randomUUID(), "테스트 상품", 10_000L);
+        return new OrderSnapshotInfo(UUID.randomUUID(), UUID.randomUUID(), 10_000L);
     }
 
-    private Order createOrder(UUID memberId, OrderSnapshotInfo snapshot, int quantity, String idempotencyKey) {
+    private Order createOrder(UUID memberId, UUID dropId, OrderSnapshotInfo snapshot, int quantity, String idempotencyKey) {
         Order order = Order.create()
                 .orderNumber("ORD-20260626-0001")
                 .memberId(memberId)
-                .dropId(snapshot.dropId())
+                .dropId(dropId)
                 .productId(snapshot.productId())
                 .sellerId(snapshot.sellerId())
-                .productName(snapshot.productName())
                 .quantity(quantity)
                 .unitPrice(snapshot.unitPrice())
                 .idempotencyKey(idempotencyKey)

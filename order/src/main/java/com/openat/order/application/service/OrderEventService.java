@@ -61,7 +61,7 @@ public class OrderEventService {
                         .newStatus(order.getStatus())
                         .reasonCode("ORDER_COMPLETED")
                         .reasonMessage("결제 성공 이벤트 처리")
-                        .sourceEventKey(eventSourceKey("payment-complete", command.version(), command.orderId(), command.paymentId()))
+                        .sourceEventKey(eventSourceKey("payment-complete", command.orderId(), command.paymentId()))
                         .build()
         );
 
@@ -85,7 +85,7 @@ public class OrderEventService {
                         .newStatus(order.getStatus())
                         .reasonCode("PAYMENT_ATTEMPT_FAILED")
                         .reasonMessage(command.reason())
-                        .sourceEventKey(eventSourceKey("payment-failed", command.version(), command.orderId(), command.paymentId()))
+                        .sourceEventKey(eventSourceKey("payment-failed", command.orderId(), command.paymentId()))
                         .build()
         );
     }
@@ -120,7 +120,7 @@ public class OrderEventService {
                         .newStatus(order.getStatus())
                         .reasonCode("ORDER_REFUNDED")
                         .reasonMessage("환불 완료 이벤트 처리")
-                        .sourceEventKey(eventSourceKey("refund-completed", command.version(), command.orderId(), command.refundId()))
+                        .sourceEventKey(eventSourceKey("refund-completed", command.orderId(), command.refundId()))
                         .build()
         );
     }
@@ -153,7 +153,7 @@ public class OrderEventService {
                         .newStatus(order.getStatus())
                         .reasonCode("REFUND_FAILED")
                         .reasonMessage(command.reason())
-                        .sourceEventKey(eventSourceKey("refund-failed", command.version(), command.orderId(), command.refundId()))
+                        .sourceEventKey(eventSourceKey("refund-failed", command.orderId(), command.refundId()))
                         .build()
         );
     }
@@ -168,16 +168,12 @@ public class OrderEventService {
         }
     }
 
-    private String eventSourceKey(String type, String version, UUID orderId, UUID correlationId) {
+    private String eventSourceKey(String type, UUID orderId, UUID correlationId) {
         String key = type + EVENT_IDEMPOTENCY_DELIMITER + (correlationId != null ? correlationId : orderId);
-        if (version == null || version.isBlank()) {
+        if (key.length() <= SOURCE_EVENT_KEY_MAX_LENGTH) {
             return key;
         }
-        String keyWithVersion = key + EVENT_IDEMPOTENCY_DELIMITER + version;
-        if (keyWithVersion.length() <= SOURCE_EVENT_KEY_MAX_LENGTH) {
-            return keyWithVersion;
-        }
-        return keyWithVersion.substring(0, SOURCE_EVENT_KEY_MAX_LENGTH);
+        return key.substring(0, SOURCE_EVENT_KEY_MAX_LENGTH);
     }
 
     private Order getOrder(UUID orderId) {

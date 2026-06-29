@@ -16,8 +16,6 @@ public record OrderResponse(
         UUID dropId,
         @Schema(description = "상품 id")
         UUID productId,
-        @Schema(description = "주문 시점 상품명")
-        String productName,
         @Schema(description = "주문 수량", example = "1")
         int quantity,
         @Schema(description = "총 결제 금액", example = "59000")
@@ -39,7 +37,6 @@ public record OrderResponse(
                 info.orderNumber(),
                 info.dropId(),
                 info.productId(),
-                info.productName(),
                 info.quantity(),
                 info.totalPrice(),
                 info.status(),

@@ -28,10 +28,8 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
         try {
             OrderSnapshotResponse response = productInternalApiClient.fetchOrderSnapshot(dropId);
             return new OrderSnapshotInfo(
-                    response.dropId(),
                     response.productId(),
                     response.sellerId(),
-                    response.productName(),
                     response.unitPrice()
             );
         } catch (FeignException e) {

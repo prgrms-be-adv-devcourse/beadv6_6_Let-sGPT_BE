@@ -58,7 +58,7 @@ class OrderEventServiceTest {
 
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
-        PaymentCompletedCommand command = new PaymentCompletedCommand(orderId, "v1", paymentId, 10_000L);
+        PaymentCompletedCommand command = new PaymentCompletedCommand(orderId, paymentId, 10_000L);
 
         // when
         withTransactionSynchronization(() -> orderEventService.handlePaymentCompleted(command));
@@ -83,7 +83,7 @@ class OrderEventServiceTest {
 
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
-        PaymentCompletedCommand command = new PaymentCompletedCommand(orderId, "v1", UUID.randomUUID(), 10_000L);
+        PaymentCompletedCommand command = new PaymentCompletedCommand(orderId, UUID.randomUUID(), 10_000L);
 
         // when
         orderEventService.handlePaymentCompleted(command);
@@ -102,7 +102,7 @@ class OrderEventServiceTest {
 
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
-        PaymentFailedCommand command = new PaymentFailedCommand(orderId, "v1", UUID.randomUUID(), "PG_TIMEOUT");
+        PaymentFailedCommand command = new PaymentFailedCommand(orderId, UUID.randomUUID(), "PG_TIMEOUT");
 
         // when
         orderEventService.handlePaymentFailed(command);
@@ -128,7 +128,7 @@ class OrderEventServiceTest {
 
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
-        RefundCompletedCommand command = new RefundCompletedCommand(orderId, "v1", UUID.randomUUID(), 10_000L, UUID.randomUUID());
+        RefundCompletedCommand command = new RefundCompletedCommand(orderId, UUID.randomUUID(), 10_000L, UUID.randomUUID());
 
         // when
         orderEventService.handleRefundCompleted(command);
@@ -150,7 +150,7 @@ class OrderEventServiceTest {
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
         RefundFailedCommand command = new RefundFailedCommand(
-                orderId, "v1", UUID.randomUUID(), UUID.randomUUID(), "PG_REFUND_FAILED"
+                orderId, UUID.randomUUID(), UUID.randomUUID(), "PG_REFUND_FAILED"
         );
 
         // when
@@ -171,7 +171,7 @@ class OrderEventServiceTest {
 
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
-        PaymentCompletedCommand command = new PaymentCompletedCommand(orderId, "v1", UUID.randomUUID(), 9_999L);
+        PaymentCompletedCommand command = new PaymentCompletedCommand(orderId, UUID.randomUUID(), 9_999L);
 
         // when
         BusinessException ex = assertThrows(BusinessException.class,
@@ -195,7 +195,7 @@ class OrderEventServiceTest {
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
         RefundCompletedCommand command = new RefundCompletedCommand(
-                orderId, "v1", UUID.randomUUID(), 9_999L, UUID.randomUUID()
+                orderId, UUID.randomUUID(), 9_999L, UUID.randomUUID()
         );
 
         // when
@@ -218,7 +218,7 @@ class OrderEventServiceTest {
 
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
-        PaymentFailedCommand command = new PaymentFailedCommand(orderId, "v1", UUID.randomUUID(), "PG_TIMEOUT");
+        PaymentFailedCommand command = new PaymentFailedCommand(orderId, UUID.randomUUID(), "PG_TIMEOUT");
 
         // when
         orderEventService.handlePaymentFailed(command);
@@ -241,7 +241,7 @@ class OrderEventServiceTest {
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
         RefundFailedCommand command = new RefundFailedCommand(
-                orderId, "v1", UUID.randomUUID(), UUID.randomUUID(), "PG_REFUND_FAILED"
+                orderId, UUID.randomUUID(), UUID.randomUUID(), "PG_REFUND_FAILED"
         );
 
         // when
@@ -258,7 +258,7 @@ class OrderEventServiceTest {
         UUID orderId = UUID.randomUUID();
         when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
 
-        PaymentCompletedCommand command = new PaymentCompletedCommand(orderId, "v1", UUID.randomUUID(), 10_000L);
+        PaymentCompletedCommand command = new PaymentCompletedCommand(orderId, UUID.randomUUID(), 10_000L);
 
         // when
         var ex = assertThrows(BusinessException.class,
@@ -275,7 +275,6 @@ class OrderEventServiceTest {
                 .dropId(UUID.randomUUID())
                 .productId(UUID.randomUUID())
                 .sellerId(UUID.randomUUID())
-                .productName("테스트 상품")
                 .quantity(2)
                 .unitPrice(5_000L)
                 .idempotencyKey("idem-001")

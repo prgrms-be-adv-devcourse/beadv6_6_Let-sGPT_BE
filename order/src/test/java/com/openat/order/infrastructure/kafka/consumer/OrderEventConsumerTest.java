@@ -39,7 +39,7 @@ class OrderEventConsumerTest {
         UUID orderId = UUID.randomUUID();
         UUID paymentId = UUID.randomUUID();
         String payload = """
-                {"orderId":"%s","version":"v1","paymentId":"%s","amount":10000}
+                {"orderId":"%s","paymentId":"%s","amount":10000}
                 """.formatted(orderId, paymentId);
 
         // when
@@ -47,7 +47,7 @@ class OrderEventConsumerTest {
 
         // then
         verify(orderEventService).handlePaymentCompleted(
-                new PaymentCompletedCommand(orderId, "v1", paymentId, 10_000L)
+                new PaymentCompletedCommand(orderId, paymentId, 10_000L)
         );
     }
 
@@ -58,7 +58,7 @@ class OrderEventConsumerTest {
         UUID orderId = UUID.randomUUID();
         UUID paymentId = UUID.randomUUID();
         String payload = """
-                {"orderId":"%s","version":"v1","paymentId":"%s","reason":"PG_TIMEOUT"}
+                {"orderId":"%s","paymentId":"%s","reason":"PG_TIMEOUT"}
                 """.formatted(orderId, paymentId);
 
         // when
@@ -66,7 +66,7 @@ class OrderEventConsumerTest {
 
         // then
         verify(orderEventService).handlePaymentFailed(
-                new PaymentFailedCommand(orderId, "v1", paymentId, "PG_TIMEOUT")
+                new PaymentFailedCommand(orderId, paymentId, "PG_TIMEOUT")
         );
     }
 
@@ -78,7 +78,7 @@ class OrderEventConsumerTest {
         UUID paymentId = UUID.randomUUID();
         UUID refundId = UUID.randomUUID();
         String payload = """
-                {"orderId":"%s","version":"v1","paymentId":"%s","refundId":"%s","amount":10000}
+                {"orderId":"%s","paymentId":"%s","refundId":"%s","amount":10000}
                 """.formatted(orderId, paymentId, refundId);
 
         // when
@@ -86,7 +86,7 @@ class OrderEventConsumerTest {
 
         // then
         verify(orderEventService).handleRefundCompleted(
-                new RefundCompletedCommand(orderId, "v1", paymentId, 10_000L, refundId)
+                new RefundCompletedCommand(orderId, paymentId, 10_000L, refundId)
         );
     }
 
@@ -98,7 +98,7 @@ class OrderEventConsumerTest {
         UUID paymentId = UUID.randomUUID();
         UUID refundId = UUID.randomUUID();
         String payload = """
-                {"orderId":"%s","version":"v1","paymentId":"%s","refundId":"%s","reason":"PG_REFUND_FAILED"}
+                {"orderId":"%s","paymentId":"%s","refundId":"%s","reason":"PG_REFUND_FAILED"}
                 """.formatted(orderId, paymentId, refundId);
 
         // when
@@ -106,7 +106,7 @@ class OrderEventConsumerTest {
 
         // then
         verify(orderEventService).handleRefundFailed(
-                new RefundFailedCommand(orderId, "v1", paymentId, refundId, "PG_REFUND_FAILED")
+                new RefundFailedCommand(orderId, paymentId, refundId, "PG_REFUND_FAILED")
         );
     }
 

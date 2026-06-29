@@ -7,10 +7,8 @@ public final class ProductPortDtos {
     private ProductPortDtos() {}
 
     public record OrderSnapshotResponse(
-            UUID dropId,
             UUID productId,
             UUID sellerId,
-            String productName,
             long unitPrice) {
     }
 

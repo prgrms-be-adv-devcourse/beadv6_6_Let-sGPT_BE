@@ -10,7 +10,6 @@ public record CreateOrderResult(
         String orderNumber,
         OrderStatus status,
         long amount,
-        String orderName,
         Instant paymentExpiresAt) {
 
     public static CreateOrderResult from(Order order) {
@@ -19,7 +18,6 @@ public record CreateOrderResult(
                 order.getOrderNumber(),
                 order.getStatus(),
                 order.getTotalPrice(),
-                order.getProductName(),
                 order.getPaymentExpiresAt());
     }
 }
