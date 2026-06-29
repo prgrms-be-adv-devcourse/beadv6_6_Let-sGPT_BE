@@ -6,7 +6,6 @@ import java.util.UUID;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record PaymentFailedEvent(
         UUID orderId,
-        String version,
         UUID paymentId,
         String reason
 ) {

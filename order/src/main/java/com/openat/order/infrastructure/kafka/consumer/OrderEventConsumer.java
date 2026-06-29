@@ -34,7 +34,7 @@ public class OrderEventConsumer {
         try {
             PaymentCompleteEvent event = objectMapper.readValue(payload, PaymentCompleteEvent.class);
             orderEventService.handlePaymentCompleted(new PaymentCompletedCommand(
-                    event.orderId(), event.version(), event.paymentId(), event.amount()
+                    event.orderId(), event.paymentId(), event.amount()
             ));
             log.info("payment.completed.events consumed. orderId={}", event.orderId());
         } catch (BusinessException e) {
@@ -55,7 +55,7 @@ public class OrderEventConsumer {
         try {
             PaymentFailedEvent event = objectMapper.readValue(payload, PaymentFailedEvent.class);
             orderEventService.handlePaymentFailed(new PaymentFailedCommand(
-                    event.orderId(), event.version(), event.paymentId(), event.reason()
+                    event.orderId(), event.paymentId(), event.reason()
             ));
             log.info("payment.failed.events consumed. orderId={}", event.orderId());
         } catch (BusinessException e) {
@@ -76,7 +76,7 @@ public class OrderEventConsumer {
         try {
             RefundCompletedEvent event = objectMapper.readValue(payload, RefundCompletedEvent.class);
             orderEventService.handleRefundCompleted(new RefundCompletedCommand(
-                    event.orderId(), event.version(), event.paymentId(), event.amount(), event.refundId()
+                    event.orderId(), event.paymentId(), event.amount(), event.refundId()
             ));
             log.info("refund.completed.events consumed. orderId={}", event.orderId());
         } catch (BusinessException e) {
@@ -97,7 +97,7 @@ public class OrderEventConsumer {
         try {
             RefundFailedEvent event = objectMapper.readValue(payload, RefundFailedEvent.class);
             orderEventService.handleRefundFailed(new RefundFailedCommand(
-                    event.orderId(), event.version(), event.paymentId(), event.refundId(), event.reason()
+                    event.orderId(), event.paymentId(), event.refundId(), event.reason()
             ));
             log.info("refund.failed.events consumed. orderId={}", event.orderId());
         } catch (BusinessException e) {
