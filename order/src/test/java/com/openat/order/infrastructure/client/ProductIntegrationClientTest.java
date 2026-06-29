@@ -6,11 +6,13 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.openat.order.application.dto.StockDecreaseCommand;
 import com.openat.order.application.dto.StockRestoreCommand;
 import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.model.OrderFailCode;
+import com.openat.order.infrastructure.client.ProductPortDtos.OrderSnapshotResponse;
 import com.openat.order.infrastructure.client.ProductPortDtos.StockChangeRequest;
 import feign.FeignException;
 import feign.Request;
@@ -28,6 +30,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 
 @ExtendWith(MockitoExtension.class)
@@ -38,6 +41,16 @@ class ProductIntegrationClientTest {
 
     @InjectMocks
     private ProductIntegrationClient productIntegrationClient;
+
+    @Test
+    @DisplayName("상품 주문 기준정보 내부 API 경로는 order-snapshot을 사용한다")
+    void fetchOrderSnapshot_mappingPath() throws Exception {
+        Method method = ProductInternalApiClient.class.getMethod("fetchOrderSnapshot", UUID.class);
+
+        GetMapping getMapping = method.getAnnotation(GetMapping.class);
+
+        assertThat(getMapping.value()).containsExactly("/internal/drops/{dropId}/order-snapshot");
+    }
 
     @Test
     @DisplayName("상품 재고 차감 내부 API 경로는 stock-deductions를 사용한다")
@@ -57,6 +70,23 @@ class ProductIntegrationClientTest {
         PostMapping postMapping = method.getAnnotation(PostMapping.class);
 
         assertThat(postMapping.value()).containsExactly("/internal/drops/{dropId}/stock-rollbacks");
+    }
+
+    @Test
+    @DisplayName("상품 주문 기준정보 응답은 productId, sellerId, unitPrice만 주문 생성에 사용한다")
+    void fetchOrderSnapshot_mapsMinimalOrderBasis() {
+        UUID dropId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID sellerId = UUID.randomUUID();
+
+        when(productInternalApiClient.fetchOrderSnapshot(dropId))
+                .thenReturn(new OrderSnapshotResponse(productId, sellerId, 10_000L));
+
+        var result = productIntegrationClient.fetchOrderSnapshot(dropId);
+
+        assertThat(result.productId()).isEqualTo(productId);
+        assertThat(result.sellerId()).isEqualTo(sellerId);
+        assertThat(result.unitPrice()).isEqualTo(10_000L);
     }
 
     @Test

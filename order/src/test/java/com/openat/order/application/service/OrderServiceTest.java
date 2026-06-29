@@ -63,7 +63,7 @@ class OrderServiceTest {
         UUID memberId = UUID.randomUUID();
         CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 2, "idem-001");
         OrderSnapshotInfo snapshot = snapshot(command.dropId());
-        Order order = createOrder(memberId, snapshot, command.quantity(), command.idempotencyKey());
+        Order order = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
 
         when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
                 .thenReturn(Optional.empty());
@@ -88,7 +88,7 @@ class OrderServiceTest {
         // given
         UUID memberId = UUID.randomUUID();
         CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
-        Order existing = createOrder(memberId, snapshot(command.dropId()), command.quantity(), command.idempotencyKey());
+        Order existing = createOrder(memberId, command.dropId(), snapshot(command.dropId()), command.quantity(), command.idempotencyKey());
 
         when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
                 .thenReturn(Optional.of(existing));
@@ -109,7 +109,7 @@ class OrderServiceTest {
         UUID memberId = UUID.randomUUID();
         CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
         OrderSnapshotInfo snapshot = snapshot(command.dropId());
-        Order order = createOrder(memberId, snapshot, command.quantity(), command.idempotencyKey());
+        Order order = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
 
         when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
                 .thenReturn(Optional.empty());
@@ -134,7 +134,7 @@ class OrderServiceTest {
         UUID memberId = UUID.randomUUID();
         CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
         OrderSnapshotInfo snapshot = snapshot(command.dropId());
-        Order order = createOrder(memberId, snapshot, command.quantity(), command.idempotencyKey());
+        Order order = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
 
         when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
                 .thenReturn(Optional.empty());
@@ -157,7 +157,8 @@ class OrderServiceTest {
     void cancelOrder_whenPaymentPending_restoresStockAndCancelsOrder() {
         // given
         UUID memberId = UUID.randomUUID();
-        Order order = createOrder(memberId, snapshot(UUID.randomUUID()), 2, "idem-001");
+        UUID dropId = UUID.randomUUID();
+        Order order = createOrder(memberId, dropId, snapshot(dropId), 2, "idem-001");
         UUID orderId = order.getId();
 
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
@@ -180,7 +181,8 @@ class OrderServiceTest {
     void getPaymentValidationInfo_returnsAmountAndStatus() {
         // given
         UUID memberId = UUID.randomUUID();
-        Order order = createOrder(memberId, snapshot(UUID.randomUUID()), 2, "idem-001");
+        UUID dropId = UUID.randomUUID();
+        Order order = createOrder(memberId, dropId, snapshot(dropId), 2, "idem-001");
         UUID orderId = order.getId();
 
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
@@ -197,17 +199,16 @@ class OrderServiceTest {
     }
 
     private OrderSnapshotInfo snapshot(UUID dropId) {
-        return new OrderSnapshotInfo(dropId, UUID.randomUUID(), UUID.randomUUID(), "테스트 상품", 10_000L);
+        return new OrderSnapshotInfo(UUID.randomUUID(), UUID.randomUUID(), 10_000L);
     }
 
-    private Order createOrder(UUID memberId, OrderSnapshotInfo snapshot, int quantity, String idempotencyKey) {
+    private Order createOrder(UUID memberId, UUID dropId, OrderSnapshotInfo snapshot, int quantity, String idempotencyKey) {
         Order order = Order.create()
                 .orderNumber("ORD-20260626-0001")
                 .memberId(memberId)
-                .dropId(snapshot.dropId())
+                .dropId(dropId)
                 .productId(snapshot.productId())
                 .sellerId(snapshot.sellerId())
-                .productName(snapshot.productName())
                 .quantity(quantity)
                 .unitPrice(snapshot.unitPrice())
                 .idempotencyKey(idempotencyKey)

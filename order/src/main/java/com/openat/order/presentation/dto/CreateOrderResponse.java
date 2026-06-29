@@ -15,8 +15,6 @@ public record CreateOrderResponse(
         OrderStatus status,
         @Schema(description = "총 결제 금액", example = "59000")
         long amount,
-        @Schema(description = "결제 화면에 표시할 주문명")
-        String orderName,
         @Schema(description = "결제 가능 만료 시각")
         Instant paymentExpiresAt) {
 
@@ -26,7 +24,6 @@ public record CreateOrderResponse(
                 result.orderNumber(),
                 result.status(),
                 result.amount(),
-                result.orderName(),
                 result.paymentExpiresAt());
     }
 }
