@@ -50,7 +50,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @DisplayName("상품 컨트롤러")
 class ProductControllerTest {
 
-  private static final String USER_ID_HEADER = "X-User-Id";
+  private static final String SELLER_ID_HEADER = "X-Seller-Id";
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private ProductCommandUseCase productCommandUseCase;
@@ -73,11 +73,28 @@ class ProductControllerTest {
       mockMvc
           .perform(
               post("/api/v1/products")
-                  .header(USER_ID_HEADER, sellerId)
+                  .header(SELLER_ID_HEADER, sellerId)
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(validRequest())))
           .andExpect(status().isCreated())
           .andExpect(header().string("Location", endsWith("/api/v1/products/" + createdId)));
+    }
+
+    @Test
+    @DisplayName("판매자 식별 헤더가 없으면 401 UNAUTHENTICATED를 반환한다")
+    void create_missingSellerHeader_returns401() throws Exception {
+      // given
+      ProductCreateRequest request = validRequest();
+
+      // when & then
+      mockMvc
+          .perform(
+              post("/api/v1/products")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(request)))
+          .andExpect(status().isUnauthorized())
+          .andExpect(jsonPath("$.error").value("UNAUTHENTICATED"));
+      then(productCommandUseCase).should(never()).create(any());
     }
 
     @Test
@@ -91,7 +108,7 @@ class ProductControllerTest {
       mockMvc
           .perform(
               post("/api/v1/products")
-                  .header(USER_ID_HEADER, sellerId)
+                  .header(SELLER_ID_HEADER, sellerId)
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(request)))
           .andExpect(status().isBadRequest())
@@ -111,7 +128,7 @@ class ProductControllerTest {
       mockMvc
           .perform(
               post("/api/v1/products")
-                  .header(USER_ID_HEADER, sellerId)
+                  .header(SELLER_ID_HEADER, sellerId)
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(request)))
           .andExpect(status().isBadRequest())
@@ -219,7 +236,7 @@ class ProductControllerTest {
 
       // when
       mockMvc
-          .perform(get("/api/v1/products/me").header(USER_ID_HEADER, sellerId))
+          .perform(get("/api/v1/products/me").header(SELLER_ID_HEADER, sellerId))
           .andExpect(status().isOk());
 
       // then
@@ -247,7 +264,7 @@ class ProductControllerTest {
       mockMvc
           .perform(
               patch("/api/v1/products/{id}", productId)
-                  .header(USER_ID_HEADER, sellerId)
+                  .header(SELLER_ID_HEADER, sellerId)
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(updateRequest())))
           .andExpect(status().isNoContent());
@@ -267,7 +284,7 @@ class ProductControllerTest {
       mockMvc
           .perform(
               patch("/api/v1/products/{id}", productId)
-                  .header(USER_ID_HEADER, sellerId)
+                  .header(SELLER_ID_HEADER, sellerId)
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(updateRequest())))
           .andExpect(status().isForbidden())
@@ -286,7 +303,7 @@ class ProductControllerTest {
       mockMvc
           .perform(
               patch("/api/v1/products/{id}", productId)
-                  .header(USER_ID_HEADER, sellerId)
+                  .header(SELLER_ID_HEADER, sellerId)
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(request)))
           .andExpect(status().isBadRequest())
@@ -308,7 +325,7 @@ class ProductControllerTest {
 
       // when & then
       mockMvc
-          .perform(delete("/api/v1/products/{id}", productId).header(USER_ID_HEADER, sellerId))
+          .perform(delete("/api/v1/products/{id}", productId).header(SELLER_ID_HEADER, sellerId))
           .andExpect(status().isNoContent());
     }
 
@@ -324,7 +341,7 @@ class ProductControllerTest {
 
       // when & then
       mockMvc
-          .perform(delete("/api/v1/products/{id}", productId).header(USER_ID_HEADER, sellerId))
+          .perform(delete("/api/v1/products/{id}", productId).header(SELLER_ID_HEADER, sellerId))
           .andExpect(status().isForbidden())
           .andExpect(jsonPath("$.error").value("PRODUCT_NOT_OWNER"));
     }

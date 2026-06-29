@@ -49,7 +49,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @DisplayName("드롭 컨트롤러")
 class DropControllerTest {
 
-  private static final String USER_ID_HEADER = "X-User-Id";
+  private static final String SELLER_ID_HEADER = "X-Seller-Id";
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private DropCommandUseCase dropCommandUseCase;
@@ -72,7 +72,7 @@ class DropControllerTest {
       mockMvc
           .perform(
               post("/api/v1/drops")
-                  .header(USER_ID_HEADER, sellerId)
+                  .header(SELLER_ID_HEADER, sellerId)
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(validRequest())))
           .andExpect(status().isCreated())
@@ -91,7 +91,7 @@ class DropControllerTest {
       mockMvc
           .perform(
               post("/api/v1/drops")
-                  .header(USER_ID_HEADER, UUID.randomUUID())
+                  .header(SELLER_ID_HEADER, UUID.randomUUID())
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(request)))
           .andExpect(status().isBadRequest())
@@ -112,7 +112,7 @@ class DropControllerTest {
       mockMvc
           .perform(
               post("/api/v1/drops")
-                  .header(USER_ID_HEADER, UUID.randomUUID())
+                  .header(SELLER_ID_HEADER, UUID.randomUUID())
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(request)))
           .andExpect(status().isBadRequest())
@@ -132,7 +132,7 @@ class DropControllerTest {
       mockMvc
           .perform(
               post("/api/v1/drops")
-                  .header(USER_ID_HEADER, UUID.randomUUID())
+                  .header(SELLER_ID_HEADER, UUID.randomUUID())
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(request)))
           .andExpect(status().isBadRequest())
@@ -208,7 +208,7 @@ class DropControllerTest {
 
       // when
       mockMvc
-          .perform(get("/api/v1/drops/me").header(USER_ID_HEADER, sellerId))
+          .perform(get("/api/v1/drops/me").header(SELLER_ID_HEADER, sellerId))
           .andExpect(status().isOk());
 
       // then
@@ -232,7 +232,7 @@ class DropControllerTest {
 
       // when & then
       mockMvc
-          .perform(delete("/api/v1/drops/{dropId}", dropId).header(USER_ID_HEADER, sellerId))
+          .perform(delete("/api/v1/drops/{dropId}", dropId).header(SELLER_ID_HEADER, sellerId))
           .andExpect(status().isNoContent());
       then(dropCommandUseCase).should().delete(dropId, sellerId);
     }
