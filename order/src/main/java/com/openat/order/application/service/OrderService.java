@@ -28,6 +28,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 @Service
@@ -51,7 +53,11 @@ public class OrderService implements OrderUseCase {
 
         Instant now = Instant.now();
         OrderSnapshotInfo snapshot = productIntegrationPort.fetchOrderSnapshot(command.dropId());
-        Order order = createPendingOrder(memberId, command, snapshot, now);
+        PendingOrderCreation creation = createPendingOrder(memberId, command, snapshot, now);
+        Order order = creation.order();
+        if (!creation.created()) {
+            return CreateOrderResult.from(order);
+        }
 
         try {
             productIntegrationPort.decreaseStock(
@@ -88,11 +94,11 @@ public class OrderService implements OrderUseCase {
         Instant now = Instant.now();
 
         if (before == OrderStatus.PAYMENT_PENDING) {
-            restoreStock(order);
             if (!order.cancelPending(now)) {
                 throw new BusinessException(OrderErrorCode.INVALID_STATUS);
             }
             recordHistory(order, before, "ORDER_CANCELLED", "결제 대기 주문 취소", "cancel-" + order.getId());
+            restoreStockAfterCommit(order);
         } else if (before == OrderStatus.COMPLETED) {
             if (!order.requestRefund(now)) {
                 throw new BusinessException(OrderErrorCode.INVALID_STATUS);
@@ -113,18 +119,18 @@ public class OrderService implements OrderUseCase {
         return PaymentValidationInfo.from(order);
     }
 
-    private Order createPendingOrder(
+    private PendingOrderCreation createPendingOrder(
             UUID memberId,
             CreateOrderCommand command,
             OrderSnapshotInfo snapshot,
             Instant now
     ) {
         try {
-            return pendingOrderCreator.create(memberId, command, snapshot, now);
+            return new PendingOrderCreation(pendingOrderCreator.create(memberId, command, snapshot, now), true);
         } catch (DataIntegrityViolationException e) {
             Order existing = findExisting(memberId, command.idempotencyKey());
             if (existing != null) {
-                return existing;
+                return new PendingOrderCreation(existing, false);
             }
             throw e;
         }
@@ -153,6 +159,19 @@ public class OrderService implements OrderUseCase {
         } catch (ProductPortException e) {
             throw new BusinessException(OrderErrorCode.PORT_ERROR, e.getMessage(), e);
         }
+    }
+
+    private void restoreStockAfterCommit(Order order) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            restoreStock(order);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                restoreStock(order);
+            }
+        });
     }
 
     private void recordHistory(Order order, OrderStatus previousStatus, String reasonCode, String reasonMessage, String sourceEventKey) {

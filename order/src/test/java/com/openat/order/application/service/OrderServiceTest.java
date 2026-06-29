@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -33,6 +34,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -99,6 +101,30 @@ class OrderServiceTest {
         // then
         assertThat(result.orderId()).isEqualTo(existing.getId());
         verify(productIntegrationPort, never()).fetchOrderSnapshot(any());
+        verify(productIntegrationPort, never()).decreaseStock(any(), any());
+    }
+
+    @Test
+    @DisplayName("동시 주문 생성으로 멱등키 유니크 충돌이 발생하면 기존 주문을 반환하고 재고를 다시 차감하지 않는다")
+    void createOrder_whenConcurrentSameIdempotencyKey_returnExistingOrderWithoutStockDecrease() {
+        // given
+        UUID memberId = UUID.randomUUID();
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
+        OrderSnapshotInfo snapshot = snapshot(command.dropId());
+        Order existing = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
+
+        when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(existing));
+        when(productIntegrationPort.fetchOrderSnapshot(command.dropId())).thenReturn(snapshot);
+        when(pendingOrderCreator.create(eq(memberId), eq(command), eq(snapshot), any()))
+                .thenThrow(new DataIntegrityViolationException("duplicate idempotency key"));
+
+        // when
+        CreateOrderResult result = orderService.createOrder(memberId, command);
+
+        // then
+        assertThat(result.orderId()).isEqualTo(existing.getId());
         verify(productIntegrationPort, never()).decreaseStock(any(), any());
     }
 
