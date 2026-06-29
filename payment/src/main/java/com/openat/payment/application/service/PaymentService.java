@@ -36,7 +36,8 @@ public class PaymentService implements PaymentUseCase {
 
     private static final String COMPLETED_TOPIC = "payment.completed.events";
     private static final String FAILED_TOPIC = "payment.failed.events";
-    private static final String SETTLEMENT_SOURCE_TOPIC = "payment.settlement-source.events";
+    private static final String SETTLEMENT_SOURCE_TOPIC = "payment.settlement.events";
+    private static final String SETTLEMENT_EVENT_TYPE = "PaymentSettlementCompleted";
 
     private final PaymentRepository paymentRepository;
     private final WalletRepository walletRepository;
@@ -266,12 +267,13 @@ public class PaymentService implements PaymentUseCase {
 
         // 사후채움 직후에만 발행(B2) — 그 전에 발행하면 sellerId/productId가 비어 하자드 #16과 동일한 문제가 생김.
         outboxEventWriter.write("PAYMENT", filled.getId(), SETTLEMENT_SOURCE_TOPIC, new SettlementSourcePayload(
+                UUID.randomUUID().toString(), SETTLEMENT_EVENT_TYPE, LocalDateTime.now(),
                 filled.getId(), filled.getOrderId(), filled.getSellerId(), filled.getMemberId(),
-                filled.getProductId(), filled.getAmount(), filled.getAmount(), filled.getRefundedAmount(),
-                filled.getApprovedAt()));
+                filled.getProductId(), filled.getAmount(), filled.getAmount(), filled.getApprovedAt()));
     }
 
-    private record SettlementSourcePayload(UUID paymentId, UUID orderId, UUID sellerId, UUID buyerId,
-            UUID productId, Long orderAmount, Long paidAmount, Long refundAmount, LocalDateTime approvedAt) {
+    private record SettlementSourcePayload(String eventId, String eventType, LocalDateTime occurredAt,
+            UUID paymentId, UUID orderId, UUID sellerId, UUID buyerId,
+            UUID productId, Long orderAmount, Long paidAmount, LocalDateTime paidAt) {
     }
 }

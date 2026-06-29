@@ -3,7 +3,9 @@ package com.openat.payment.infrastructure.scheduler;
 import com.openat.payment.application.client.TossPaymentClient;
 import com.openat.payment.application.client.TossQueryResult;
 import com.openat.payment.domain.model.Payment;
+import com.openat.payment.domain.model.WalletCharge;
 import com.openat.payment.domain.repository.PaymentRepository;
+import com.openat.payment.domain.repository.WalletChargeRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -19,8 +21,10 @@ import org.springframework.stereotype.Component;
 public class PaymentTtlScanner {
 
     private final PaymentRepository paymentRepository;
+    private final WalletChargeRepository walletChargeRepository;
     private final TossPaymentClient tossPaymentClient;
     private final PaymentTtlFinalizer finalizer;
+    private final WalletChargeTtlFinalizer chargeFinalizer;
 
     // N분 — pgPaymentKey가 NULL인 row(handleMissingKey) 기준. 운영 기본값 10분, 시연/테스트 시 application-local.yml에서 짧게 오버라이드.
     @Value("${payment.ttl-scanner.pending-timeout-minutes:10}")
@@ -41,11 +45,14 @@ public class PaymentTtlScanner {
     @Value("${payment.ttl-scanner.final-timeout-minutes:8}")
     private long finalTimeoutMinutes;
 
-    public PaymentTtlScanner(PaymentRepository paymentRepository, TossPaymentClient tossPaymentClient,
-            PaymentTtlFinalizer finalizer) {
+    public PaymentTtlScanner(PaymentRepository paymentRepository, WalletChargeRepository walletChargeRepository,
+            TossPaymentClient tossPaymentClient, PaymentTtlFinalizer finalizer,
+            WalletChargeTtlFinalizer chargeFinalizer) {
         this.paymentRepository = paymentRepository;
+        this.walletChargeRepository = walletChargeRepository;
         this.tossPaymentClient = tossPaymentClient;
         this.finalizer = finalizer;
+        this.chargeFinalizer = chargeFinalizer;
     }
 
     @Scheduled(fixedDelay = 60_000)
@@ -53,6 +60,7 @@ public class PaymentTtlScanner {
         // I2 — 키 있는 row(5분)/키 없는 row(10분) 중 더 이른 임계값으로 한 번에 가져온 뒤, 각 핸들러가 자기 기준으로 재판단.
         long fetchThresholdMinutes = Math.min(withKeyAttemptMinutes, pendingTimeoutMinutes);
         LocalDateTime threshold = LocalDateTime.now().minusMinutes(fetchThresholdMinutes);
+
         List<Payment> stale = paymentRepository.findStalePending(threshold);
         for (Payment payment : stale) {
             try {
@@ -65,6 +73,20 @@ public class PaymentTtlScanner {
                 log.error("[PaymentTtlScanner] 처리 실패, 다음 주기에 재시도: paymentId={}", payment.getId(), e);
             }
         }
+
+        // §5 하자드#10 — WalletCharge(PENDING)도 동일한 주기로 스캔. Payment와 동일한 3단계 로직 적용.
+        List<WalletCharge> staleCharges = walletChargeRepository.findStalePending(threshold);
+        for (WalletCharge charge : staleCharges) {
+            try {
+                if (charge.getPgPaymentKey() == null) {
+                    handleChargeMissingKey(charge);
+                } else {
+                    handleChargeWithKey(charge);
+                }
+            } catch (Exception e) {
+                log.error("[PaymentTtlScanner] WalletCharge 처리 실패, 다음 주기에 재시도: chargeId={}", charge.getId(), e);
+            }
+        }
     }
 
     // confirm을 한 번도 호출한 적이 없는 row(결제창 이탈/포기) — PG에 물어볼 키가 없으므로 시간만으로 확정.
@@ -75,6 +97,36 @@ public class PaymentTtlScanner {
             return; // 그레이스 기간 안 지남 — 다음 회차에 재시도
         }
         finalizer.finalizePending(payment, Payment.Status.FAILED, null, "EXPIRED");
+    }
+
+    private void handleChargeMissingKey(WalletCharge charge) {
+        LocalDateTime graceThreshold =
+                LocalDateTime.now().minusMinutes(pendingTimeoutMinutes + nullKeyGraceMinutes);
+        if (charge.getCreatedAt().isAfter(graceThreshold)) {
+            return;
+        }
+        chargeFinalizer.finalizePending(charge, WalletCharge.Status.FAILED, null);
+    }
+
+    private void handleChargeWithKey(WalletCharge charge) {
+        TossQueryResult result;
+        try {
+            result = tossPaymentClient.queryPaymentStatus(charge.getPgPaymentKey());
+        } catch (Exception e) {
+            LocalDateTime finalThreshold = LocalDateTime.now().minusMinutes(finalTimeoutMinutes);
+            if (charge.getCreatedAt().isBefore(finalThreshold)) {
+                log.error("[PaymentTtlScanner] WalletCharge {}분 경과, PG 조회 반복 실패로 강제 종결: chargeId={}",
+                        finalTimeoutMinutes, charge.getId(), e);
+                chargeFinalizer.finalizePending(charge, WalletCharge.Status.FAILED, null);
+            } else {
+                log.warn("[PaymentTtlScanner] WalletCharge PG 조회 실패, 다음 주기에 재시도: chargeId={}", charge.getId(), e);
+            }
+            return;
+        }
+        switch (result.status()) {
+            case APPROVED -> chargeFinalizer.finalizePending(charge, WalletCharge.Status.APPROVED, result.pgTxId());
+            case FAILED, NOT_FOUND -> chargeFinalizer.finalizePending(charge, WalletCharge.Status.FAILED, result.pgTxId());
+        }
     }
 
     // 신-하자드9 — confirm이 PG호출까지는 갔는데 우리 쪽 조건부 UPDATE가 끊긴 좁은 케이스. 키로 PG에 직접 물어 회복.

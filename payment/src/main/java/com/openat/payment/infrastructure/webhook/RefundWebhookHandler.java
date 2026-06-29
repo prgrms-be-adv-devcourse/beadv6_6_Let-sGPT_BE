@@ -30,7 +30,8 @@ public class RefundWebhookHandler extends AbstractPgWebhookHandler<Refund> {
 
     private static final String COMPLETED_TOPIC = "refund.completed.events";
     private static final String FAILED_TOPIC = "refund.failed.events";
-    private static final String SETTLEMENT_SOURCE_TOPIC = "refund.settlement-source.events";
+    private static final String SETTLEMENT_SOURCE_TOPIC = "payment.settlement.events";
+    private static final String SETTLEMENT_EVENT_TYPE = "RefundSettlementCompleted";
 
     private final RefundRepository refundRepository;
     private final PaymentRepository paymentRepository;
@@ -118,6 +119,7 @@ public class RefundWebhookHandler extends AbstractPgWebhookHandler<Refund> {
                 refund.getId(), payment.getId(), payment.getOrderId(), refund.getAmount(), refund.getCompletedAt()));
 
         outboxEventWriter.write("REFUND", refund.getId(), SETTLEMENT_SOURCE_TOPIC, new RefundSettlementSourcePayload(
+                UUID.randomUUID().toString(), SETTLEMENT_EVENT_TYPE, LocalDateTime.now(),
                 refund.getId(), payment.getId(), payment.getOrderId(), payment.getSellerId(), payment.getMemberId(),
                 refund.getAmount(), refund.getReason(), Refund.Status.COMPLETE.name(), refund.getCompletedAt()));
     }

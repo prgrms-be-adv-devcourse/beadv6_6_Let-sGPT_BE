@@ -34,7 +34,7 @@ class PaymentServiceTest {
 
     private static final String COMPLETED_TOPIC = "payment.completed.events";
     private static final String FAILED_TOPIC = "payment.failed.events";
-    private static final String SETTLEMENT_SOURCE_TOPIC = "payment.settlement-source.events";
+    private static final String SETTLEMENT_SOURCE_TOPIC = "payment.settlement.events";
 
     private final PaymentRepository paymentRepository = mock(PaymentRepository.class);
     private final WalletRepository walletRepository = mock(WalletRepository.class);

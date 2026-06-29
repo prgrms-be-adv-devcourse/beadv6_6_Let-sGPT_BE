@@ -4,6 +4,8 @@ import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.domain.model.WalletCharge;
 import com.openat.payment.domain.repository.WalletChargeRepository;
 import com.openat.payment.infrastructure.persistence.entity.WalletChargeJpaEntity;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
@@ -48,5 +50,12 @@ public class WalletChargeRepositoryAdaptor implements WalletChargeRepository {
     @Override
     public int tryTransitionFromPending(UUID id, WalletCharge.Status newStatus, String pgTxId) {
         return walletChargeJpaRepository.tryTransitionFromPending(id, newStatus, pgTxId);
+    }
+
+    @Override
+    public List<WalletCharge> findStalePending(LocalDateTime threshold) {
+        return walletChargeJpaRepository.findStalePending(threshold).stream()
+                .map(WalletChargeJpaEntity::toDomain)
+                .toList();
     }
 }

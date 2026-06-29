@@ -39,7 +39,7 @@ class RefundServiceTest {
 
     private static final String COMPLETED_TOPIC = "refund.completed.events";
     private static final String FAILED_TOPIC = "refund.failed.events";
-    private static final String SETTLEMENT_SOURCE_TOPIC = "refund.settlement-source.events";
+    private static final String SETTLEMENT_SOURCE_TOPIC = "payment.settlement.events";
 
     private final RefundRepository refundRepository = mock(RefundRepository.class);
     private final PaymentRepository paymentRepository = mock(PaymentRepository.class);
