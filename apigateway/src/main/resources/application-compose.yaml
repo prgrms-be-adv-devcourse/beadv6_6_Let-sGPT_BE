@@ -40,6 +40,18 @@ spring:
                 - Path=/order/**
               filters:
                 - StripPrefix=1
+            - id: payments-api
+              uri: http://payment:9130
+              predicates:
+                - Path=/api/v1/payments/**
+            - id: wallet-api
+              uri: http://payment:9130
+              predicates:
+                - Path=/api/v1/wallet/**
+            - id: refunds-api
+              uri: http://payment:9130
+              predicates:
+                - Path=/api/v1/refunds/**
             - id: payment
               uri: http://payment:9130
               predicates:
