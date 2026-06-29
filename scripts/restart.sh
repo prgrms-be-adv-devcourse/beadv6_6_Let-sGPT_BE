@@ -20,9 +20,9 @@ usage() {
     echo "사용법: $0 <서비스명> [--log]"
     echo "서비스: ${!PORT[*]}"
     echo ""
-    echo "  $0 payment          # payment 재시작"
-    echo "  $0 payment --log    # 재시작 후 로그 tailing"
-    echo "  $0 apigateway --log"
+    echo "  $0 payment               # payment 재빌드 + 재시작"
+    echo "  $0 payment --log         # 재빌드 + 재시작 + 로그 tailing"
+    echo "  $0 payment --skip-build  # 재빌드 없이 재시작만"
     exit 1
 }
 
@@ -30,7 +30,11 @@ usage() {
 
 SVC="$1"
 TAIL_LOG=false
-[ "${2:-}" = "--log" ] && TAIL_LOG=true
+SKIP_BUILD=false
+for arg in "${@:2}"; do
+    [ "$arg" = "--log" ]        && TAIL_LOG=true
+    [ "$arg" = "--skip-build" ] && SKIP_BUILD=true
+done
 
 if [ -z "${PORT[$SVC]:-}" ]; then
     echo "[ERROR] 알 수 없는 서비스: $SVC"
@@ -54,11 +58,18 @@ fi
 # ── 환경변수 로드 ─────────────────────────────────────────────────
 [ -f "$BE_DIR/.env" ] && set -a && source "$BE_DIR/.env" && set +a
 
+# ── 빌드 ─────────────────────────────────────────────────────────
 JAR="$BE_DIR/$SVC/build/libs/$SVC-0.0.1-SNAPSHOT.jar"
-if [ ! -f "$JAR" ]; then
-    echo "[ERROR] JAR 없음: $JAR"
-    echo "먼저 빌드하세요: ./gradlew :${SVC}:bootJar -x test"
-    exit 1
+if "$SKIP_BUILD"; then
+    if [ ! -f "$JAR" ]; then
+        echo "[ERROR] JAR 없음: $JAR  (--skip-build 제거 후 재실행)"
+        exit 1
+    fi
+    echo "[INFO] --skip-build: 빌드 생략"
+else
+    echo "[INFO] $SVC 빌드 중..."
+    cd "$BE_DIR" && ./gradlew ":${SVC}:bootJar" -x test -q
+    echo "[INFO] 빌드 완료"
 fi
 
 # ── 기존 프로세스 종료 ────────────────────────────────────────────
