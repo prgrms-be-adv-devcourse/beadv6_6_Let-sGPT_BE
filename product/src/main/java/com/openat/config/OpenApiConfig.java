@@ -26,7 +26,7 @@ public class OpenApiConfig {
                     new SecurityScheme()
                         .type(SecurityScheme.Type.APIKEY)
                         .in(SecurityScheme.In.HEADER)
-                        .name("X-User-Id")
+                        .name("X-Seller-Id")
                         .description(
                             "게이트웨이가 판매자 토큰 검증 후 전달하는 활성 스토어 식별자 sellerInfoId (실연동 전 테스트용)")));
   }

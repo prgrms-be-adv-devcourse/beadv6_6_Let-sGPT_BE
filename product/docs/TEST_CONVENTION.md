@@ -86,7 +86,7 @@ class XxxControllerTest {
 ```
 
 - 응답 단언은 MockMvc DSL(`andExpect(status()/jsonPath()/header())`) — 여기 쓰는 Hamcrest matcher는 MockMvc 표준이라 §4의 "AssertJ 통일"과 무관.
-- `@CurrentUser`는 `X-User-Id` 헤더로 주입된다.
+- `@CurrentUser`는 `X-Seller-Id` 헤더(게이트웨이가 scoped 토큰 검증 후 주입하는 sellerInfoId)로 주입된다.
 
 **영속 슬라이스 템플릿**
 
