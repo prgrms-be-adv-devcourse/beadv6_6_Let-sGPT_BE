@@ -1,20 +1,18 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/openat   # 로컬 도커 DB
+    url: jdbc:postgresql://localhost:5432/openat
     username: ${DB_USER}
     password: ${DB_PASSWORD}
   kafka:
-    # local-kafka의 INTERNAL 리스너(kafka:9092)는 도커 네트워크 내부에서만 resolve됨 — 호스트에서 직접 뜨는
-    # local 프로필은 EXTERNAL 리스너(localhost:29092, docker-compose.yml)로 붙어야 함.
     bootstrap-servers: localhost:29092
 
 pg:
-  client-key: ${PG_CLIENT_KEY}
-  secret-key: ${PG_SECRET_KEY}
+  client-key: localtest-dummy
+  secret-key: localtest-dummy
 
 services:
   member:
-    url: http://localhost:9100                     # 타모듈 localhost
+    url: http://localhost:9100
   product:
     url: http://localhost:9110
   order:

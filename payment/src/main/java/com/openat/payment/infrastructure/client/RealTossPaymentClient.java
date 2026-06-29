@@ -17,7 +17,7 @@ import org.springframework.web.client.RestClient;
 // 서비스 레이어(PaymentService/WalletChargeService/RefundService/PaymentTtlScanner)는 변경 없음 — 구현체만 교체.
 @Slf4j
 @Component
-@Profile("toss-real")
+@Profile("real")
 public class RealTossPaymentClient implements TossPaymentClient {
 
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";

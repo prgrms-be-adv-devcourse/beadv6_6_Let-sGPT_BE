@@ -3,7 +3,7 @@ server:
 
 spring:
   profiles:
-    active: local,toss-real,order-real
+    active: real
   application:
     name: payment-service
   jpa:
