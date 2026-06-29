@@ -11,7 +11,6 @@ import com.openat.member.application.dto.CreateSellerInfoRequest;
 import com.openat.member.application.dto.LoginRequest;
 import com.openat.member.application.dto.RefreshRequest;
 import com.openat.member.application.dto.SignUpRequest;
-import com.openat.member.application.dto.TokenExchangeRequest;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import java.security.KeyPair;
@@ -49,7 +48,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  *   <li>토큰 재발급 → 재발급된 accessToken에 ROLE_SELLER 포함 검증</li>
  *   <li>판매자 재등록 (ROLE_SELLER) → seller2Id</li>
  *   <li>판매자 목록 조회 → 2건 확인</li>
- *   <li>RFC 8693 STS 토큰 교환 → scopedToken</li>
+ *   <li>판매자 스토어 범위 scoped 토큰 발급 → scopedToken</li>
  *   <li>scopedToken 클레임 검증 및 출력 (게이트웨이가 주입할 컨텍스트)</li>
  * </ol>
  *
@@ -118,7 +117,7 @@ class TokenExchangeIntegrationTest {
     ObjectMapper objectMapper;
 
     @Test
-    @DisplayName("회원가입 → 로그인 → 판매자 등록 → 토큰 재발급 → 판매자 재등록 → STS 토큰 교환 → 컨텍스트 출력")
+    @DisplayName("회원가입 → 로그인 → 판매자 등록 → 토큰 재발급 → 판매자 재등록 → 판매자 scoped 토큰 발급 → 컨텍스트 출력")
     void fullTokenExchangeFlow() throws Exception {
         RSAPublicKey publicKey = (RSAPublicKey) TEST_KEY_PAIR.getPublic();
 
@@ -212,23 +211,18 @@ class TokenExchangeIntegrationTest {
         String firstSellerId = sellers.get(0).get("id").asText();
         System.out.println("[6] 판매자 목록 조회 완료  count=2  firstSellerId=" + firstSellerId);
 
-        // ── 7. RFC 8693 STS 토큰 교환 ────────────────────────────────────────────
-        // subject_token: 판매자 상태의 access 토큰
-        // resource: 교환 대상 sellerInfo URI (테넌트 선택)
-        String stsResult = mockMvc.perform(post("/auth/token")
-                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                        .param("grant_type", TokenExchangeRequest.GRANT_TYPE_TOKEN_EXCHANGE)
-                        .param("subject_token", sellerAccessToken)
-                        .param("subject_token_type", TokenExchangeRequest.TOKEN_TYPE_JWT)
-                        .param("requested_token_type", TokenExchangeRequest.TOKEN_TYPE_JWT)
-                        .param("audience", TokenExchangeRequest.AUDIENCE_PRODUCT)
-                        .param("scope", TokenExchangeRequest.SCOPE_PRODUCT_WRITE)
-                        .param("resource", TokenExchangeRequest.RESOURCE_SELLER_PREFIX + firstSellerId))
+        // ── 7. 판매자 스토어 범위 scoped 토큰 발급 ───────────────────────────────
+        // 게이트웨이가 주입하는 X-User-Id 헤더를 테스트에서 직접 설정
+        String sellerTokenBody = objectMapper.writeValueAsString(Map.of("sellerInfoId", firstSellerId));
+        String stsResult = mockMvc.perform(post("/api/v1/seller/token")
+                        .header("X-User-Id", memberId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(sellerTokenBody))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 
-        String scopedToken = objectMapper.readTree(stsResult).get("access_token").asText();
-        System.out.println("[7] STS 토큰 교환 완료");
+        String scopedToken = objectMapper.readTree(stsResult).get("accessToken").asText();
+        System.out.println("[7] 판매자 스토어 scoped 토큰 발급 완료");
 
         // ── 8. scoped 토큰 클레임 검증 및 컨텍스트 출력 ─────────────────────────
         Claims scopedClaims = Jwts.parser()
