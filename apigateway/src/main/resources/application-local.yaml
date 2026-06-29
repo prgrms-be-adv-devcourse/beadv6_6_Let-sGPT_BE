@@ -42,7 +42,7 @@ spring:
             - id: payment-docs
               uri: http://localhost:9130
               predicates:
-                - Path=/payment/v3/api-docs/**,/payment/swagger-ui.html,/payment/swagger-ui/**,/payment/webjars/**
+                - Path=/payment/api-docs,/payment/v3/api-docs/**,/payment/swagger-ui.html,/payment/swagger-ui/**,/payment/webjars/**
               filters:
                 - StripPrefix=1
             - id: payment-api
