@@ -8,10 +8,10 @@ import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
-// 항상 승인으로 응답하는 스텁 — 단위테스트가 실제 네트워크 호출 없이 빠르게 돌도록 기본 프로필에서 사용.
-// 실제 연동은 RealTossPaymentClient(G)로 분리, toss-real 프로필 활성화 시에만 그쪽으로 교체.
+// 항상 승인으로 응답하는 스텁 — localtest/compose 프로필에서 실제 PG 호출 없이 동작.
+// 실제 연동은 RealTossPaymentClient로 분리, real 프로필 활성화 시에만 그쪽으로 교체.
 @Component
-@Profile("!toss-real")
+@Profile("!real")
 public class StubTossPaymentClient implements TossPaymentClient {
 
     @Override

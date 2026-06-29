@@ -7,9 +7,9 @@ import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
-// 단위테스트용 스텁 — order-real 프로필 미활성화 시에만 등록, 클라이언트 제출값을 그대로 통과시킴.
+// localtest/compose 프로필용 스텁 — real 프로필 미활성화 시에만 등록, 클라이언트 제출값을 그대로 통과시킴.
 @Component
-@Profile("!order-real")
+@Profile("!real")
 public class StubOrderValidationClient implements OrderValidationClient {
 
     private final SimpleCircuitBreaker circuitBreaker =

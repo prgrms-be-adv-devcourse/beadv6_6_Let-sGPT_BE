@@ -13,9 +13,9 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.web.client.RestClient;
 
-// G2 — 실제 토스페이먼츠 API 호출용 RestClient. toss-real 프로필에서만 등록(StubTossPaymentClient와 양립 방지, G2).
+// G2 — 실제 토스페이먼츠 API 호출용 RestClient. real 프로필에서만 등록(StubTossPaymentClient와 양립 방지, G2).
 @Configuration
-@Profile("toss-real")
+@Profile("real")
 public class TossClientConfig {
 
     private static final String TOSS_BASE_URL = "https://api.tosspayments.com";
