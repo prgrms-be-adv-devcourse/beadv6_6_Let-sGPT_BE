@@ -7,6 +7,7 @@ import static org.mockito.BDDMockito.given;
 
 import com.openat.common.exception.BusinessException;
 import com.openat.drop.application.dto.DropInfo;
+import com.openat.drop.application.dto.DropSnapshotInfo;
 import com.openat.drop.domain.error.DropErrorCode;
 import com.openat.drop.domain.model.Drop;
 import com.openat.drop.domain.model.DropStatus;
@@ -114,6 +115,52 @@ class DropQueryServiceTest {
     assertThat(result.getTotalElements()).isEqualTo(1);
     assertThat(result.getContent().get(0).status()).isEqualTo(DropStatus.SOLD_OUT);
     assertThat(result.getContent().get(0).remainingQuantity()).isZero();
+  }
+
+  @Test
+  @DisplayName("드롭 스냅샷은 productId·sellerId·드롭가를 반환한다")
+  void getDropSnapshot_returnsProductSellerAndPrice() {
+    // given
+    UUID dropId = UUID.randomUUID();
+    UUID productId = UUID.randomUUID();
+    UUID sellerId = UUID.randomUUID();
+    Drop drop = dropWithProduct(dropId, productId, sellerId, 219_000L);
+    given(dropRepository.findWithProductById(dropId)).willReturn(Optional.of(drop));
+
+    // when
+    DropSnapshotInfo snapshot = dropQueryService.getDropSnapshot(dropId);
+
+    // then
+    assertThat(snapshot.productId()).isEqualTo(productId);
+    assertThat(snapshot.sellerId()).isEqualTo(sellerId);
+    assertThat(snapshot.unitPrice()).isEqualTo(219_000L);
+  }
+
+  @Test
+  @DisplayName("없는 드롭의 스냅샷을 조회하면 NOT_FOUND 예외를 던진다")
+  void getDropSnapshot_notFound_throwsException() {
+    // given
+    UUID missingId = UUID.randomUUID();
+    given(dropRepository.findWithProductById(missingId)).willReturn(Optional.empty());
+
+    // when & then
+    assertThatThrownBy(() -> dropQueryService.getDropSnapshot(missingId))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", DropErrorCode.NOT_FOUND);
+  }
+
+  private Drop dropWithProduct(UUID dropId, UUID productId, UUID sellerId, long dropPrice) {
+    Product product = ProductFixture.persisted(productId, sellerId);
+    Drop drop =
+        Drop.schedule()
+            .product(product)
+            .dropPrice(dropPrice)
+            .totalQuantity(100)
+            .openAt(Instant.now().minusSeconds(60))
+            .closeAt(null)
+            .build();
+    ReflectionTestUtils.setField(drop, "id", dropId);
+    return drop;
   }
 
   private Drop liveDrop(UUID dropId) {

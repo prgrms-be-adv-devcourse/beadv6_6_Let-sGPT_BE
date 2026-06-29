@@ -16,6 +16,8 @@ public interface DropRepository {
 
   Optional<Drop> findById(UUID id);
 
+  Optional<Drop> findWithProductById(UUID id);
+
   List<Drop> findAllByStatus(DropStatus status);
 
   List<Drop> findAllByProductId(UUID productId);
