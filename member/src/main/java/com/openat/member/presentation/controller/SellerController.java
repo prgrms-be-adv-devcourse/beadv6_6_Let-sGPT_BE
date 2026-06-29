@@ -6,7 +6,10 @@ import com.openat.common.web.Locations;
 import com.openat.member.application.dto.CreateSellerInfoRequest;
 import com.openat.member.application.dto.PatchSellerInfoRequest;
 import com.openat.member.application.dto.SellerInfoResponse;
+import com.openat.member.application.dto.SellerTokenRequest;
+import com.openat.member.application.dto.SellerTokenResponse;
 import com.openat.member.application.usecase.SellerUseCase;
+import com.openat.member.application.usecase.TokenExchangeUseCase;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -28,6 +31,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class SellerController {
 
     private final SellerUseCase sellerUseCase;
+    private final TokenExchangeUseCase tokenExchangeUseCase;
 
     // -----------------------------------------------------------------------
     // 본인(me) 판매자 정보 관리 — 인증된 회원 누구나 접근 가능
@@ -81,6 +85,28 @@ public class SellerController {
         UUID memberId = UUID.fromString(userContext.userId());
         sellerUseCase.delete(memberId, sellerId);
         return ResponseEntity.noContent().build();
+    }
+
+    // -----------------------------------------------------------------------
+    // 판매자 scoped 토큰
+    // -----------------------------------------------------------------------
+
+    /**
+     * 판매자 스토어 범위 scoped 토큰 발급.
+     *
+     * <p>게이트웨이가 회원 JWT를 검증하고 X-User-Id(memberId)를 주입한다.
+     * 요청한 sellerInfoId가 본인 소유인지 확인 후 scoped 토큰을 발급한다.
+     *
+     * <p>scoped 토큰은 수명이 짧으므로(기본 120초) 만료 시 이 엔드포인트를 다시 호출해 재발급한다.
+     * refresh 토큰 없이 회원 JWT가 갱신 수단을 겸한다.
+     */
+    @PostMapping("/token")
+    public ResponseEntity<SellerTokenResponse> issueSellerToken(
+            @CurrentUser UserContext userContext,
+            @RequestBody SellerTokenRequest request
+    ) {
+        UUID memberId = UUID.fromString(userContext.userId());
+        return ResponseEntity.ok(tokenExchangeUseCase.issueSellerToken(memberId, request.sellerInfoId()));
     }
 
     // -----------------------------------------------------------------------
