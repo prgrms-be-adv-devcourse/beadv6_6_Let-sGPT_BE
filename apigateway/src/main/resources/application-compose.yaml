@@ -19,7 +19,7 @@ spring:
             - id: member
               uri: http://member:9100
               predicates:
-                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks,/auth/token
+                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks
             - id: product-api
               uri: http://product:9110
               predicates:

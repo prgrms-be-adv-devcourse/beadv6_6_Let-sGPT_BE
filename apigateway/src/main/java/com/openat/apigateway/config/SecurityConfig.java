@@ -77,8 +77,8 @@ public class SecurityConfig {
                                 "/*/swagger-ui/**",
                                 "/*/swagger-ui.html").permitAll()
 
-                        // member 공개 기능 (JWKS, RFC 8693 STS)
-                        .pathMatchers("/auth/jwks", "/auth/token").permitAll()
+                        // member 공개 기능 (JWKS)
+                        .pathMatchers("/auth/jwks").permitAll()
 
                         // payment 웹훅 — Toss PG가 JWT 없이 직접 호출 (apigateway/docs/SECURITY_CONFIG_GUIDE.md 패턴)
                         // payment 라우트가 Path=/payment/**+StripPrefix=1(product/order/settlement와 동일 컨벤션,
