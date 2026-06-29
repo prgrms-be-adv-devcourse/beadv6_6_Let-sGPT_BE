@@ -27,6 +27,10 @@ docker compose up -d postgres kafka redis
   ```
 - 이후 IntelliJ에서 원하는 모듈을 그냥 실행 (`application.yml` 기본 프로필이 `local`이라 별도 설정 불필요)
 - 다른 모듈을 호출해야 하면 해당 모듈도 같은 방식으로 IntelliJ에서 함께 실행
+- **Kafka 접속 포트(`local` 프로필 주의):** 호스트에서 직접 띄우는 모듈은 Kafka의 EXTERNAL 리스너인
+  `localhost:29092`로 붙어야 한다(`docker-compose.yml`). 도커 네트워크 내부용 INTERNAL 리스너
+  (`kafka:9092`)는 호스트에서 broker 주소가 resolve되지 않아 발행/구독이 실패한다. 각 모듈
+  `application-local.yml`의 `spring.kafka.bootstrap-servers`는 `localhost:29092`로 맞춘다.
 
 ### `.env` 자동 연동 (Run Configuration에 환경변수 수동 입력 불필요)
 

@@ -13,6 +13,7 @@ import com.openat.product.domain.repository.ProductSearchCondition;
 import com.openat.seller.application.usecase.SellerStoreCommandUseCase;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +58,9 @@ public class SeedDataRunner implements ApplicationRunner {
   private static final long PRICE_STEP = 12_000L;
   private static final int NO_PRICE_ORDER = 8; // 8번 상품은 가격 미정(null)
 
+  // FE 목 갤러리(buildGallery)와 동일하게 썸네일 시드에 접미사를 붙여 추가 이미지를 파생한다.
+  private static final String[] GALLERY_SUFFIXES = {"-b", "-c", "-d"};
+
   private final CategoryRepository categoryRepository;
   private final ProductRepository productRepository;
   private final DropRepository dropRepository;
@@ -94,7 +98,8 @@ public class SeedDataRunner implements ApplicationRunner {
               .description(descriptionOf(name))
               .category(categoryFor(categories, order))
               .price(priceOf(order))
-              .thumbnailKey("https://picsum.photos/seed/openat-" + order + "/640/800")
+              .thumbnailKey(imageUrl(order, ""))
+              .imageKeys(galleryOf(order))
               .build();
       productsByName.put(name, productRepository.save(product));
     }
@@ -103,6 +108,18 @@ public class SeedDataRunner implements ApplicationRunner {
 
   private String descriptionOf(String name) {
     return name + " — 한정 수량으로 만나는 openAt 단독 상품. 소재와 마감에 집중한 시즌 에디션입니다.";
+  }
+
+  private String imageUrl(int order, String suffix) {
+    return "https://picsum.photos/seed/openat-" + order + suffix + "/640/800";
+  }
+
+  private List<String> galleryOf(int order) {
+    List<String> gallery = new ArrayList<>();
+    for (String suffix : GALLERY_SUFFIXES) {
+      gallery.add(imageUrl(order, suffix));
+    }
+    return gallery;
   }
 
   private Long priceOf(int order) {

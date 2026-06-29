@@ -3,6 +3,7 @@ package com.openat.product.presentation.controller;
 import com.openat.common.exception.BusinessException;
 import com.openat.product.application.usecase.ImageStorageUseCase;
 import com.openat.product.domain.error.ProductErrorCode;
+import com.openat.product.presentation.dto.ImageUploadResponse;
 import java.io.IOException;
 import java.net.URI;
 import lombok.RequiredArgsConstructor;
@@ -27,11 +28,11 @@ public class ProductImageController implements ProductImageApiSpec {
 
   @Override
   @PostMapping
-  public ResponseEntity<Void> upload(@RequestPart("file") MultipartFile file) {
+  public ResponseEntity<ImageUploadResponse> upload(@RequestPart("file") MultipartFile file) {
     String key = imageStorageUseCase.store(readBytes(file), file.getOriginalFilename());
     URI location =
         ServletUriComponentsBuilder.fromCurrentRequest().path("/{key}").buildAndExpand(key).toUri();
-    return ResponseEntity.created(location).build();
+    return ResponseEntity.created(location).body(new ImageUploadResponse(key, location.getPath()));
   }
 
   @Override
