@@ -10,7 +10,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.web.client.RestClient;
 
 // G2 — 실제 토스페이먼츠 API 호출용 RestClient. real 프로필에서만 등록(StubTossPaymentClient와 양립 방지, G2).
@@ -36,7 +35,6 @@ public class TossClientConfig {
                 .baseUrl(TOSS_BASE_URL)
                 .requestFactory(requestFactory)
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Basic " + basicAuth)
-                .messageConverters(converters -> converters.add(0, new MappingJackson2HttpMessageConverter(objectMapper)))
                 .build();
     }
 }
