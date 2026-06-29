@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.openat.common.exception.GlobalExceptionHandler;
@@ -34,8 +35,8 @@ class ProductImageControllerTest {
   @MockitoBean private ImageStorageUseCase imageStorageUseCase;
 
   @Test
-  @DisplayName("이미지를 업로드하면 201과 조회 Location 헤더를 반환한다")
-  void upload_returns201WithLocation() throws Exception {
+  @DisplayName("이미지를 업로드하면 201과 Location 헤더, 본문으로 { key, url } 을 반환한다")
+  void upload_returns201WithKeyAndUrl() throws Exception {
     // given
     given(imageStorageUseCase.store(any(), eq("photo.png"))).willReturn("abc.png");
     MockMultipartFile file =
@@ -45,7 +46,9 @@ class ProductImageControllerTest {
     mockMvc
         .perform(multipart("/api/v1/products/images").file(file))
         .andExpect(status().isCreated())
-        .andExpect(header().string("Location", endsWith("/api/v1/products/images/abc.png")));
+        .andExpect(header().string("Location", endsWith("/api/v1/products/images/abc.png")))
+        .andExpect(jsonPath("$.key").value("abc.png"))
+        .andExpect(jsonPath("$.url").value("/api/v1/products/images/abc.png"));
   }
 
   @Test
