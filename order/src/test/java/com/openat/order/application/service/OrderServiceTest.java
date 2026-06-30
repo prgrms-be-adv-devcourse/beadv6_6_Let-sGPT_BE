@@ -77,6 +77,7 @@ class OrderServiceTest {
 
         // then
         assertThat(result.orderId()).isEqualTo(order.getId());
+        assertThat(result.created()).isTrue();
         ArgumentCaptor<StockDecreaseCommand> stockCommand = ArgumentCaptor.forClass(StockDecreaseCommand.class);
         verify(productIntegrationPort).decreaseStock(any(), stockCommand.capture());
         assertThat(stockCommand.getValue().orderId()).isEqualTo(order.getId());
@@ -100,6 +101,28 @@ class OrderServiceTest {
 
         // then
         assertThat(result.orderId()).isEqualTo(existing.getId());
+        assertThat(result.created()).isFalse();
+        verify(productIntegrationPort, never()).fetchOrderSnapshot(any());
+        verify(productIntegrationPort, never()).decreaseStock(any(), any());
+    }
+
+    @Test
+    @DisplayName("같은 멱등키의 기존 주문과 요청 내용이 다르면 충돌을 반환한다")
+    void createOrder_whenExistingIdempotencyKeyWithDifferentBody_throwsConflict() {
+        // given
+        UUID memberId = UUID.randomUUID();
+        UUID originalDropId = UUID.randomUUID();
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
+        Order existing = createOrder(memberId, originalDropId, snapshot(originalDropId), command.quantity(), command.idempotencyKey());
+
+        when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
+                .thenReturn(Optional.of(existing));
+
+        // when
+        BusinessException ex = assertThrows(BusinessException.class, () -> orderService.createOrder(memberId, command));
+
+        // then
+        assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.IDEMPOTENCY_CONFLICT);
         verify(productIntegrationPort, never()).fetchOrderSnapshot(any());
         verify(productIntegrationPort, never()).decreaseStock(any(), any());
     }
@@ -125,6 +148,7 @@ class OrderServiceTest {
 
         // then
         assertThat(result.orderId()).isEqualTo(existing.getId());
+        assertThat(result.created()).isFalse();
         verify(productIntegrationPort, never()).decreaseStock(any(), any());
     }
 

@@ -12,16 +12,22 @@ public record CreateOrderResult(
         OrderStatus status,
         long amount,
         String orderName,
-        Instant paymentExpiresAt) {
+        Instant paymentExpiresAt,
+        boolean created) {
 
     public static CreateOrderResult from(Order order) {
+        return from(order, true);
+    }
+
+    public static CreateOrderResult from(Order order, boolean created) {
         return new CreateOrderResult(
                 order.getId(),
                 order.getOrderNumber(),
                 order.getStatus(),
                 order.getTotalPrice(),
                 resolveOrderName(order),
-                order.getPaymentExpiresAt());
+                order.getPaymentExpiresAt(),
+                created);
     }
 
     private static String resolveOrderName(Order order) {

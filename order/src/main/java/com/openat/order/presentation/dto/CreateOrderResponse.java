@@ -18,7 +18,9 @@ public record CreateOrderResponse(
         @Schema(description = "주문 표시명")
         String orderName,
         @Schema(description = "결제 가능 만료 시각")
-        Instant paymentExpiresAt) {
+        Instant paymentExpiresAt,
+        @Schema(description = "신규 생성 여부. false면 같은 멱등키의 기존 주문")
+        boolean created) {
 
     public static CreateOrderResponse from(CreateOrderResult result) {
         return new CreateOrderResponse(
@@ -27,6 +29,7 @@ public record CreateOrderResponse(
                 result.status(),
                 result.amount(),
                 result.orderName(),
-                result.paymentExpiresAt());
+                result.paymentExpiresAt(),
+                result.created());
     }
 }
