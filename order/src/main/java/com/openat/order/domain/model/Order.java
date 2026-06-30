@@ -124,6 +124,7 @@ public class Order {
             UUID dropId,
             UUID productId,
             UUID sellerId,
+            String productName,
             int quantity,
             long unitPrice,
             String idempotencyKey,
@@ -133,7 +134,7 @@ public class Order {
         this.dropId = dropId;
         this.productId = productId;
         this.sellerId = sellerId;
-        this.productName = "";
+        this.productName = productName;
         this.quantity = quantity;
         this.unitPrice = unitPrice;
         this.totalPrice = unitPrice * quantity;

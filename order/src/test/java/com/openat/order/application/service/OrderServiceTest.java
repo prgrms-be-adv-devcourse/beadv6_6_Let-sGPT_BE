@@ -63,7 +63,7 @@ class OrderServiceTest {
     void createOrder_decreasesStockWithOrderIdAndBuyerId() {
         // given
         UUID memberId = UUID.randomUUID();
-        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 2, "idem-001");
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 2, "idem-001", "테스트 상품");
         OrderSnapshotInfo snapshot = snapshot(command.dropId());
         Order order = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
 
@@ -89,7 +89,7 @@ class OrderServiceTest {
     void createOrder_whenExistingIdempotencyKey_returnExistingOrder() {
         // given
         UUID memberId = UUID.randomUUID();
-        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
         Order existing = createOrder(memberId, command.dropId(), snapshot(command.dropId()), command.quantity(), command.idempotencyKey());
 
         when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
@@ -109,7 +109,7 @@ class OrderServiceTest {
     void createOrder_whenConcurrentSameIdempotencyKey_returnExistingOrderWithoutStockDecrease() {
         // given
         UUID memberId = UUID.randomUUID();
-        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
         OrderSnapshotInfo snapshot = snapshot(command.dropId());
         Order existing = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
 
@@ -133,7 +133,7 @@ class OrderServiceTest {
     void createOrder_whenStockDecreaseFails_recordsFailureAndThrowsOrderError() {
         // given
         UUID memberId = UUID.randomUUID();
-        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
         OrderSnapshotInfo snapshot = snapshot(command.dropId());
         Order order = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
 
@@ -158,7 +158,7 @@ class OrderServiceTest {
     void createOrder_whenDropClosed_throwsDropClosedError() {
         // given
         UUID memberId = UUID.randomUUID();
-        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001");
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
         OrderSnapshotInfo snapshot = snapshot(command.dropId());
         Order order = createOrder(memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
 
