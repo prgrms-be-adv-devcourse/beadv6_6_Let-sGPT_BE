@@ -11,6 +11,7 @@ public enum OrderErrorCode implements ErrorCode {
     NOT_FOUND(HttpStatus.NOT_FOUND, "ORDER_NOT_FOUND", "주문을 찾을 수 없습니다."),
     NOT_OWNER(HttpStatus.FORBIDDEN, "ORDER_NOT_OWNER", "주문에 접근할 수 있는 권한이 없습니다."),
     INVALID_INPUT(HttpStatus.BAD_REQUEST, "ORDER_INVALID_INPUT", "요청 데이터가 유효하지 않습니다."),
+    IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "ORDER_IDEMPOTENCY_CONFLICT", "같은 멱등키로 다른 주문 요청을 처리할 수 없습니다."),
     INVALID_STATUS(HttpStatus.CONFLICT, "ORDER_INVALID_STATUS", "요청한 주문 상태에서는 처리할 수 없습니다."),
     SOLD_OUT(HttpStatus.CONFLICT, "SOLD_OUT", "재고가 없습니다."),
     DROP_NOT_OPEN(HttpStatus.BAD_REQUEST, "DROP_NOT_OPEN", "드롭이 오픈되지 않았습니다."),

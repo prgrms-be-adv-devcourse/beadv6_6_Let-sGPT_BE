@@ -74,11 +74,11 @@
 2. **재고 감소** (상품 서비스 **동기** 호출). 품절·미오픈·드롭종료·한도초과면 즉시 실패(`order.failed`)
 3. 재고 성공 → 결제 진입 (결제 서비스가 PG 결제창 호출 → 승인)
 4. 결제 결과를 **이벤트로 수신**
-   - COMPLETE → `order.complete` + `order_completed` 이벤트 발행 (→ 정산)
+   - COMPLETE → `order.complete` + `order.completed` 이벤트 발행 (→ 정산)
    - FAILED → **재고 롤백(보상)** + `order.cancelled` / `payment_failed`
 5. 결제 미회신 시간초과 → **주문(order)이 TTL 기준으로 타임아웃 감지** → 상품 재고 롤백(보상) API 호출 → `order.failed`. (상품은 롤백 API만 제공하고 타임아웃을 감지하지 않음 — 재고 통신은 동기 API 단일 경로)
 6. 주문 취소 → 환불 요청 → 환불 결과 이벤트 (COMPLETE: `order.refund` / FAILED: `order.refund_failed` 수동 처리)
-7. 월 정산: `order_completed`·`refund_completed` 적재 → **Spring Batch** (`cron 0 3 5 * *`)로 수수료·환불 차감 정산
+7. 월 정산: `order.completed`·`refund.completed` 적재 → **Spring Batch** (`cron 0 3 5 * *`)로 수수료·환불 차감 정산
 
 ---
 
@@ -167,8 +167,8 @@
 
 ## 9. EDA(이벤트) 컨벤션 (반드시 준수)
 
-- **토픽 네이밍:** `[도메인]_[행위]_events`, **과거형**. (예: `order_completed_events`, `payment_completed_events`)
-- **토픽 분리:** **이벤트마다 분리.** 예: `payment_completed_events` / `payment_failed_events`로 결과별 토픽을 나눈다.
+- **토픽 네이밍:** `[도메인].[행위].events`, **과거형**. (예: `order.completed.events`, `payment.completed.events`)
+- **토픽 분리:** **이벤트마다 분리.** 예: `payment.completed.events` / `payment.failed.events`로 결과별 토픽을 나눈다.
 - **공통 봉투(IntegrationEvent):** 메타 + payload 구조로 감싼다.
 
   ```json
@@ -194,13 +194,13 @@
 
 | 토픽 | 발행 | 구독 | payload(요약) |
 |---|---|---|---|
-| `order_completed_events` | 주문 | 정산 | orderId, sellerId, productId, memberId, saleAmount, quantity |
-| `payment_completed_events` | 결제 | 주문 | paymentId, orderId, amount, pgPaymentKey |
-| `payment_failed_events` | 결제 | 주문 | orderId, reason |
-| `refund_completed_events` | 결제 | 주문, 정산 | refundId, orderId, amount |
-| `refund_failed_events` | 결제 | 주문 | orderId, reason |
-| `product_created_events` | 상품 | 검색·AI(파이널) | productId, name, category, price |
-| `product_updated_events` | 상품 | 검색·AI(파이널) | productId, name, category, price |
+| `order.completed.events` | 주문 | 정산 | orderId, sellerId, productId, memberId, saleAmount, quantity |
+| `payment.completed.events` | 결제 | 주문 | paymentId, orderId, amount, pgPaymentKey |
+| `payment.failed.events` | 결제 | 주문 | orderId, reason |
+| `refund.completed.events` | 결제 | 주문, 정산 | refundId, orderId, amount |
+| `refund.failed.events` | 결제 | 주문 | orderId, reason |
+| `product.created.events` | 상품 | 검색·AI(파이널) | productId, name, category, price |
+| `product.updated.events` | 상품 | 검색·AI(파이널) | productId, name, category, price |
 
 ---
 

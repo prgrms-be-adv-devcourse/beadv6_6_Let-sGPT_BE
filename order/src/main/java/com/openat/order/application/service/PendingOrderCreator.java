@@ -11,7 +11,6 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
@@ -29,7 +28,7 @@ public class PendingOrderCreator {
                 .dropId(command.dropId())
                 .productId(snapshot.productId())
                 .sellerId(snapshot.sellerId())
-                .productName(resolveProductName(command, orderNumber))
+                .productName(command.orderName().trim())
                 .quantity(command.quantity())
                 .unitPrice(snapshot.unitPrice())
                 .idempotencyKey(command.idempotencyKey())
@@ -48,13 +47,6 @@ public class PendingOrderCreator {
                         .build()
         );
         return savedOrder;
-    }
-
-    private String resolveProductName(CreateOrderCommand command, String orderNumber) {
-        if (StringUtils.hasText(command.orderName())) {
-            return command.orderName();
-        }
-        return orderNumber;
     }
 
     private String generateOrderNumber(Instant now) {

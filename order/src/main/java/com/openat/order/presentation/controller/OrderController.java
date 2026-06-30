@@ -18,6 +18,7 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -42,7 +43,12 @@ public class OrderController implements OrderApiSpec {
     ) {
         CreateOrderResponse response = CreateOrderResponse.from(
                 orderUseCase.createOrder(memberId(userContext), request.toCommand()));
-        return ResponseEntity.created(Locations.fromCurrentRequest(response.orderId()))
+        if (response.created()) {
+            return ResponseEntity.created(Locations.fromCurrentRequest(response.orderId()))
+                    .body(response);
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.LOCATION, Locations.fromCurrentRequest(response.orderId()).toString())
                 .body(response);
     }
 

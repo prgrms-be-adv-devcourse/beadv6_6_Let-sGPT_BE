@@ -48,7 +48,8 @@ public class OrderService implements OrderUseCase {
 
         Order existing = findExisting(memberId, command.idempotencyKey());
         if (existing != null) {
-            return CreateOrderResult.from(existing);
+            validateIdempotentReplay(existing, command);
+            return CreateOrderResult.from(existing, false);
         }
 
         Instant now = Instant.now();
@@ -56,7 +57,8 @@ public class OrderService implements OrderUseCase {
         PendingOrderCreation creation = createPendingOrder(memberId, command, snapshot, now);
         Order order = creation.order();
         if (!creation.created()) {
-            return CreateOrderResult.from(order);
+            validateIdempotentReplay(order, command);
+            return CreateOrderResult.from(order, false);
         }
 
         try {
@@ -141,6 +143,17 @@ public class OrderService implements OrderUseCase {
                 .orElse(null);
     }
 
+    private void validateIdempotentReplay(Order existing, CreateOrderCommand command) {
+        if (!existing.getDropId().equals(command.dropId())
+                || existing.getQuantity() != command.quantity()
+                || !existing.getProductName().equals(command.orderName().trim())) {
+            throw new BusinessException(
+                    OrderErrorCode.IDEMPOTENCY_CONFLICT,
+                    "동일 멱등키의 기존 주문과 요청 본문이 다릅니다: orderId=%s".formatted(existing.getId())
+            );
+        }
+    }
+
     private Order getOwnedOrder(UUID memberId, UUID orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
@@ -192,6 +205,9 @@ public class OrderService implements OrderUseCase {
             throw new BusinessException(OrderErrorCode.INVALID_INPUT);
         }
         if (!StringUtils.hasText(command.idempotencyKey())) {
+            throw new BusinessException(OrderErrorCode.INVALID_INPUT);
+        }
+        if (!StringUtils.hasText(command.orderName())) {
             throw new BusinessException(OrderErrorCode.INVALID_INPUT);
         }
     }
