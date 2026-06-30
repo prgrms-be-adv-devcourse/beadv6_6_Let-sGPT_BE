@@ -7,9 +7,13 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface DropJpaRepository extends JpaRepository<Drop, UUID> {
-  List<Drop> findAllByStatus(DropStatus status);
+
+  @Query("select d from Drop d join fetch d.product where d.status = :status")
+  List<Drop> findAllByStatus(@Param("status") DropStatus status);
 
   List<Drop> findAllByProduct_Id(UUID productId);
 
