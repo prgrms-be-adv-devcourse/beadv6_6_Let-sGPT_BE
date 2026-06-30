@@ -73,21 +73,19 @@ class ProductIntegrationClientTest {
     }
 
     @Test
-    @DisplayName("상품 주문 기준정보 응답은 productId, sellerId, productName, unitPrice를 주문 생성에 사용한다")
+    @DisplayName("상품 주문 기준정보 응답은 productId, sellerId, unitPrice만 주문 생성에 사용한다")
     void fetchOrderSnapshot_mapsMinimalOrderBasis() {
         UUID dropId = UUID.randomUUID();
         UUID productId = UUID.randomUUID();
         UUID sellerId = UUID.randomUUID();
-        String productName = "테스트 상품";
 
         when(productInternalApiClient.fetchOrderSnapshot(dropId))
-                .thenReturn(new OrderSnapshotResponse(productId, sellerId, productName, 10_000L));
+                .thenReturn(new OrderSnapshotResponse(productId, sellerId, 10_000L));
 
         var result = productIntegrationClient.fetchOrderSnapshot(dropId);
 
         assertThat(result.productId()).isEqualTo(productId);
         assertThat(result.sellerId()).isEqualTo(sellerId);
-        assertThat(result.productName()).isEqualTo(productName);
         assertThat(result.unitPrice()).isEqualTo(10_000L);
     }
 

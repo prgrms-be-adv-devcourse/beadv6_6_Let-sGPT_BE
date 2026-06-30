@@ -1,19 +1,14 @@
 package com.openat.drop.presentation.controller;
 
 import com.openat.drop.application.usecase.DropStockUseCase;
-import com.openat.drop.domain.error.DropErrorCode;
-import com.openat.drop.domain.repository.DropRepository;
-import com.openat.drop.presentation.dto.OrderSnapshotResponse;
 import com.openat.drop.presentation.dto.StockChangeRequest;
 import com.openat.drop.presentation.dto.StockChangeResponse;
-import com.openat.common.exception.BusinessException;
 import com.openat.support.web.InternalApi;
 import jakarta.validation.Valid;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -27,16 +22,6 @@ import org.springframework.web.bind.annotation.RestController;
 public class InternalDropStockController {
 
   private final DropStockUseCase dropStockUseCase;
-  private final DropRepository dropRepository;
-
-  @GetMapping("/{dropId}/order-snapshot")
-  public ResponseEntity<OrderSnapshotResponse> getOrderSnapshot(@PathVariable UUID dropId) {
-    return ResponseEntity.ok(
-        dropRepository
-            .findById(dropId)
-            .map(OrderSnapshotResponse::from)
-            .orElseThrow(() -> new BusinessException(DropErrorCode.NOT_FOUND)));
-  }
 
   @PostMapping("/{dropId}/stock-deductions")
   public ResponseEntity<StockChangeResponse> deduct(

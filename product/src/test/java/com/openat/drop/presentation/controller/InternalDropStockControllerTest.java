@@ -3,7 +3,6 @@ package com.openat.drop.presentation.controller;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -13,10 +12,7 @@ import com.openat.common.exception.BusinessException;
 import com.openat.common.exception.GlobalExceptionHandler;
 import com.openat.config.WebConfig;
 import com.openat.drop.application.usecase.DropStockUseCase;
-import com.openat.drop.domain.model.Drop;
 import com.openat.drop.domain.error.DropErrorCode;
-import com.openat.drop.domain.repository.DropRepository;
-import com.openat.product.domain.model.Product;
 import com.openat.drop.presentation.dto.StockChangeRequest;
 import java.util.Optional;
 import java.util.UUID;
@@ -38,32 +34,7 @@ class InternalDropStockControllerTest {
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private DropStockUseCase dropStockUseCase;
-  @MockitoBean private DropRepository dropRepository;
   private final ObjectMapper objectMapper = new ObjectMapper();
-
-  @Test
-  @DisplayName("주문 기준정보 조회는 상품명과 가격 기준값을 반환한다")
-  void getOrderSnapshot_success_returnsProductBasis() throws Exception {
-    UUID dropId = UUID.randomUUID();
-    UUID productId = UUID.randomUUID();
-    UUID sellerId = UUID.randomUUID();
-    Product product = org.mockito.Mockito.mock(Product.class);
-    Drop drop = org.mockito.Mockito.mock(Drop.class);
-    given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
-    given(drop.getProduct()).willReturn(product);
-    given(product.getId()).willReturn(productId);
-    given(product.getSellerId()).willReturn(sellerId);
-    given(product.getName()).willReturn("한정판 러너");
-    given(drop.getDropPrice()).willReturn(59_000L);
-
-    mockMvc
-        .perform(get("/internal/drops/{dropId}/order-snapshot", dropId))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.productId").value(productId.toString()))
-        .andExpect(jsonPath("$.sellerId").value(sellerId.toString()))
-        .andExpect(jsonPath("$.productName").value("한정판 러너"))
-        .andExpect(jsonPath("$.unitPrice").value(59_000));
-  }
 
   @Test
   @DisplayName("차감 성공이면 200과 잔여 수량을 반환한다 (/internal 경로, /api/v1 미적용)")

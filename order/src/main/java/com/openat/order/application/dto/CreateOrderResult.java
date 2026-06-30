@@ -4,6 +4,7 @@ import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderStatus;
 import java.time.Instant;
 import java.util.UUID;
+import org.springframework.util.StringUtils;
 
 public record CreateOrderResult(
         UUID orderId,
@@ -19,7 +20,14 @@ public record CreateOrderResult(
                 order.getOrderNumber(),
                 order.getStatus(),
                 order.getTotalPrice(),
-                order.getProductName(),
+                resolveOrderName(order),
                 order.getPaymentExpiresAt());
+    }
+
+    private static String resolveOrderName(Order order) {
+        if (StringUtils.hasText(order.getProductName())) {
+            return order.getProductName();
+        }
+        return order.getOrderNumber();
     }
 }
