@@ -48,10 +48,10 @@ public class OrderCompletedEventPublisher implements OrderCompletedEventPublishP
 
         try {
             RecordMetadata metadata = publishBlocking(key, payload);
-            log.info("order_completed.events published. orderId={}, topic={}, partition={}, offset={}",
+            log.info("order.completed.events published. orderId={}, topic={}, partition={}, offset={}",
                     order.getId(), topic, metadata.partition(), metadata.offset());
         } catch (Exception e) {
-            throw new IllegalStateException("order_completed.events 발행에 실패했습니다.", e);
+            throw new IllegalStateException("order.completed.events 발행에 실패했습니다.", e);
         }
     }
 
