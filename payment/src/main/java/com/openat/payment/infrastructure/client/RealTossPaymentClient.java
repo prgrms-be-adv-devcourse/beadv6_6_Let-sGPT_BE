@@ -8,6 +8,7 @@ import com.openat.payment.application.client.TossRefundResult;
 import java.util.List;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
@@ -26,7 +27,7 @@ public class RealTossPaymentClient implements TossPaymentClient {
 
     private final RestClient tossRestClient;
 
-    public RealTossPaymentClient(RestClient tossRestClient) {
+    public RealTossPaymentClient(@Qualifier("tossRestClient") RestClient tossRestClient) {
         this.tossRestClient = tossRestClient;
     }
 
