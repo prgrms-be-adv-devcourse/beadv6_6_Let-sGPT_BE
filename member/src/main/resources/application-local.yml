@@ -15,7 +15,7 @@ spring:
       # validate(application.yml 기본값)로는 기동 자체가 안 됨 — 로컬은 매번 기동 시
       # 엔티티 기준으로 테이블을 새로 만들고 종료 시 드롭(create-drop)해서 깨끗하게 초기화.
       # compose/운영 프로필은 validate를 그대로 유지.
-      ddl-auto: update
+      ddl-auto: create-drop
   data:
     redis:
       host: localhost                              # 로컬 도커 redis
