@@ -225,7 +225,7 @@ class OrderServiceTest {
     }
 
     private OrderSnapshotInfo snapshot(UUID dropId) {
-        return new OrderSnapshotInfo(UUID.randomUUID(), UUID.randomUUID(), 10_000L);
+        return new OrderSnapshotInfo(UUID.randomUUID(), UUID.randomUUID(), "테스트 상품", 10_000L);
     }
 
     private Order createOrder(UUID memberId, UUID dropId, OrderSnapshotInfo snapshot, int quantity, String idempotencyKey) {

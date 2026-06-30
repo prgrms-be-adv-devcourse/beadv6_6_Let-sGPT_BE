@@ -30,6 +30,7 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
             return new OrderSnapshotInfo(
                     response.productId(),
                     response.sellerId(),
+                    response.productName(),
                     response.unitPrice()
             );
         } catch (FeignException e) {

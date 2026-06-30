@@ -27,6 +27,7 @@ public class PendingOrderCreator {
                 .dropId(command.dropId())
                 .productId(snapshot.productId())
                 .sellerId(snapshot.sellerId())
+                .productName(snapshot.productName())
                 .quantity(command.quantity())
                 .unitPrice(snapshot.unitPrice())
                 .idempotencyKey(command.idempotencyKey())

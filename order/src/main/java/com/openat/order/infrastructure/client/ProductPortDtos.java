@@ -9,6 +9,7 @@ public final class ProductPortDtos {
     public record OrderSnapshotResponse(
             UUID productId,
             UUID sellerId,
+            String productName,
             long unitPrice) {
     }
 
