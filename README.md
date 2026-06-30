@@ -122,8 +122,8 @@ sequenceDiagram
         P-->>O: 감소 성공
         O->>Pay: 결제 진입
         Pay->>Pay: PG 결제창 승인 (Toss)
-        Pay--)O: payment_completed (Kafka)
-        O--)S: order_completed (Kafka)
+        Pay--)O: payment.completed (Kafka)
+        O--)S: order.completed (Kafka)
         O-->>C: 주문 완료 (COMPLETE)
     end
 
@@ -245,7 +245,7 @@ openat/
 |---|---|
 | **API** | 외부 `/api/v1/...` · 내부 `/internal/...` · 복수형 + 케밥케이스 · 응답은 봉투 없이 리소스 그대로 |
 | **에러** | 도메인 접두사 코드(`DROP_SOLD_OUT` 등) + `@RestControllerAdvice` 전역 처리 |
-| **이벤트** | 토픽 `[도메인]_[행위]_events`(과거형) · 공통 봉투(IntegrationEvent) · `eventId` 멱등성 |
+| **이벤트** | 토픽 `[도메인].[행위].events`(과거형) · 공통 봉투(IntegrationEvent) · `eventId` 멱등성 |
 | **커밋** | `<type>: <한글 제목>` 명사형 종결 · Why 리드 + What 목록 |
 
 > 전체 정의는 **[docs/PROJECT.md](docs/PROJECT.md)** 에 있다.
