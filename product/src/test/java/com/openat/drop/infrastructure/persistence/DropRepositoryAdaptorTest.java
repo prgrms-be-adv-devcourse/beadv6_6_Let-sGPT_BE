@@ -95,6 +95,39 @@ class DropRepositoryAdaptorTest {
   }
 
   @Test
+  @DisplayName("findWithProductById는 상품을 fetch join해 productId·sellerId를 함께 로딩한다")
+  void findWithProductById_fetchesProduct() {
+    // given
+    UUID sellerId = UUID.randomUUID();
+    Product product = persistProduct(sellerId);
+    Drop saved =
+        dropRepository.save(
+            Drop.schedule()
+                .product(product)
+                .dropPrice(219_000L)
+                .totalQuantity(100)
+                .openAt(Instant.parse("2026-07-01T00:00:00Z"))
+                .build());
+    entityManager.flush();
+    entityManager.clear();
+
+    // when
+    Drop found = dropRepository.findWithProductById(saved.getId()).orElseThrow();
+
+    // then
+    assertThat(found.getProduct().getId()).isEqualTo(product.getId());
+    assertThat(found.getProduct().getSellerId()).isEqualTo(sellerId);
+    assertThat(found.getDropPrice()).isEqualTo(219_000L);
+  }
+
+  @Test
+  @DisplayName("없는 id면 findWithProductById는 빈 Optional을 반환한다")
+  void findWithProductById_missing_returnsEmpty() {
+    // when & then
+    assertThat(dropRepository.findWithProductById(UUID.randomUUID())).isEmpty();
+  }
+
+  @Test
   @DisplayName("삭제하면 soft delete되어 findById로 조회되지 않는다")
   void delete_softDeletesAndHidesFromFindById() {
     // given

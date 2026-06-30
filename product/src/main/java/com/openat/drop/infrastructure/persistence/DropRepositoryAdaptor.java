@@ -44,6 +44,11 @@ public class DropRepositoryAdaptor implements DropRepository {
   }
 
   @Override
+  public Optional<Drop> findWithProductById(UUID id) {
+    return dropJpaRepository.findWithProductById(id);
+  }
+
+  @Override
   public List<Drop> findAllByStatus(DropStatus status) {
     return dropJpaRepository.findAllByStatus(status);
   }

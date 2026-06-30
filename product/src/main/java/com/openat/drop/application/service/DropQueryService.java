@@ -2,6 +2,7 @@ package com.openat.drop.application.service;
 
 import com.openat.common.exception.BusinessException;
 import com.openat.drop.application.dto.DropInfo;
+import com.openat.drop.application.dto.DropSnapshotInfo;
 import com.openat.drop.application.usecase.DropQueryUseCase;
 import com.openat.drop.domain.error.DropErrorCode;
 import com.openat.drop.domain.model.Drop;
@@ -40,6 +41,15 @@ public class DropQueryService implements DropQueryUseCase {
     String sellerName = sellerStoreQueryUseCase.findStoreNames(List.of(sellerId)).get(sellerId);
     Long cachedRemaining = dropCacheRepository.findRemaining(List.of(id)).get(id);
     return toInfo(drop, sellerName, now, cachedRemaining);
+  }
+
+  @Override
+  public DropSnapshotInfo getDropSnapshot(UUID dropId) {
+    Drop drop =
+        dropRepository
+            .findWithProductById(dropId)
+            .orElseThrow(() -> new BusinessException(DropErrorCode.NOT_FOUND));
+    return DropSnapshotInfo.from(drop);
   }
 
   @Override
