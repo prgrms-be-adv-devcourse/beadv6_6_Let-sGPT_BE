@@ -47,12 +47,23 @@ cd "$BE_DIR"
 set -a && source "$BE_DIR/.env" && set +a
 
 # ── 서비스 기동 ───────────────────────────────────────────────────────
-"$JAVA21" -jar "$BE_DIR/member/build/libs/member-0.0.1-SNAPSHOT.jar"         --spring.profiles.active=local > "$LOG_DIR/member.log"     2>&1 &
-"$JAVA21" -jar "$BE_DIR/product/build/libs/product-0.0.1-SNAPSHOT.jar"       --spring.profiles.active=local > "$LOG_DIR/product.log"    2>&1 &
-"$JAVA21" -jar "$BE_DIR/order/build/libs/order-0.0.1-SNAPSHOT.jar"           --spring.profiles.active=local > "$LOG_DIR/order.log"      2>&1 &
-"$JAVA21" -jar "$BE_DIR/payment/build/libs/payment-0.0.1-SNAPSHOT.jar"       --spring.profiles.active=real  > "$LOG_DIR/payment.log"    2>&1 &
-"$JAVA21" -jar "$BE_DIR/settlement/build/libs/settlement-0.0.1-SNAPSHOT.jar" --spring.profiles.active=local > "$LOG_DIR/settlement.log" 2>&1 &
-"$JAVA21" -jar "$BE_DIR/apigateway/build/libs/apigateway-0.0.1-SNAPSHOT.jar" --spring.profiles.active=local > "$LOG_DIR/apigateway.log" 2>&1 &
+JAVA_PIDS=()
+
+"$JAVA21" -jar "$BE_DIR/member/build/libs/member-0.0.1-SNAPSHOT.jar"         --spring.profiles.active=local > "$LOG_DIR/member.log"     2>&1 & JAVA_PIDS+=($!)
+"$JAVA21" -jar "$BE_DIR/product/build/libs/product-0.0.1-SNAPSHOT.jar"       --spring.profiles.active=local > "$LOG_DIR/product.log"    2>&1 & JAVA_PIDS+=($!)
+"$JAVA21" -jar "$BE_DIR/order/build/libs/order-0.0.1-SNAPSHOT.jar"           --spring.profiles.active=local > "$LOG_DIR/order.log"      2>&1 & JAVA_PIDS+=($!)
+"$JAVA21" -jar "$BE_DIR/payment/build/libs/payment-0.0.1-SNAPSHOT.jar"       --spring.profiles.active=real  > "$LOG_DIR/payment.log"    2>&1 & JAVA_PIDS+=($!)
+"$JAVA21" -jar "$BE_DIR/settlement/build/libs/settlement-0.0.1-SNAPSHOT.jar" --spring.profiles.active=local > "$LOG_DIR/settlement.log" 2>&1 & JAVA_PIDS+=($!)
+"$JAVA21" -jar "$BE_DIR/apigateway/build/libs/apigateway-0.0.1-SNAPSHOT.jar" --spring.profiles.active=local > "$LOG_DIR/apigateway.log" 2>&1 & JAVA_PIDS+=($!)
+
+cleanup() {
+    echo ""
+    echo "[INFO] 종료 중 — Java 서비스 6개 정리..."
+    kill "${JAVA_PIDS[@]}" 2>/dev/null
+    wait "${JAVA_PIDS[@]}" 2>/dev/null
+    echo "[INFO] 정리 완료."
+}
+trap cleanup INT TERM
 
 echo "[INFO] 서비스 6개 기동 완료. 로그: $LOG_DIR/"
 echo ""
