@@ -128,6 +128,22 @@ class OrderServiceTest {
     }
 
     @Test
+    @DisplayName("주문 생성 시 주문 표시명이 없으면 잘못된 요청으로 처리한다")
+    void createOrder_whenOrderNameMissing_throwsInvalidInput() {
+        // given
+        UUID memberId = UUID.randomUUID();
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", " ");
+
+        // when
+        BusinessException ex = assertThrows(BusinessException.class, () -> orderService.createOrder(memberId, command));
+
+        // then
+        assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
+        verify(productIntegrationPort, never()).fetchOrderSnapshot(any());
+        verify(productIntegrationPort, never()).decreaseStock(any(), any());
+    }
+
+    @Test
     @DisplayName("동시 주문 생성으로 멱등키 유니크 충돌이 발생하면 기존 주문을 반환하고 재고를 다시 차감하지 않는다")
     void createOrder_whenConcurrentSameIdempotencyKey_returnExistingOrderWithoutStockDecrease() {
         // given
@@ -259,6 +275,7 @@ class OrderServiceTest {
                 .dropId(dropId)
                 .productId(snapshot.productId())
                 .sellerId(snapshot.sellerId())
+                .productName("테스트 상품")
                 .quantity(quantity)
                 .unitPrice(snapshot.unitPrice())
                 .idempotencyKey(idempotencyKey)

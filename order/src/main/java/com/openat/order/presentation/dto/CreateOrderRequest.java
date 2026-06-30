@@ -16,7 +16,7 @@ public record CreateOrderRequest(
         @Schema(description = "주문 생성 멱등키", example = "order-20260626-0001")
         @NotBlank String idempotencyKey,
         @Schema(description = "주문 표시명(프론트가 조회한 상품명)")
-        @Size(max = 255) String orderName) {
+        @NotBlank @Size(max = 255) String orderName) {
 
     public CreateOrderCommand toCommand() {
         return new CreateOrderCommand(dropId, quantity, idempotencyKey, orderName);
