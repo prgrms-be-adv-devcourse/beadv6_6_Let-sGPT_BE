@@ -170,6 +170,25 @@ class DropRepositoryAdaptorTest {
     assertThat(drops).hasSize(2);
   }
 
+  @Test
+  @DisplayName("findAllByStatus는 상품이 soft delete된 고아 드롭을 제외하고 반환한다")
+  void findAllByStatus_productSoftDeleted_excludesOrphanDrop() {
+    // given
+    Product liveProduct = persistProduct();
+    Product deletedProduct = persistProduct();
+    Drop liveDrop = dropRepository.save(dropOf(liveProduct));
+    dropRepository.save(dropOf(deletedProduct));
+    entityManager.flush();
+    softDeleteProduct(deletedProduct.getId());
+    entityManager.clear();
+
+    // when
+    List<Drop> drops = dropRepository.findAllByStatus(DropStatus.REGISTERED);
+
+    // then
+    assertThat(drops).extracting(Drop::getId).containsExactly(liveDrop.getId());
+  }
+
   @Nested
   @DisplayName("검색")
   class Search {
@@ -275,6 +294,13 @@ class DropRepositoryAdaptorTest {
         .totalQuantity(100)
         .openAt(Instant.parse("2026-07-01T00:00:00Z"))
         .build();
+  }
+
+  private void softDeleteProduct(UUID productId) {
+    entityManager
+        .createNativeQuery("update product.products set deleted_at = now() where id = :id")
+        .setParameter("id", productId)
+        .executeUpdate();
   }
 
   private Drop persistDrop(Product product, Instant openAt, Instant closeAt) {
