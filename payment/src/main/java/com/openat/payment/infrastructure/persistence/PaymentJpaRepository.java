@@ -15,7 +15,7 @@ public interface PaymentJpaRepository extends JpaRepository<PaymentJpaEntity, UU
 
     Optional<PaymentJpaEntity> findByIdempotencyKey(String idempotencyKey);
 
-    Optional<PaymentJpaEntity> findByOrderIdAndStatus(UUID orderId, Payment.Status status);
+    Optional<PaymentJpaEntity> findFirstByOrderIdAndStatusOrderByCreatedAtDesc(UUID orderId, Payment.Status status);
 
     Optional<PaymentJpaEntity> findByPgPaymentKeyHash(String pgPaymentKeyHash);
 

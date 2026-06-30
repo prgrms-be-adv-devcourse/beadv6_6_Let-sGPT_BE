@@ -37,7 +37,7 @@ public class PaymentRepositoryAdaptor implements PaymentRepository {
 
     @Override
     public Optional<Payment> findByOrderIdAndStatus(UUID orderId, Payment.Status status) {
-        return paymentJpaRepository.findByOrderIdAndStatus(orderId, status).map(PaymentJpaEntity::toDomain);
+        return paymentJpaRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc(orderId, status).map(PaymentJpaEntity::toDomain);
     }
 
     @Override
