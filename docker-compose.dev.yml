@@ -21,7 +21,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1000M
+          # 기본 config(shared_buffers 128M)로 실사용은 수백 MB 수준 → 상한을 낮춰
+          # nginx 추가분과 러너 구동 여유를 확보(container_memory.md).
+          memory: 768M
     restart: always
 
   kafka:
@@ -57,7 +59,26 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1000M
+          # 리프레시 토큰 저장 + 경량 캐시 용도라 1000M는 과할당 → 256M로 축소
+          # (nginx 추가분/러너 여유 확보, container_memory.md).
+          memory: 256M
+    restart: always
+
+  # 외부 공개 진입점(80). FE 정적(dist)을 서빙하고 /api·/auth·/v3/api-docs 등
+  # 백엔드 경로는 apigateway로 리버스 프록시한다. SG가 80/443만 열기 때문에
+  # 실질적인 게이트웨이 앞단. 이미지는 FE 레포 CI가 GHCR로 push(멀티스테이지:
+  # vite build → nginx). 로컬 정적 서빙은 docker run 스모크 테스트로 검증(deployplan.md).
+  nginx:
+    image: ${FRONTEND_IMAGE:-ghcr.io/prgrms-be-adv-devcourse/beadv6_6_lets-gpt_fe/frontend:latest}
+    container_name: dev-nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - apigateway
+    deploy:
+      resources:
+        limits:
+          memory: 128M
     restart: always
 
   # DB/Kafka 연결이 없는 순수 WebFlux 라우팅·필터링 게이트웨이라
