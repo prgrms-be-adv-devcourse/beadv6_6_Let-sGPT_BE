@@ -5,7 +5,9 @@ services:
     image: postgres:16
     container_name: dev-postgres
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${DB_USER}"]
+      # 컨테이너 내부엔 DB_USER가 아니라 POSTGRES_USER가 주입된다($${...}=컨테이너 런타임 평가).
+      # 기존 $${DB_USER}는 빈 값이라 pg_isready -U 인자 누락 → 항상 unhealthy가 되던 버그 수정.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 3s
       timeout: 3s
       retries: 5
