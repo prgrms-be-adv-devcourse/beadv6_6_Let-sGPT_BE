@@ -114,6 +114,10 @@ services:
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      # member는 ddl-auto=validate인데 Flyway/schema.sql이 없어 신규 DB에서 테이블 생성
+      # 수단이 없다 → 콜드부팅 시 'missing table' 크래시. product/order와 동일하게 update로
+      # override해 최초 기동 시 테이블 자동생성(팀 검토 후 정식 마이그레이션 도입 권장).
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
     depends_on:
       postgres:
         condition: service_healthy
