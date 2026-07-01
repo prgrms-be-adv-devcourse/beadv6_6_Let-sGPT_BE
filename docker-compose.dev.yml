@@ -118,9 +118,18 @@ services:
       # 수단이 없다 → 콜드부팅 시 'missing table' 크래시. product/order와 동일하게 update로
       # override해 최초 기동 시 테이블 자동생성(팀 검토 후 정식 마이그레이션 도입 권장).
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      # member는 Redis(리프레시 토큰) + JWT(RSA) 설정을 요구하는데 배선이 누락돼 있었다
+      # (application-compose.yml의 ${REDIS_*}/${JWT_*} 미해결 크래시). 값은 ENV_SECRETS에서 주입.
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      JWT_KEY_ID: ${JWT_KEY_ID}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     deploy:
       resources:
         limits:
