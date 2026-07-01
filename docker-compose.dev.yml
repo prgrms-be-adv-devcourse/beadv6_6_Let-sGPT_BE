@@ -222,9 +222,14 @@ services:
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      # settlement은 kafka 컨슈머/프로듀서를 쓰는데 KAFKA_BROKER 배선이 누락돼
+      # 기동 시 placeholder 미해결로 크래시하던 것을 수정.
+      KAFKA_BROKER: ${KAFKA_BROKER}
     depends_on:
       postgres:
         condition: service_healthy
+      kafka:
+        condition: service_started
     deploy:
       resources:
         limits:
