@@ -25,12 +25,17 @@ jobs:
         env:
           ENV_SECRETS: ${{ secrets.ENV_SECRETS }}
         run: |
-          echo "$ENV_SECRETS" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
+          # ENV_SECRETS가 JSON 오브젝트면 to_entries로, 아니면(KEY=VALUE 줄 형식) 그대로 사용.
+          if printf '%s' "$ENV_SECRETS" | jq -e 'type=="object"' >/dev/null 2>&1; then
+            printf '%s' "$ENV_SECRETS" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
+          else
+            printf '%s\n' "$ENV_SECRETS" > .env
+          fi
           # GHCR는 소문자만 허용. ENV_SECRETS의 (대문자) GITHUB_REPOSITORY를 제거하고
           # 소문자 값으로 재주입한다(docker compose는 --env-file 중복 시 first-wins라 삭제 필수).
           sed -i '/^GITHUB_REPOSITORY=/d' .env
           echo "GITHUB_REPOSITORY=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> .env
-          echo "--- .env keys (값 제외) ---"; cut -d= -f1 .env | sort | tr '\n' ' '; echo
+          echo "--- .env keys (값 제외) ---"; grep -oE '^[A-Za-z_]+=' .env | tr -d = | sort | tr '\n' ' '; echo
 
       - name: Compose up (BE pull + 전체 기동, FE는 박스 로컬 이미지 사용)
         run: |
