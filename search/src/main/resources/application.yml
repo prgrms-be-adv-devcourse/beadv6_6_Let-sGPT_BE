@@ -1,0 +1,25 @@
+server:
+  port: 9240
+
+# IntelliJ/Gradle bootRun 둘 다 작업 디렉토리가 모듈 폴더(search/)라
+# 한 단계 위(repo 루트)의 .env를 가리켜야 ${DB_USER} 같은 placeholder가 풀린다.
+springdotenv:
+  directory: ..
+
+spring:
+  profiles:
+    active: local
+  application:
+    name: search-service
+  jpa:
+    properties:
+      hibernate:
+        default_schema: search # 스키마 분리
+    hibernate:
+      ddl-auto: validate # compose/운영 기본값 — 스키마는 마이그레이션으로 관리
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
