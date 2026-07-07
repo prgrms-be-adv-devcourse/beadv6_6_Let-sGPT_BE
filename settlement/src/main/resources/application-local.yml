@@ -1,0 +1,21 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/openat
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+  kafka:
+    bootstrap-servers: localhost:29092
+
+services:
+  member:
+    url: http://localhost:9100
+  product:
+    url: http://localhost:9110
+  order:
+    url: http://localhost:9120
+  payment:
+    url: http://localhost:9130
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %5p ${PID:- } --- [%32t] %-40.40logger{39} : %m%n%wEx"

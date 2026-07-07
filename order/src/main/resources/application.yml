@@ -1,0 +1,38 @@
+server:
+  port: 9120
+
+
+spring:
+  kafka:
+    consumer:
+      group-id: order-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+  profiles:
+    active: local
+  application:
+    name: order-service
+  jpa:
+    properties:
+      hibernate:
+        default_schema: orders # 스키마 분리
+    hibernate:
+      ddl-auto: update
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+
+order:
+  kafka:
+    topic:
+      payment-complete: payment.completed.events
+      payment-failed: payment.failed.events
+      refund-completed: refund.completed.events
+      refund-failed: refund.failed.events
+      order-completed: order.completed.events

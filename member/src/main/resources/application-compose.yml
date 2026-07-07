@@ -1,0 +1,30 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}
+    username: ${DB_USER}                       # GitHub Secrets → 환경변수
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      # 신규 DB 테이블 자동생성(Flyway 미도입). base는 validate라 콜드부팅 시 'missing table'
+      # 크래시 → product/order와 동일하게 update. dev.yml env override와 동일 취지를 yml에 고정.
+      ddl-auto: update
+  sql:
+    init:
+      # role 시드 + 기본 admin 계정(admin@test.com) 시드. local과 달리 테이블이 persistent 하므로
+      # init-data.sql은 전부 멱등(ON CONFLICT / NOT EXISTS). base의 defer-datasource-initialization=true 로 DDL 이후 실행됨.
+      mode: always
+      data-locations: classpath:sql/init-data.sql
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+
+services:
+  order:
+    url: http://order:9120
+  product:
+    url: http://product:9110
+  payment:
+    url: http://payment:9130
+  settlement:
+    url: http://settlement:9140

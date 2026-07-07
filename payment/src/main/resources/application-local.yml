@@ -1,0 +1,21 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/openat
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+  kafka:
+    bootstrap-servers: localhost:29092
+
+pg:
+  client-key: localtest-dummy
+  secret-key: localtest-dummy
+
+services:
+  member:
+    url: http://localhost:9100
+  product:
+    url: http://localhost:9110
+  order:
+    url: http://localhost:9120
+  settlement:
+    url: http://localhost:9140

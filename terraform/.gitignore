@@ -1,0 +1,27 @@
+# Terraform 로컬 작업 파일
+# (.terraform.lock.hcl은 provider 버전을 고정하기 위해 커밋 대상에 포함한다)
+.terraform/
+
+# state 파일 (1단계 부트스트랩 때 로컬에 생성됨 - S3 backend 이전 후에는 불필요)
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# plan 출력 파일
+*.tfplan
+
+# ---------------------------------------------------------------------
+# *.tfvars 처리 가이드
+# ---------------------------------------------------------------------
+# terraform.tfvars(placeholder 값)는 커밋 대상이다. 단, 다음 값들을
+# 실제 값으로 채운 뒤에는 그 내용이 아래에 해당하지 않는지 확인할 것:
+#   - ssh_allowed_cidrs : 팀/개인 공인 IP가 노출됨 (민감도 낮지만 비공개 권장)
+#   - s3_bucket_name    : 실제 운영 버킷 이름 노출
+#   - ssh_public_keys   : 공개키는 git에 있어도 안전 (개인키 아님, 커밋 가능)
+#
+# 실제 환경별 값(개인 IP 등)을 분리해서 관리하고 싶다면 다음과 같은
+# 파일을 만들어 사용하고, 이 파일들만 git에서 제외한다.
+*.auto.tfvars
+*.tfvars.local
+secrets.tfvars
