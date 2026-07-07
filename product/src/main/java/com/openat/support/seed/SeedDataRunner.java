@@ -37,7 +37,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Slf4j
 @Component
-@Profile({"local", "dev"})
+@Profile({"local", "dev", "compose"})
 @Order(0)
 @RequiredArgsConstructor
 public class SeedDataRunner implements ApplicationRunner {
