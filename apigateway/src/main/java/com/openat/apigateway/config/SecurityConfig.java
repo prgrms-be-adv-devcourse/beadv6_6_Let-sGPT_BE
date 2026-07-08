@@ -80,6 +80,10 @@ public class SecurityConfig {
                         // member 공개 기능 (JWKS)
                         .pathMatchers("/auth/jwks").permitAll()
 
+                        // k8s readiness/liveness probe + Prometheus scrape — 클러스터 내부 전용
+                        // (Ingress는 /와 /api만 라우팅하므로 외부에 노출되지 않는 경로)
+                        .pathMatchers("/actuator/health/**", "/actuator/prometheus").permitAll()
+
                         // payment 웹훅 — Toss PG가 JWT 없이 직접 호출 (apigateway/docs/SECURITY_CONFIG_GUIDE.md 패턴)
                         // payment 라우트가 Path=/payment/**+StripPrefix=1(product/order/settlement와 동일 컨벤션,
                         // member만 예외)이라 Security 필터가 보는 실제 요청 경로도 /payment 접두사가 붙어야 매칭된다.

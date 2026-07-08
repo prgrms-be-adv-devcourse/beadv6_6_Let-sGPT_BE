@@ -50,3 +50,15 @@ product:
     topic: # member 발행 스토어 이벤트 소비(SellerStore 표시명 투영). 발행 측 토픽명은 member 와 합의 필요.
       seller-registered: seller_registered_events
       seller-updated: seller_updated_events
+
+
+# k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화

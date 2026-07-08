@@ -36,3 +36,15 @@ order:
       refund-completed: refund.completed.events
       refund-failed: refund.failed.events
       order-completed: order.completed.events
+
+
+# k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화
