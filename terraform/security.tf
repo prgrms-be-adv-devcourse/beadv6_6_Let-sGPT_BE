@@ -26,6 +26,31 @@ resource "aws_security_group" "app" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # k3s 2노드 클러스터: 노드 간 통신은 같은 SG 소속 인스턴스끼리만 허용(self).
+  ingress {
+    description = "k3s apiserver (node-to-node only)"
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    self        = true
+  }
+
+  ingress {
+    description = "k3s flannel VXLAN (node-to-node only)"
+    from_port   = 8472
+    to_port     = 8472
+    protocol    = "udp"
+    self        = true
+  }
+
+  ingress {
+    description = "k3s kubelet (node-to-node only, reused for Prometheus scrape)"
+    from_port   = 10250
+    to_port     = 10250
+    protocol    = "tcp"
+    self        = true
+  }
+
   egress {
     description = "Allow all outbound (including SSM Agent to AWS endpoints)"
     from_port   = 0

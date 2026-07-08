@@ -1,0 +1,55 @@
+# ★ S2: startup/readiness/liveness probe (actuator probes — replica>1 롤링 무유실의 전제)
+# ★ S5: prometheus.io/* 어노테이션 (7/10 Prometheus 구축 시 재배포 없이 scrape 대상 편입)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order
+  namespace: openat
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: order }
+  template:
+    metadata:
+      labels: { app: order }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9120"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: order
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order:latest
+          ports: [{ containerPort: 9120 }]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: app-secrets }
+          env:
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms400m -Xmx500m" }
+          # 기동 완료까지 최대 180초 유예(2vCPU에서 6개 JVM 동시 부팅 감안) — 이후 liveness로 전환
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9120 }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 9120 }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9120 }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            limits: { memory: "700Mi" }
+            requests: { cpu: "100m" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order
+  namespace: openat
+spec:
+  selector: { app: order }
+  ports: [{ port: 9120, targetPort: 9120 }]
