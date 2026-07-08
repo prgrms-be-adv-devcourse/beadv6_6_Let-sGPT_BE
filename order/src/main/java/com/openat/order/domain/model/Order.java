@@ -62,7 +62,7 @@ public class Order {
     // TODO(order-schema): productName is no longer part of the product integration contract.
     // Keep the column populated for existing DB schemas where product_name is NOT NULL.
     @Column(name = "product_name", nullable = false)
-    private String productName = "";
+    private String productName;
 
     @Column(nullable = false)
     private int quantity;
