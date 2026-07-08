@@ -128,6 +128,27 @@ class OrderServiceTest {
     }
 
     @Test
+    @DisplayName("같은 멱등키의 기존 주문이 실패 상태면 성공 재응답 대신 원래 실패 에러를 반환한다")
+    void createOrder_whenExistingOrderFailed_throwsOriginalFailure() {
+        // given
+        UUID memberId = UUID.randomUUID();
+        CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
+        Order existing = createOrder(memberId, command.dropId(), snapshot(command.dropId()), command.quantity(), command.idempotencyKey());
+        existing.fail(OrderFailCode.SOLD_OUT, "재고가 없습니다.", Instant.parse("2026-06-26T00:01:00Z"));
+
+        when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
+                .thenReturn(Optional.of(existing));
+
+        // when
+        BusinessException ex = assertThrows(BusinessException.class, () -> orderService.createOrder(memberId, command));
+
+        // then
+        assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.SOLD_OUT);
+        verify(productIntegrationPort, never()).fetchOrderSnapshot(any());
+        verify(productIntegrationPort, never()).decreaseStock(any(), any());
+    }
+
+    @Test
     @DisplayName("주문 생성 시 주문 표시명이 없으면 잘못된 요청으로 처리한다")
     void createOrder_whenOrderNameMissing_throwsInvalidInput() {
         // given

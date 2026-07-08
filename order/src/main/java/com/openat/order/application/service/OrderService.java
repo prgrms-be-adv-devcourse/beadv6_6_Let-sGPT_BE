@@ -48,8 +48,7 @@ public class OrderService implements OrderUseCase {
 
         Order existing = findExisting(memberId, command.idempotencyKey());
         if (existing != null) {
-            validateIdempotentReplay(existing, command);
-            return CreateOrderResult.from(existing, false);
+            return replayExisting(existing, command);
         }
 
         Instant now = Instant.now();
@@ -57,8 +56,7 @@ public class OrderService implements OrderUseCase {
         PendingOrderCreation creation = createPendingOrder(memberId, command, snapshot, now);
         Order order = creation.order();
         if (!creation.created()) {
-            validateIdempotentReplay(order, command);
-            return CreateOrderResult.from(order, false);
+            return replayExisting(order, command);
         }
 
         try {
@@ -143,6 +141,12 @@ public class OrderService implements OrderUseCase {
                 .orElse(null);
     }
 
+    private CreateOrderResult replayExisting(Order existing, CreateOrderCommand command) {
+        validateIdempotentReplay(existing, command);
+        rejectFailedReplay(existing);
+        return CreateOrderResult.from(existing, false);
+    }
+
     private void validateIdempotentReplay(Order existing, CreateOrderCommand command) {
         if (!existing.getDropId().equals(command.dropId())
                 || existing.getQuantity() != command.quantity()
@@ -152,6 +156,20 @@ public class OrderService implements OrderUseCase {
                     "동일 멱등키의 기존 주문과 요청 본문이 다릅니다: orderId=%s".formatted(existing.getId())
             );
         }
+    }
+
+    // 실패로 종결된 주문의 멱등 재응답이 성공(200)으로 뒤집히지 않도록, 원래 실패와 동일한 에러를 반환한다.
+    private void rejectFailedReplay(Order existing) {
+        if (existing.getStatus() != OrderStatus.FAILED) {
+            return;
+        }
+        OrderErrorCode errorCode = existing.getFailCode() != null
+                ? toOrderErrorCode(existing.getFailCode())
+                : OrderErrorCode.INVALID_STATUS;
+        if (StringUtils.hasText(existing.getFailMessage())) {
+            throw new BusinessException(errorCode, existing.getFailMessage());
+        }
+        throw new BusinessException(errorCode);
     }
 
     private Order getOwnedOrder(UUID memberId, UUID orderId) {
