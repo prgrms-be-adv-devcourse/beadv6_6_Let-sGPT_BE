@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1680" viewBox="0 0 1900 1680">
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font: 700 34px Arial, sans-serif; fill: #111827; }
+      .subtitle { font: 400 18px Arial, sans-serif; fill: #4b5563; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 2; rx: 8; }
+      .boxText { font: 700 18px Arial, sans-serif; fill: #111827; text-anchor: middle; dominant-baseline: middle; }
+      .lane { stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 8 8; }
+      .section { fill: #e0f2fe; stroke: #0284c7; stroke-width: 2; rx: 10; opacity: 0.72; }
+      .sectionUpdate { fill: #dcfce7; stroke: #16a34a; }
+      .sectionDelete { fill: #fee2e2; stroke: #dc2626; }
+      .sectionSearch { fill: #fef3c7; stroke: #d97706; }
+      .sectionLabel { font: 700 18px Arial, sans-serif; fill: #0f172a; }
+      .msg { stroke: #1f2937; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .reply { stroke: #64748b; stroke-width: 2; fill: none; stroke-dasharray: 7 6; marker-end: url(#arrowGray); }
+      .msgText { font: 16px Arial, sans-serif; fill: #111827; text-anchor: middle; }
+      .small { font: 14px Arial, sans-serif; fill: #475569; text-anchor: middle; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2937"/>
+    </marker>
+    <marker id="arrowGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1900" height="1680"/>
+  <text class="title" x="950" y="54" text-anchor="middle">상품 Kafka 색인 및 통합검색 시퀀스</text>
+  <text class="subtitle" x="950" y="86" text-anchor="middle">product-created / product-updated / product-deleted 토픽을 search 모듈이 받아 Elasticsearch products 인덱스에 반영</text>
+
+  <!-- Participant boxes -->
+  <g>
+    <rect class="box" x="35" y="120" width="130" height="54"/>
+    <text class="boxText" x="100" y="147">사용자</text>
+
+    <rect class="box" x="205" y="120" width="130" height="54"/>
+    <text class="boxText" x="270" y="147">상품 서비스</text>
+
+    <rect class="box" x="375" y="120" width="130" height="54"/>
+    <text class="boxText" x="440" y="147">카프카 발행</text>
+
+    <rect class="box" x="545" y="120" width="130" height="54"/>
+    <text class="boxText" x="610" y="147">카프카 토픽</text>
+
+    <rect class="box" x="715" y="120" width="130" height="54"/>
+    <text class="boxText" x="780" y="147">검색 컨슈머</text>
+
+    <rect class="box" x="885" y="120" width="130" height="54"/>
+    <text class="boxText" x="950" y="147">데이터 변환</text>
+
+    <rect class="box" x="1055" y="120" width="130" height="54"/>
+    <text class="boxText" x="1120" y="147">임베딩 생성</text>
+
+    <rect class="box" x="1225" y="120" width="130" height="54"/>
+    <text class="boxText" x="1290" y="147">색인 저장소</text>
+
+    <rect class="box" x="1395" y="120" width="130" height="54"/>
+    <text class="boxText" x="1460" y="147">상품 인덱스</text>
+
+    <rect class="box" x="1565" y="120" width="130" height="54"/>
+    <text class="boxText" x="1630" y="147">검색 API</text>
+  </g>
+
+  <!-- Lifelines -->
+  <g>
+    <line class="lane" x1="100" y1="174" x2="100" y2="1605"/>
+    <line class="lane" x1="270" y1="174" x2="270" y2="1605"/>
+    <line class="lane" x1="440" y1="174" x2="440" y2="1605"/>
+    <line class="lane" x1="610" y1="174" x2="610" y2="1605"/>
+    <line class="lane" x1="780" y1="174" x2="780" y2="1605"/>
+    <line class="lane" x1="950" y1="174" x2="950" y2="1605"/>
+    <line class="lane" x1="1120" y1="174" x2="1120" y2="1605"/>
+    <line class="lane" x1="1290" y1="174" x2="1290" y2="1605"/>
+    <line class="lane" x1="1460" y1="174" x2="1460" y2="1605"/>
+    <line class="lane" x1="1630" y1="174" x2="1630" y2="1605"/>
+  </g>
+
+  <!-- Request entry -->
+  <line class="msg" x1="100" y1="220" x2="270" y2="220"/>
+  <text class="msgText" x="185" y="210">상품 등록/수정/삭제 요청</text>
+
+  <!-- Create section -->
+  <rect class="section" x="55" y="250" width="1510" height="330"/>
+  <text class="sectionLabel" x="75" y="278">상품 등록: product.created.events</text>
+  <line class="msg" x1="270" y1="315" x2="440" y2="315"/>
+  <text class="msgText" x="355" y="305">등록 이벤트 생성</text>
+  <line class="msg" x1="440" y1="355" x2="610" y2="355"/>
+  <text class="msgText" x="525" y="345">토픽 발행</text>
+  <line class="reply" x1="610" y1="395" x2="780" y2="395"/>
+  <text class="msgText" x="695" y="385">등록 메시지 수신</text>
+  <line class="msg" x1="780" y1="435" x2="950" y2="435"/>
+  <text class="msgText" x="865" y="425">JSON → 상품 문서</text>
+  <line class="reply" x1="950" y1="475" x2="780" y2="475"/>
+  <text class="msgText" x="865" y="465">ProductDocument</text>
+  <line class="msg" x1="780" y1="515" x2="1120" y2="515"/>
+  <text class="msgText" x="950" y="505">상품명/설명 벡터 생성</text>
+  <line class="msg" x1="780" y1="555" x2="1290" y2="555"/>
+  <text class="msgText" x="1035" y="545">문서 저장</text>
+  <line class="msg" x1="1290" y1="555" x2="1460" y2="555"/>
+  <text class="msgText" x="1375" y="545">products 색인</text>
+
+  <!-- Update section -->
+  <rect class="section sectionUpdate" x="55" y="610" width="1510" height="330"/>
+  <text class="sectionLabel" x="75" y="638">상품 수정: product.updated.events</text>
+  <line class="msg" x1="270" y1="675" x2="440" y2="675"/>
+  <text class="msgText" x="355" y="665">수정 이벤트 생성</text>
+  <line class="msg" x1="440" y1="715" x2="610" y2="715"/>
+  <text class="msgText" x="525" y="705">토픽 발행</text>
+  <line class="reply" x1="610" y1="755" x2="780" y2="755"/>
+  <text class="msgText" x="695" y="745">수정 메시지 수신</text>
+  <line class="msg" x1="780" y1="795" x2="950" y2="795"/>
+  <text class="msgText" x="865" y="785">JSON → 상품 문서</text>
+  <line class="reply" x1="950" y1="835" x2="780" y2="835"/>
+  <text class="msgText" x="865" y="825">ProductDocument</text>
+  <line class="msg" x1="780" y1="875" x2="1120" y2="875"/>
+  <text class="msgText" x="950" y="865">embedding 재생성</text>
+  <line class="msg" x1="780" y1="915" x2="1290" y2="915"/>
+  <text class="msgText" x="1035" y="905">문서 저장</text>
+  <line class="msg" x1="1290" y1="915" x2="1460" y2="915"/>
+  <text class="msgText" x="1375" y="905">products 재색인</text>
+
+  <!-- Delete section -->
+  <rect class="section sectionDelete" x="55" y="970" width="1510" height="240"/>
+  <text class="sectionLabel" x="75" y="998">상품 삭제: product.deleted.events</text>
+  <line class="msg" x1="270" y1="1035" x2="440" y2="1035"/>
+  <text class="msgText" x="355" y="1025">삭제 이벤트 생성</text>
+  <line class="msg" x1="440" y1="1075" x2="610" y2="1075"/>
+  <text class="msgText" x="525" y="1065">토픽 발행</text>
+  <line class="reply" x1="610" y1="1115" x2="780" y2="1115"/>
+  <text class="msgText" x="695" y="1105">삭제 메시지 수신</text>
+  <line class="msg" x1="780" y1="1155" x2="950" y2="1155"/>
+  <text class="msgText" x="865" y="1145">JSON에서 id 추출</text>
+  <line class="msg" x1="780" y1="1195" x2="1290" y2="1195"/>
+  <text class="msgText" x="1035" y="1185">deleteById(id)</text>
+  <line class="msg" x1="1290" y1="1195" x2="1460" y2="1195"/>
+  <text class="msgText" x="1375" y="1185">문서 삭제</text>
+
+  <!-- Search section -->
+  <rect class="section sectionSearch" x="55" y="1240" width="1650" height="260"/>
+  <text class="sectionLabel" x="75" y="1268">통합검색: POST /api/v1/searchs/search</text>
+  <line class="msg" x1="100" y1="1310" x2="1630" y2="1310"/>
+  <text class="msgText" x="865" y="1300">자연어 query 검색 요청</text>
+  <line class="msg" x1="1630" y1="1350" x2="1120" y2="1350"/>
+  <text class="msgText" x="1375" y="1340">query를 벡터로 변환</text>
+  <line class="reply" x1="1120" y1="1390" x2="1630" y2="1390"/>
+  <text class="msgText" x="1375" y="1380">queryVector</text>
+  <line class="msg" x1="1630" y1="1430" x2="1460" y2="1430"/>
+  <text class="msgText" x="1545" y="1420">벡터 검색</text>
+  <line class="reply" x1="1460" y1="1470" x2="1630" y2="1470"/>
+  <text class="msgText" x="1545" y="1460">후보 상품 + score</text>
+  <line class="reply" x1="1630" y1="1510" x2="100" y2="1510"/>
+  <text class="msgText" x="865" y="1500">PageResponse 검색 결과</text>
+
+  <!-- Bottom participant boxes -->
+  <g>
+    <rect class="box" x="35" y="1585" width="130" height="54"/>
+    <text class="boxText" x="100" y="1612">사용자</text>
+    <rect class="box" x="205" y="1585" width="130" height="54"/>
+    <text class="boxText" x="270" y="1612">상품 서비스</text>
+    <rect class="box" x="375" y="1585" width="130" height="54"/>
+    <text class="boxText" x="440" y="1612">카프카 발행</text>
+    <rect class="box" x="545" y="1585" width="130" height="54"/>
+    <text class="boxText" x="610" y="1612">카프카 토픽</text>
+    <rect class="box" x="715" y="1585" width="130" height="54"/>
+    <text class="boxText" x="780" y="1612">검색 컨슈머</text>
+    <rect class="box" x="885" y="1585" width="130" height="54"/>
+    <text class="boxText" x="950" y="1612">데이터 변환</text>
+    <rect class="box" x="1055" y="1585" width="130" height="54"/>
+    <text class="boxText" x="1120" y="1612">임베딩 생성</text>
+    <rect class="box" x="1225" y="1585" width="130" height="54"/>
+    <text class="boxText" x="1290" y="1612">색인 저장소</text>
+    <rect class="box" x="1395" y="1585" width="130" height="54"/>
+    <text class="boxText" x="1460" y="1612">상품 인덱스</text>
+    <rect class="box" x="1565" y="1585" width="130" height="54"/>
+    <text class="boxText" x="1630" y="1612">검색 API</text>
+  </g>
+</svg>

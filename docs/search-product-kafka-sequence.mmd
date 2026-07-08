@@ -1,0 +1,52 @@
+sequenceDiagram
+    autonumber
+
+    participant User as 사용자
+    participant Product as 상품 서비스
+    participant Producer as 카프카 발행
+    participant Kafka as 카프카 토픽
+    participant Consumer as 검색 컨슈머
+    participant Mapper as 데이터 변환
+    participant Embedding as 임베딩 생성
+    participant ESRepo as 색인 저장소
+    participant ES as 상품 인덱스
+    participant SearchApi as 검색 API
+
+    User->>Product: 상품 등록/수정/삭제 요청
+
+    alt 상품 등록
+        Product->>Producer: 등록 이벤트 생성
+        Producer->>Kafka: product.created.events 발행
+        Kafka-->>Consumer: 등록 메시지 수신
+        Consumer->>Mapper: JSON을 상품 문서로 변환
+        Mapper-->>Consumer: ProductDocument
+        Consumer->>Embedding: 상품명/설명 벡터 생성
+        Embedding-->>Consumer: embedding 포함 문서
+        Consumer->>ESRepo: 문서 저장
+        ESRepo->>ES: products 색인
+    else 상품 수정
+        Product->>Producer: 수정 이벤트 생성
+        Producer->>Kafka: product.updated.events 발행
+        Kafka-->>Consumer: 수정 메시지 수신
+        Consumer->>Mapper: JSON을 상품 문서로 변환
+        Mapper-->>Consumer: ProductDocument
+        Consumer->>Embedding: 상품명/설명 벡터 재생성
+        Embedding-->>Consumer: embedding 포함 문서
+        Consumer->>ESRepo: 문서 저장
+        ESRepo->>ES: products 재색인
+    else 상품 삭제
+        Product->>Producer: 삭제 이벤트 생성
+        Producer->>Kafka: product.deleted.events 발행
+        Kafka-->>Consumer: 삭제 메시지 수신
+        Consumer->>Mapper: JSON에서 id 추출
+        Mapper-->>Consumer: productId
+        Consumer->>ESRepo: id로 삭제
+        ESRepo->>ES: products 문서 삭제
+    end
+
+    User->>SearchApi: 자연어 통합검색 요청
+    SearchApi->>Embedding: query를 벡터로 변환
+    Embedding-->>SearchApi: queryVector
+    SearchApi->>ES: embedding 기준 벡터 검색
+    ES-->>SearchApi: 후보 상품과 score
+    SearchApi-->>User: 검색 결과 응답

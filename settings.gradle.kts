@@ -5,6 +5,7 @@ include("member")
 include("order")
 include("payment")
 include("product")
+include("search")
 include("settlement")
 
 include("apigateway")

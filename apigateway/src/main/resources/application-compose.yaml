@@ -20,6 +20,10 @@ spring:
               uri: http://member:9100
               predicates:
                 - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks
+            - id: search-api
+              uri: http://search:9240
+              predicates:
+                - Path=/api/v1/searchs/**
             - id: product-api
               uri: http://product:9110
               predicates:
@@ -28,6 +32,12 @@ spring:
               uri: http://product:9110
               predicates:
                 - Path=/product/**
+              filters:
+                - StripPrefix=1
+            - id: search
+              uri: http://search:9240
+              predicates:
+                - Path=/search/**
               filters:
                 - StripPrefix=1
             - id: order-api
@@ -74,6 +84,7 @@ openapi:
     services:
       member-service: http://member:9100/api-docs
       product-service: http://product:9110/api-docs
+      search-service: http://search:9240/api-docs
       order-service: http://order:9120/api-docs
       payment-service: http://payment:9130/api-docs
       settlement-service: http://settlement:9140/api-docs
