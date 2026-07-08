@@ -27,7 +27,7 @@ spring:
             - id: product-api
               uri: http://product:9110
               predicates:
-                - Path=/api/v1/products/**
+                - Path=/api/v1/products/**,/api/v1/drops/**,/api/v1/categories/**
             - id: product
               uri: http://product:9110
               predicates:

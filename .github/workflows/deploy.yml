@@ -44,13 +44,23 @@ jobs:
             echo "재기동 대상: $SERVICES"
           fi
 
-      # ENV_SECRETS(JSON) → .env 파일로 변환. 이 값만 실제 비밀(DB/Kafka/Redis
+      # ENV_SECRETS(JSON 또는 KEY=VALUE) → .env 파일로 변환. 이 값만 실제 비밀(DB/Kafka/Redis
       # 자격증명)이라 secrets에 유지. 러너가 이미 이 박스에 있으니 전송 단계가 없다.
-      - name: Render .env from ENV_SECRETS
+      - name: Render .env from ENV_SECRETS (+ GHCR repo 소문자 보정)
         if: steps.services.outputs.list != ''
         env:
           ENV_SECRETS: ${{ secrets.ENV_SECRETS }}
-        run: echo "$ENV_SECRETS" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
+        run: |
+          # ENV_SECRETS가 JSON 오브젝트면 to_entries로, 아니면(KEY=VALUE 줄 형식) 그대로 사용.
+          if printf '%s' "$ENV_SECRETS" | jq -e 'type=="object"' >/dev/null 2>&1; then
+            printf '%s' "$ENV_SECRETS" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
+          else
+            printf '%s\n' "$ENV_SECRETS" > .env
+          fi
+          # GHCR는 소문자만 허용. ENV_SECRETS의 (대문자) GITHUB_REPOSITORY를 제거하고
+          # 소문자 값으로 재주입한다(docker compose는 --env-file 중복 시 first-wins라 삭제 필수).
+          sed -i '/^GITHUB_REPOSITORY=/d' .env
+          echo "GITHUB_REPOSITORY=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> .env
 
       # 변경된 도메인만 pull/재기동 — 나머지(postgres/kafka/redis, 변경 없는
       # 다른 도메인)는 그대로 유지. common이 바뀐 경우엔 매트릭스 자체가
@@ -58,6 +68,9 @@ jobs:
       - name: docker compose pull & restart changed services
         if: steps.services.outputs.list != ''
         run: |
+          # ⚠️ Actions가 GITHUB_REPOSITORY를 대문자로 자동 주입하고, docker compose는
+          # shell 환경변수를 --env-file보다 우선한다 → 여기서 소문자로 override 필수.
+          export GITHUB_REPOSITORY="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
           SERVICES="${{ steps.services.outputs.list }}"
           docker compose -f docker-compose.dev.yml --env-file .env pull $SERVICES
           docker compose -f docker-compose.dev.yml --env-file .env up -d $SERVICES
