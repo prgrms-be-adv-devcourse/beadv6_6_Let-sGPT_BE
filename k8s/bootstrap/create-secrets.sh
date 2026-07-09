@@ -22,7 +22,7 @@ set -a
 . "$ENV_FILE"
 set +a
 
-for key in DB_USER DB_PASSWORD JWT_KEY_ID JWT_PRIVATE_KEY JWT_PUBLIC_KEY PG_CLIENT_KEY PG_SECRET_KEY PAYMENT_FIELD_ENCRYPTION_KEY; do
+for key in DB_USER DB_PASSWORD JWT_KEY_ID JWT_PRIVATE_KEY JWT_PUBLIC_KEY PG_CLIENT_KEY PG_SECRET_KEY PAYMENT_FIELD_ENCRYPTION_KEY OPENAI_API_KEY; do
   [ -n "${!key:-}" ] || { echo "ERROR: $ENV_FILE 에 $key 없음/빈값 — 실패를 조용히 넘기지 않는다" >&2; exit 1; }
 done
 
@@ -35,6 +35,7 @@ done
   --from-literal=PG_CLIENT_KEY="$PG_CLIENT_KEY" \
   --from-literal=PG_SECRET_KEY="$PG_SECRET_KEY" \
   --from-literal=PAYMENT_FIELD_ENCRYPTION_KEY="$PAYMENT_FIELD_ENCRYPTION_KEY" \
+  --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
   --dry-run=client -o yaml | "$KUBECTL" apply -f -
 echo "OK: app-secrets 적용 완료 (namespace=$NS)"
 

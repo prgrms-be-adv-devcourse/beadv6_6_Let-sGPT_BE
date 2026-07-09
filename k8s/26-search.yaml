@@ -1,0 +1,60 @@
+# final 노드(t3.medium, tier=observability) 전용 배치 — Elasticsearch와 동거(지연 최소화),
+# semi(hotpath) 노드는 이미 메모리 여유가 없어(Q84) 여기 배치하면 안 됨.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search
+  namespace: openat
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: search }
+  template:
+    metadata:
+      labels: { app: search }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9240"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: search
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/search:latest
+          ports: [{ containerPort: 9240 }]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: app-secrets }
+          env:
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms400m -Xmx500m" }
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9240 }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 9240 }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9240 }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            limits: { memory: "700Mi" }
+            requests: { cpu: "100m" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: search
+  namespace: openat
+spec:
+  selector: { app: search }
+  ports: [{ port: 9240, targetPort: 9240 }]

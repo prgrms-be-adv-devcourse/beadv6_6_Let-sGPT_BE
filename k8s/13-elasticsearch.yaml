@@ -1,0 +1,52 @@
+# final 노드(t3.medium, tier=observability) 전용 배치 — Q74 결론(c4_model_diagrams.md §2~3).
+# semi(hotpath) 노드는 이미 메모리 여유가 없어 여기 배치하면 안 됨.
+# 이미지/JVM 옵션은 docker-compose.dev.yml의 elasticsearch 서비스와 동일하게 맞춤(로컬/운영 정합).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: openat
+spec:
+  serviceName: elasticsearch
+  replicas: 1
+  selector:
+    matchLabels: { app: elasticsearch }
+  template:
+    metadata:
+      labels: { app: elasticsearch }
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:9.2.5
+          env:
+            - { name: discovery.type, value: single-node }
+            - { name: xpack.security.enabled, value: "false" }
+            - { name: ES_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
+          ports: [{ containerPort: 9200 }]
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "curl -sf http://localhost:9200/_cluster/health"]
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            limits: { memory: "1000Mi" }
+            requests: { cpu: "100m" }
+          volumeMounts:
+            - { name: es-data, mountPath: /usr/share/elasticsearch/data }
+  volumeClaimTemplates:
+    - metadata: { name: es-data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: openat
+spec:
+  selector: { app: elasticsearch }
+  ports: [{ port: 9200, targetPort: 9200 }]

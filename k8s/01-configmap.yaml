@@ -14,6 +14,7 @@ data:
   KAFKA_BROKER: "kafka:9092"
   REDIS_HOST: "redis"
   REDIS_PORT: "6379"
+  ELASTICSEARCH_URIS: "http://elasticsearch:9200"
 ---
 # postgres 최초 기동(빈 PVC) 시 docker-entrypoint-initdb.d로 실행되는 스키마 시드.
 # compose의 ./db/init 바인드마운트를 대체한다. 내용은 db/init/01-schemas.sql과 동일 유지할 것.
