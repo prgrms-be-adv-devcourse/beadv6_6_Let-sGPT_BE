@@ -72,6 +72,17 @@ search:
       product-updated: product.updated.events
       product-deleted: product.deleted.events
 
+# k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 ---
 spring:
   config:
