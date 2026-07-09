@@ -1,0 +1,64 @@
+# 남은 4개 컴포넌트(server/repo-server/application-controller/redis) 전부 medium 노드
+# (tier=observability, taint dedicated=observability:NoSchedule)로 배치 + memory limit 부여
+# (Q74 확정 스케줄링 규약, argocd_ci_smoke_research §3.4). 기본 install.yaml은 이 4개 컨테이너
+# 전부 resources 미설정(무제한)이라 limit만 추가하며 기존 필드는 건드리지 않는다.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-redis
+spec:
+  template:
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      containers:
+        - name: redis
+          resources:
+            limits: { memory: "64Mi" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  template:
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      containers:
+        - name: argocd-repo-server
+          resources:
+            limits: { memory: "256Mi" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-server
+spec:
+  template:
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      containers:
+        - name: argocd-server
+          resources:
+            limits: { memory: "128Mi" }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: argocd-application-controller
+spec:
+  template:
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      containers:
+        - name: argocd-application-controller
+          resources:
+            limits: { memory: "256Mi" }
