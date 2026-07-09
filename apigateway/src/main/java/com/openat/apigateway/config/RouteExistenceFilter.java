@@ -31,7 +31,10 @@ public class RouteExistenceFilter implements WebFilter {
             "/swagger-ui.html",
             "/swagger-ui/**",
             "/v3/api-docs/**",
-            "/webjars/**"
+            "/webjars/**",
+            // k8s readiness/liveness probe + Prometheus scrape — 게이트웨이 자체 로컬 엔드포인트라
+            // 프록시 라우트로 등록돼 있지 않음. 여기 빠지면 라우트 미존재로 간주돼 404로 막힘.
+            "/actuator/**"
     );
 
     private final RouteLocator routeLocator;
