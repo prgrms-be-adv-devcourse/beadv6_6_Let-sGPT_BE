@@ -1,0 +1,24 @@
+name: GHCR-PAT-expiry-check
+
+# 정적 PAT(GHCR_PULL_PAT)는 스스로 회전하지 못한다(Q83-6 층1). 조용히 만료돼 kubelet pull이
+# 끊기는 것만은 막기 위해, 매주 실제 pull 권한을 검증하고 실패 시 시끄럽게 알린다.
+# 실패하면 재발급 → GHCR_PULL_PAT 갱신 → CD 재실행(create-secrets 멱등)으로 회전 완료.
+on:
+  schedule:
+    - cron: "0 0 * * 1"   # 매주 월 00:00 UTC
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail loudly if GHCR_PULL_PAT can't pull
+        run: |
+          echo "${{ secrets.GHCR_PULL_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          # payment 이미지는 항상 존재(가장 안정) — manifest inspect로 pull 권한 확인
+          IMG="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/payment:latest"
+          if ! docker manifest inspect "$IMG" >/dev/null 2>&1; then
+            echo "::error::GHCR_PULL_PAT로 $IMG pull 실패 — PAT 만료/폐기 의심. 재발급 후 GHCR_PULL_PAT 갱신 필요."
+            exit 1
+          fi
+          echo "OK: GHCR_PULL_PAT 유효 (pull 권한 확인됨)"

@@ -52,6 +52,13 @@ resource "aws_instance" "app" {
     deployer_user = var.deployer_user
   })
 
+  # most_recent AMI 조회 결과가 갱신될 때마다 기존 인스턴스가 교체(destroy+create)되는
+  # 것을 차단 — 신규 인스턴스는 생성 시점의 최신 AMI를 쓰고, 기존 인스턴스는 유지된다.
+  # (2026-07-08 final 노드 추가 시 semi가 신형 AMI로 강제 교체되려던 것을 발견)
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
   tags = {
     Name    = "${var.project_name}-${each.key}"
     project = var.project_name

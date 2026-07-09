@@ -74,3 +74,13 @@ variable "s3_app_prefix" {
   type        = string
   default     = "app/"
 }
+
+variable "s3_ops_prefix" {
+  description = <<-EOT
+    EC2 인스턴스 프로파일이 읽기/쓰기 가능한 "운영 산출물" 전용 S3 prefix
+    (k3s 매니페스트 등 배포 산출물). app_prefix(유저 데이터)와 물리적으로 분리한다.
+    '/'로 끝나는 순수 prefix만 지정한다 (예: "ops/"). 와일드카드는 IAM에서 자동 부여.
+  EOT
+  type        = string
+  default     = "ops/"
+}

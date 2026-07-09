@@ -1,0 +1,32 @@
+# 비민감 설정값 (k3s_2node_cluster_plan.md §4-2)
+# 호스트네임(postgres/kafka/redis)은 compose 네트워크 별칭과 동일한 k8s Service 이름을
+# 사용하므로 애플리케이션 설정 변경 없이 그대로 통과한다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: openat
+data:
+  SPRING_PROFILES_ACTIVE: "compose"
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_NAME: "openat"
+  KAFKA_BROKER: "kafka:9092"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  ELASTICSEARCH_URIS: "http://elasticsearch:9200"
+---
+# postgres 최초 기동(빈 PVC) 시 docker-entrypoint-initdb.d로 실행되는 스키마 시드.
+# compose의 ./db/init 바인드마운트를 대체한다. 내용은 db/init/01-schemas.sql과 동일 유지할 것.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-init
+  namespace: openat
+data:
+  01-schemas.sql: |
+    CREATE SCHEMA IF NOT EXISTS member;
+    CREATE SCHEMA IF NOT EXISTS product;
+    CREATE SCHEMA IF NOT EXISTS orders;
+    CREATE SCHEMA IF NOT EXISTS payment;
+    CREATE SCHEMA IF NOT EXISTS settlement;

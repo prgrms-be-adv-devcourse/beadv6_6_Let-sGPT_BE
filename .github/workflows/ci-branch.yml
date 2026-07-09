@@ -28,6 +28,7 @@ jobs:
             payment: ['**/payment/**']
             product: ['**/product/**']
             settlement: ['**/settlement/**']
+            search: ['**/search/**']
 
       - name: Resolve build matrix
         id: set-matrix
