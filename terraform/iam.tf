@@ -38,7 +38,8 @@ data "aws_iam_policy_document" "ec2_s3_access" {
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["${var.s3_app_prefix}*"]
+      # app/ = 유저 데이터, ops/ = 운영 산출물(k3s 매니페스트 등). 둘 다 least-privilege 유지.
+      values = ["${var.s3_app_prefix}*", "${var.s3_ops_prefix}*"]
     }
   }
 
@@ -50,7 +51,10 @@ data "aws_iam_policy_document" "ec2_s3_access" {
       "s3:PutObject",
       "s3:DeleteObject",
     ]
-    resources = ["${aws_s3_bucket.this.arn}/${var.s3_app_prefix}*"]
+    resources = [
+      "${aws_s3_bucket.this.arn}/${var.s3_app_prefix}*",
+      "${aws_s3_bucket.this.arn}/${var.s3_ops_prefix}*",
+    ]
   }
 }
 

@@ -27,7 +27,9 @@ public class AiImageService {
   }
 
   private String normalizeAnalyzePrompt(String prompt) {
-    return (prompt == null || prompt.isBlank()) ? "너는 직업이 MD 야. 벡터 검색으로 사용하기 위해 최적화된 이미지 분석 해줘." : prompt.trim();
+    return (prompt == null || prompt.isBlank())
+        ? "너는 직업이 MD 야. 벡터 검색으로 사용하기 위해 최적화된 이미지 분석 해줘."
+        : prompt.trim();
   }
 
   private String normalizeGeneratePrompt(String prompt) {

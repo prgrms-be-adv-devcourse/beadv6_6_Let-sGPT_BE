@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# k8s Secret 부트스트랩 (최초 1회 수동 — 7/9 CD에서 CI 자동화로 교체 예정)
+#
+# 사용법:
+#   ./create-secrets.sh <.env 경로>            # app-secrets 생성/갱신
+#   GHCR_USER=<github id> GHCR_PAT=<read:packages PAT> ./create-secrets.sh <.env 경로>
+#                                              # + ghcr-pull(이미지 pull 시크릿)도 생성/갱신
+#
+# 값은 기존 .env/GitHub ENV_SECRETS에서 그대로 사용(신규 발급 아님).
+set -euo pipefail
+
+ENV_FILE="${1:?사용법: $0 <.env 경로>}"
+NS=openat
+# 러너/서버 환경에 따라 kubectl 경로가 다름(k3s는 `k3s kubectl`). 기본은 kubectl, 필요 시 override.
+KUBECTL="${KUBECTL:-kubectl}"
+
+[ -f "$ENV_FILE" ] || { echo "ERROR: $ENV_FILE 없음" >&2; exit 1; }
+
+# .env는 compose --env-file 포맷(KEY=VALUE, 단일 라인) — 민감키만 추출
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
+
+for key in DB_USER DB_PASSWORD JWT_KEY_ID JWT_PRIVATE_KEY JWT_PUBLIC_KEY PG_CLIENT_KEY PG_SECRET_KEY PAYMENT_FIELD_ENCRYPTION_KEY OPENAI_API_KEY; do
+  [ -n "${!key:-}" ] || { echo "ERROR: $ENV_FILE 에 $key 없음/빈값 — 실패를 조용히 넘기지 않는다" >&2; exit 1; }
+done
+
+"$KUBECTL" create secret generic app-secrets -n "$NS" \
+  --from-literal=DB_USER="$DB_USER" \
+  --from-literal=DB_PASSWORD="$DB_PASSWORD" \
+  --from-literal=JWT_KEY_ID="$JWT_KEY_ID" \
+  --from-literal=JWT_PRIVATE_KEY="$JWT_PRIVATE_KEY" \
+  --from-literal=JWT_PUBLIC_KEY="$JWT_PUBLIC_KEY" \
+  --from-literal=PG_CLIENT_KEY="$PG_CLIENT_KEY" \
+  --from-literal=PG_SECRET_KEY="$PG_SECRET_KEY" \
+  --from-literal=PAYMENT_FIELD_ENCRYPTION_KEY="$PAYMENT_FIELD_ENCRYPTION_KEY" \
+  --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: app-secrets 적용 완료 (namespace=$NS)"
+
+# GHCR 이미지 pull 시크릿 (BE/FE 이미지 모두 private — read:packages 스코프 PAT 필요)
+if [ -n "${GHCR_PAT:-}" ]; then
+  "$KUBECTL" create secret docker-registry ghcr-pull -n "$NS" \
+    --docker-server=ghcr.io \
+    --docker-username="${GHCR_USER:?GHCR_PAT 사용 시 GHCR_USER도 필요}" \
+    --docker-password="$GHCR_PAT" \
+    --dry-run=client -o yaml | "$KUBECTL" apply -f -
+  echo "OK: ghcr-pull 적용 완료"
+  # 네임스페이스 default SA에 부착 → 전 파드가 imagePullSecret 상속(멀티노드 정석, Q83-6).
+  "$KUBECTL" patch serviceaccount default -n "$NS" \
+    -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+  echo "OK: default SA에 ghcr-pull 부착 완료"
+else
+  echo "SKIP: GHCR_PAT 미지정 — ghcr-pull 시크릿은 생성하지 않음 (앱 이미지 pull 불가 상태)"
+fi

@@ -4,6 +4,8 @@ dependencies {
     //kafka
     implementation("org.springframework.kafka:spring-kafka")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+    // Prometheus 메트릭 노출 (버전은 micrometer-bom 관리)
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
     testImplementation("org.springframework.kafka:spring-kafka-test")
     //flyway (payment 모듈 단독 마이그레이션 — 6개 엔티티의 테이블 생성)
     // Spring Boot 4.x는 Flyway 자동설정이 별도 모듈로 분리되어, DB 드라이버(flyway-database-postgresql)만으론 부트 시점에 실행되지 않음

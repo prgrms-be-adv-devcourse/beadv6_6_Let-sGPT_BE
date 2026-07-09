@@ -43,6 +43,11 @@ output "instance_public_ips" {
   value       = { for k, v in aws_eip.app : k => v.public_ip }
 }
 
+output "instance_private_ips" {
+  description = "EC2 인스턴스별 프라이빗 IP (k3s agent join용)"
+  value       = { for k, v in aws_instance.app : k => v.private_ip }
+}
+
 output "ssm_connect_commands" {
   description = "인스턴스별 SSM Session Manager 접속 명령어 (AWS CLI + session-manager-plugin 필요)"
   value = {

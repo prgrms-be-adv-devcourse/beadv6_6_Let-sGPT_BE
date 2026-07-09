@@ -1,7 +1,15 @@
 name: CD
 
 # CI(이미지 빌드/푸시)가 main 브랜치(머지)에서 성공적으로 끝났을 때만 배포 트리거.
-# dev는 각자 로컬 스택(1번)에서 돌리고, EC2 배포는 main 머지 시점에만 일어난다.
+# dev는 각자 로컬 스택에서 돌리고, EC2 배포는 main 머지 시점에만 일어난다.
+#
+# 배포 방식(2026-07-09 k3s 전환): docker compose → k3s. 러너(self-hosted, ec2-deploy)는
+# 서버 노드 위에서 돌며 k3s kubeconfig(644)에 접근 가능하다. 시크릿 적용 + Kustomize 이미지
+# SHA 핀 + apply를 러너가 직접 수행한다.
+#
+# GitOps: main은 PR 머지 전용이라 봇이 직접 push 못 함 → 이미지 pin 커밋백은 전용
+# deploy/state 브랜치(비보호, 봇 전용)로 한다. 이 브랜치가 클러스터 desired-state의
+# 출처이며 7/9 ArgoCD의 watch 대상이 된다(plan k3s_deploy_automation §4-2).
 on:
   workflow_run:
     workflows: ["CI"]
@@ -9,23 +17,23 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
-  actions: read   # workflow_run 아티팩트(deploy-matrix) 조회
+  contents: write   # deploy/state 브랜치에 이미지 pin 커밋백
+  actions: read     # workflow_run 아티팩트(deploy-matrix) 조회
+
+env:
+  IMG_BASE: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be
+  KUBECONFIG: /etc/rancher/k3s/k3s.yaml
 
 jobs:
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
-    # self-hosted runner를 배포 대상 EC2 인스턴스에 직접 설치해서 그 위에서 돈다.
-    # 보안그룹에 SSH 인바운드가 없어도(terraform security.tf) 러너는 outbound로
-    # GitHub에 polling하므로 추가 인바운드 포트가 필요 없고, SSM/S3 경유/OIDC도
-    # 전부 불필요해진다(잡이 이미 그 박스 위에서 실행되기 때문).
     runs-on: [self-hosted, ec2-deploy]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # deploy/state 머지 위해 전체 히스토리 필요
 
-      # CI(ci.yml)가 main에서 계산한 "이번에 실제로 바뀐 도메인" 매트릭스를 받아옴.
-      # docker-compose.dev.yml의 서비스명이 도메인명과 1:1 동일(member/order/
-      # payment/product/settlement)하므로 그대로 docker compose의 서비스 인자로 쓴다.
+      # CI가 main에서 계산한 "이번에 실제로 바뀐 도메인" 매트릭스.
       - name: Download changed-services matrix from CI run
         uses: actions/download-artifact@v4
         with:
@@ -33,7 +41,7 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve services to restart
+      - name: Resolve services to deploy
         id: services
         run: |
           SERVICES=$(jq -r '. | join(" ")' deploy-matrix.json)
@@ -41,37 +49,64 @@ jobs:
           if [ -z "$SERVICES" ]; then
             echo "변경된 도메인이 없어 배포를 스킵합니다."
           else
-            echo "재기동 대상: $SERVICES"
+            echo "배포 대상: $SERVICES"
           fi
 
-      # ENV_SECRETS(JSON 또는 KEY=VALUE) → .env 파일로 변환. 이 값만 실제 비밀(DB/Kafka/Redis
-      # 자격증명)이라 secrets에 유지. 러너가 이미 이 박스에 있으니 전송 단계가 없다.
-      - name: Render .env from ENV_SECRETS (+ GHCR repo 소문자 보정)
+      # ENV_SECRETS(JSON 또는 KEY=VALUE) → .env. create-secrets.sh 입력.
+      - name: Render .env from ENV_SECRETS
         if: steps.services.outputs.list != ''
         env:
           ENV_SECRETS: ${{ secrets.ENV_SECRETS }}
         run: |
-          # ENV_SECRETS가 JSON 오브젝트면 to_entries로, 아니면(KEY=VALUE 줄 형식) 그대로 사용.
           if printf '%s' "$ENV_SECRETS" | jq -e 'type=="object"' >/dev/null 2>&1; then
             printf '%s' "$ENV_SECRETS" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
           else
             printf '%s\n' "$ENV_SECRETS" > .env
           fi
-          # GHCR는 소문자만 허용. ENV_SECRETS의 (대문자) GITHUB_REPOSITORY를 제거하고
-          # 소문자 값으로 재주입한다(docker compose는 --env-file 중복 시 first-wins라 삭제 필수).
-          sed -i '/^GITHUB_REPOSITORY=/d' .env
-          echo "GITHUB_REPOSITORY=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> .env
 
-      # 변경된 도메인만 pull/재기동 — 나머지(postgres/kafka/redis, 변경 없는
-      # 다른 도메인)는 그대로 유지. common이 바뀐 경우엔 매트릭스 자체가
-      # 5개 전부라 의도적으로 전부 재기동됨.
-      - name: docker compose pull & restart changed services
+      # app-secrets + ghcr-pull(imagePullSecret) + default SA 부착 — 전부 멱등.
+      # ghcr-pull을 매 배포 보장 → 노드 교체/신규 클러스터에서도 kubelet이 정석 pull(Q83-6).
+      - name: Provision k8s secrets (idempotent)
+        if: steps.services.outputs.list != ''
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_PAT: ${{ secrets.GHCR_PULL_PAT }}
+        run: |
+          GHCR_USER="$GHCR_USER" GHCR_PAT="$GHCR_PAT" ./k8s/bootstrap/create-secrets.sh .env
+
+      - name: Ensure kustomize CLI
         if: steps.services.outputs.list != ''
         run: |
-          # ⚠️ Actions가 GITHUB_REPOSITORY를 대문자로 자동 주입하고, docker compose는
-          # shell 환경변수를 --env-file보다 우선한다 → 여기서 소문자로 override 필수.
-          export GITHUB_REPOSITORY="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
-          SERVICES="${{ steps.services.outputs.list }}"
-          docker compose -f docker-compose.dev.yml --env-file .env pull $SERVICES
-          docker compose -f docker-compose.dev.yml --env-file .env up -d $SERVICES
-          docker image prune -f
+          if ! command -v kustomize >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/bin"
+            ( cd "$RUNNER_TEMP/bin" && curl -sfL https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash )
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          fi
+
+      # deploy/state 브랜치에 변경 서비스만 SHA로 핀 → 누적(미변경 서비스는 기존 pin 유지).
+      - name: Bump image pins on deploy/state (GitOps source of truth)
+        if: steps.services.outputs.list != ''
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git config user.name  "deploy-bot"
+          git config user.email "deploy-bot@users.noreply.github.com"
+          git fetch origin deploy/state || true
+          git checkout deploy/state 2>/dev/null || git checkout -b deploy/state
+          # main의 구조 변경(매니페스트 추가/삭제, probe 등)만 흡수, 이미지 pin 충돌은 deploy/state 것 유지.
+          git merge -X ours --no-edit "$SHA"
+          for svc in ${{ steps.services.outputs.list }}; do
+            ( cd k8s && kustomize edit set image "$IMG_BASE/$svc=$IMG_BASE/$svc:$SHA" )
+          done
+          git add k8s/kustomization.yaml
+          git commit -m "chore(deploy): pin ${{ steps.services.outputs.list }} to $SHA [skip ci]" || echo "no change to commit"
+          git push origin deploy/state
+
+      # 현재 체크아웃=deploy/state(누적 pin 반영) 상태에서 apply → rollout 수렴 확인.
+      - name: Apply to k3s & wait rollout
+        if: steps.services.outputs.list != ''
+        run: |
+          kubectl apply -k k8s/
+          for svc in ${{ steps.services.outputs.list }}; do
+            kubectl -n openat rollout status deploy/"$svc" --timeout=300s
+          done

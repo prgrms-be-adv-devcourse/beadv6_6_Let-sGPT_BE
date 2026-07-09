@@ -2,10 +2,9 @@ package com.openat.search.product.infrastructure.elasticsearch;
 
 import com.openat.search.product.domain.model.Category;
 import com.openat.search.product.domain.model.Product;
+import java.time.Instant;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.elasticsearch.annotations.*;
-
-import java.time.Instant;
 
 @Document(indexName = "products", createIndex = false, writeTypeHint = WriteTypeHint.FALSE)
 public record ProductDocument(
