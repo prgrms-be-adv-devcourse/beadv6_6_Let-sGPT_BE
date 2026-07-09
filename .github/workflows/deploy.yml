@@ -98,6 +98,7 @@ jobs:
 
       # deploy/state 브랜치에 변경 서비스만 SHA로 핀 → 누적(미변경 서비스는 기존 pin 유지).
       - name: Bump image pins on deploy/state (GitOps source of truth)
+        id: pin
         if: steps.services.outputs.list != ''
         env:
           SHA: ${{ github.event.workflow_run.head_sha }}
@@ -114,18 +115,30 @@ jobs:
           git add k8s/kustomization.yaml
           git commit -m "chore(deploy): pin ${{ steps.services.outputs.list }} to $SHA [skip ci]" || echo "no change to commit"
           git push origin deploy/state
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # push된 deploy/state를 ArgoCD가 auto-sync — 러너는 apply 없이 수렴 확인만 한다
       # (도구 추가 없음, kubectl만 사용. 리서치 argocd_ci_smoke_research §3.8-A).
+      # ArgoCD 기본 git 폴링 주기(3분)를 기다리면 방금 push한 revision을 아직 못 본 채
+      # "이전 revision 기준 Synced/Healthy"를 그대로 참으로 오인할 수 있어(2026-07-09 실제
+      # CD 1회차에서 재현 확인 — payment 파드가 갱신 안 된 채 convergence 스텝만 성공 처리됨),
+      # ① hard refresh로 즉시 재조회를 강제하고 ② status.sync.revision이 이번에 push한
+      # 커밋과 정확히 일치할 때만 수렴으로 인정한다.
       - name: Wait for ArgoCD convergence
         if: steps.services.outputs.list != ''
+        env:
+          TARGET_REV: ${{ steps.pin.outputs.revision }}
         run: |
+          kubectl -n argocd annotate application openat argocd.argoproj.io/refresh=hard --overwrite
           for i in $(seq 1 60); do   # 최대 5분
+            REV=$(kubectl -n argocd get application openat -o jsonpath='{.status.sync.revision}' 2>/dev/null || echo "?")
             S=$(kubectl -n argocd get application openat \
                 -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "?")
-            [ "$S" = "Synced/Healthy" ] && { echo "ArgoCD converged."; exit 0; }
-            echo "waiting... ($S)"; sleep 5
+            if [ "$REV" = "$TARGET_REV" ] && [ "$S" = "Synced/Healthy" ]; then
+              echo "ArgoCD converged at $REV."; exit 0
+            fi
+            echo "waiting... (rev=$REV, want=$TARGET_REV, status=$S)"; sleep 5
           done
-          echo "ERROR: ArgoCD did not converge in 300s (last: $S)" >&2   # 실패는 시끄럽게
+          echo "ERROR: ArgoCD did not converge to $TARGET_REV in 300s (last rev=$REV status=$S)" >&2   # 실패는 시끄럽게
           kubectl -n argocd get application openat -o yaml | tail -40 >&2
           exit 1
