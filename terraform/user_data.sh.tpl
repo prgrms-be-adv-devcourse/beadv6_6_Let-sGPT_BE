@@ -23,6 +23,11 @@ apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable --now docker
 
+# =====================================================================
+# 1-b) AWS CLI (부트스트랩 §5의 서버측 `aws s3 sync` 등에 필요 — Ubuntu AMI 미탑재)
+# =====================================================================
+snap install aws-cli --classic || true
+
 # -----------------------------------------------------------------------
 # 안내: 내부 서비스(PostgreSQL, Kafka 등)는 보안그룹에서 외부 인바운드를
 # 절대 열지 않는다. docker-compose에서 이런 서비스는 호스트 포트로

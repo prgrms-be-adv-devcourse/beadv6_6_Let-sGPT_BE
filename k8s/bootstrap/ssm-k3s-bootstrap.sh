@@ -33,7 +33,7 @@ run_ssm() { # $1=instance-id $2=comment $3...=commands(json array 문자열)
 
 echo "== 1. k3s server 설치 (semi/t3.large, tier=hotpath) =="
 run_ssm "$SEMI_ID" "k3s-server-install" '[
-  "curl -sfL https://get.k3s.io | sh -s - server --write-kubeconfig-mode 644 --node-label tier=hotpath",
+  "curl -sfL https://get.k3s.io | sh -s - server --secrets-encryption --write-kubeconfig-mode 644 --node-label tier=hotpath",
   "sudo k3s kubectl get nodes"
 ]'
 
@@ -61,22 +61,31 @@ run_ssm "$SEMI_ID" "taint-and-helm" '[
   "helm version --short || true"
 ]'
 
-echo "== 5. 매니페스트 S3 경유 업로드 → 서버 노드에서 apply =="
-aws s3 sync k8s/ "s3://$BUCKET/k8s-bootstrap/" --region "$REGION" --exclude "bootstrap/*"
-run_ssm "$SEMI_ID" "apply-manifests" "[
-  \"mkdir -p /tmp/k8s && aws s3 sync s3://$BUCKET/k8s-bootstrap/ /tmp/k8s/ --region $REGION\",
-  \"sudo k3s kubectl apply -f /tmp/k8s/00-namespace.yaml\",
-  \"sudo k3s kubectl apply -f /tmp/k8s/\",
-  \"sudo k3s kubectl get pods -n openat\"
+echo "== 5. 매니페스트 S3(ops/k8s/) 업로드 → 서버 노드에서 apply =="
+# 5-1. 로컬 → S3 (부트스트랩 실행 머신의 자격증명). 업로드 경로는 IAM이 허용하는 ops/ prefix.
+#      bootstrap/*(시크릿 스크립트)는 서버로 안 올림 — 값이 없고 CD/수동이 처리.
+aws s3 sync k8s/ "s3://$BUCKET/ops/k8s/" --region "$REGION" --delete --exclude "bootstrap/*"
+
+# 5-2. 서버 노드에서 내려받아 apply. 전부 root(SSM) 단일 블록 + mktemp로 소유권/잔재 충돌 차단(Q80 #4).
+#      SSM는 /bin/sh(dash)로 실행 → pipefail 미지원. 파이프 없는 블록이라 set -eu로 충분.
+#      set -eu + test -s 로 silent-failure(Q80 #3) 제거 — 마지막 get이 exit 0로 위장 못 함.
+run_ssm "$SEMI_ID" "manifest-apply" "[
+  \"set -eu\",
+  \"DIR=\$(mktemp -d /tmp/k8s.XXXXXX)\",
+  \"aws s3 sync s3://$BUCKET/ops/k8s/ \\\"\$DIR\\\"/ --region $REGION\",
+  \"test -s \\\"\$DIR/00-namespace.yaml\\\"\",
+  \"sudo k3s kubectl apply -k \\\"\$DIR\\\"/\",
+  \"rm -rf \\\"\$DIR\\\"\",
+  \"sudo k3s kubectl -n openat get deploy -o wide\"
 ]"
 
 cat <<'EOF'
 
-== 남은 수동 단계 (Secret — 값이 필요해 자동화 제외) ==
-1) 서버 노드 SSM 세션 접속 후 .env(러너 작업 디렉토리 또는 로컬에서 전달)로:
-     k8s/bootstrap/create-secrets.sh <.env 경로>
-   + GHCR pull 시크릿(read:packages PAT 필요):
-     GHCR_USER=<github id> GHCR_PAT=<PAT> k8s/bootstrap/create-secrets.sh <.env 경로>
-2) 시크릿 생성 후 앱 파드 재기동:
-     kubectl -n openat rollout restart deploy
+== 남은 수동 단계 ==
+· 이미지 pull 시크릿(ghcr-pull) + app-secrets: 정식 경로는 CD(deploy.yml)가 자동 생성.
+  최초 부팅 검증용으로 수동 생성하려면(서버 노드 SSM 세션에서, .env 필요):
+     ./create-secrets.sh <.env 경로>                                   # app-secrets
+     GHCR_USER=<github id> GHCR_PAT=<packages:read PAT> ./create-secrets.sh <.env 경로>   # + ghcr-pull
+     sudo k3s kubectl patch serviceaccount default -n openat -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+· GitHub Actions 러너 등록(단명 등록토큰이라 자동화 제외 — user_data 주석 참조).
 EOF

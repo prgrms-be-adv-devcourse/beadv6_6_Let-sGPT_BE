@@ -7,6 +7,10 @@ metadata:
   namespace: openat
 spec:
   replicas: 1
+  # 단일 워커 노드: 롤링 시 옛+새 파드 2배 메모리로 Insufficient memory Pending(Q80 #7) 방지.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
   selector:
     matchLabels: { app: payment }
   template:

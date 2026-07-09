@@ -7,6 +7,10 @@ metadata:
   namespace: openat
 spec:
   replicas: 1
+  # 단일 워커 노드: 롤링 시 옛+새 파드 2배 메모리로 Insufficient memory Pending(Q80 #7) 방지.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
   selector:
     matchLabels: { app: frontend }
   template:
@@ -19,7 +23,8 @@ spec:
         - name: frontend
           # FE 리포(beadv6_6_Let-sGPT_FE) 소문자 경로. 과거 문서의 "lets-gpt_fe" 표기는
           # 리포명(let-sgpt)과 불일치 — PAT 확보 후 실제 패키지 경로 재확인할 것.
-          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend:latest
+          # FE는 :latest 태그를 안 올린다 — CI가 커밋 SHA로만 태깅. GitOps 전까진 SHA 핀 고정.
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend:83e7fc622038902393b67ac50e8ecbbf37a25f28
           ports: [{ containerPort: 80 }]
           readinessProbe:
             httpGet: { path: /, port: 80 }
