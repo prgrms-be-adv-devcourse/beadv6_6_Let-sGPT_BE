@@ -1,0 +1,19 @@
+# openat 앱 Application CR. targetRevision=deploy/state — CD(deploy.yml)가 이미지 SHA를
+# 커밋백하는 그 브랜치(GitOps desired-state 단일 출처). repo가 PUBLIC이라 자격증명 불필요.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openat
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/prgrms-be-adv-devcourse/beadv6_6_Let-sGPT_BE
+    targetRevision: deploy/state
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openat
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=false]
