@@ -145,6 +145,9 @@ public class SecurityConfig {
                                 "/api/v1/drops/**",
                                 "/api/v1/categories/**").permitAll()
 
+                        // search service APIs are public during search indexing/search verification.
+                        .pathMatchers("/api/v1/searchs/**").permitAll()
+
                         // product 판매자 write — scoped 토큰(typ=scoped, aud=openat-product)만 허용 (GET은 위에서 공개)
                         .pathMatchers("/product/products", "/product/products/**").access(scopedFor("openat-product"))
                         .pathMatchers(
@@ -167,10 +170,10 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOriginPatterns(List.of("http://localhost:*", "https://localhost:*"));
+        configuration.setAllowedOriginPatterns(List.of("*"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
-        configuration.setAllowCredentials(true);
+        configuration.setAllowCredentials(false);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

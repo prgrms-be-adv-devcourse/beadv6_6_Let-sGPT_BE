@@ -19,6 +19,8 @@ springdoc:
         url: /member/api-docs
       - name: product-service
         url: /product/api-docs
+      - name: search-service
+        url: /search/api-docs
       - name: order-service
         url: /order/api-docs
       - name: payment-service

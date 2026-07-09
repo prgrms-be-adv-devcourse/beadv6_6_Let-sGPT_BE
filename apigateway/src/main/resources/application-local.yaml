@@ -19,6 +19,10 @@ spring:
               uri: http://localhost:9100
               predicates:
                 - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks
+            - id: search-api
+              uri: http://localhost:9240
+              predicates:
+                - Path=/api/v1/searchs/**
             - id: product-api
               uri: http://localhost:9110
               predicates:
@@ -27,6 +31,12 @@ spring:
               uri: http://localhost:9110
               predicates:
                 - Path=/product/**
+              filters:
+                - StripPrefix=1
+            - id: search
+              uri: http://localhost:9240
+              predicates:
+                - Path=/search/**
               filters:
                 - StripPrefix=1
             - id: order-api
@@ -66,6 +76,7 @@ openapi:
     services:
       member-service: http://localhost:9100/api-docs
       product-service: http://localhost:9110/api-docs
+      search-service: http://localhost:9240/api-docs
       order-service: http://localhost:9120/api-docs
       payment-service: http://localhost:9130/api-docs
       settlement-service: http://localhost:9140/api-docs
