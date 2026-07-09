@@ -1,7 +1,13 @@
 package com.openat.search.product.infrastructure.image;
 
+import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
+
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.io.IOException;
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -9,13 +15,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
-
-import java.io.IOException;
-import java.util.Base64;
-import java.util.List;
-import java.util.Map;
-
-import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 
 @Component
 @RequiredArgsConstructor
@@ -102,7 +101,7 @@ public class OpenAiImageClient {
 
   private String buildImageSearchRequest(String prompt) {
     if (prompt == null || prompt.isBlank()) {
-     // return "이 이미지에서 유사 사진 검색에 사용할 핵심 시각 특징을 추출해 줘.";
+      // return "이 이미지에서 유사 사진 검색에 사용할 핵심 시각 특징을 추출해 줘.";
       return "너는 직업이 MD 야. 내가 벡터 검색으로 사용하기 위해 최적화된 이미지 설명 해줘.";
     }
     return "추가 검색 조건: " + prompt.trim();
