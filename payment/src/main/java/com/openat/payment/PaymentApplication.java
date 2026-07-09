@@ -1,3 +1,4 @@
+// ArgoCD GitOps e2e 파이프라인 시연용 무해한 변경 (argocd_ci_smoke_plan WS-D, 2026-07-09)
 package com.openat.payment;
 
 import org.springframework.boot.SpringApplication;
