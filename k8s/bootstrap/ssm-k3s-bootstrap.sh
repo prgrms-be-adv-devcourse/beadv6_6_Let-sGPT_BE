@@ -2,7 +2,10 @@
 # k3s 2노드 클러스터 부트스트랩 (terraform apply 완료 후, 로컬에서 1회 실행)
 # 전제: aws cli + terraform output 접근 가능, SSM send-command 권한.
 # 절차 = k3s_2node_cluster_plan.md §2~§6 (서버 설치 → 에이전트 조인 → taint → helm →
-#        매니페스트 S3 경유 배포). Secret 생성(§4-3)은 마지막에 안내만 출력(값 필요).
+#        ArgoCD 설치 + Application 등록). Secret 생성(§4-3)은 마지막에 안내만 출력(값 필요).
+# 2026-07-09: 앱 매니페스트(k8s/) 배포 경로를 S3 스냅샷(ops/k8s/) apply에서 ArgoCD auto-sync로
+#        전환(argocd_ci_smoke_plan WS-B-3) — 콜드부트 후에는 ArgoCD가 deploy/state에서 직접
+#        수렴한다. ops/k8s/ 스냅샷은 이 스크립트가 더 이상 안 씀(과거 산출물, qna Q87-1).
 set -euo pipefail
 
 cd "$(dirname "$0")/../../terraform"
@@ -61,22 +64,25 @@ run_ssm "$SEMI_ID" "taint-and-helm" '[
   "helm version --short || true"
 ]'
 
-echo "== 5. 매니페스트 S3(ops/k8s/) 업로드 → 서버 노드에서 apply =="
-# 5-1. 로컬 → S3 (부트스트랩 실행 머신의 자격증명). 업로드 경로는 IAM이 허용하는 ops/ prefix.
-#      bootstrap/*(시크릿 스크립트)는 서버로 안 올림 — 값이 없고 CD/수동이 처리.
-aws s3 sync k8s/ "s3://$BUCKET/ops/k8s/" --region "$REGION" --delete --exclude "bootstrap/*"
+echo "== 5. ArgoCD 설치 + openat Application 등록 =="
+# ArgoCD "설치" 자체(k8s/argocd/)는 ArgoCD가 스스로를 watch하지 않는 1회성 부트스트랩이라
+# 기존과 동일하게 S3 경유로 전달한다 — 단 prefix는 ops/k8s/(구 앱 매니페스트 스냅샷, 이제 미사용)
+# 와 별개인 ops/argocd/. 실제 앱 매니페스트(k8s/)는 이 시점부터 ArgoCD의 openat Application이
+# deploy/state를 직접 watch·apply하므로 별도 S3 동기화가 필요 없다(WS-B-3, qna Q87-1).
+aws s3 sync k8s/argocd/ "s3://$BUCKET/ops/argocd/" --region "$REGION" --delete
 
-# 5-2. 서버 노드에서 내려받아 apply. 전부 root(SSM) 단일 블록 + mktemp로 소유권/잔재 충돌 차단(Q80 #4).
-#      SSM는 /bin/sh(dash)로 실행 → pipefail 미지원. 파이프 없는 블록이라 set -eu로 충분.
-#      set -eu + test -s 로 silent-failure(Q80 #3) 제거 — 마지막 get이 exit 0로 위장 못 함.
-run_ssm "$SEMI_ID" "manifest-apply" "[
+# 서버 노드에서 내려받아 apply. 전부 root(SSM) 단일 블록 + mktemp로 소유권/잔재 충돌 차단(Q80 #4).
+# SSM는 /bin/sh(dash)로 실행 → pipefail 미지원. 파이프 없는 블록이라 set -eu로 충분.
+# set -eu + test -s 로 silent-failure(Q80 #3) 제거 — 마지막 get이 exit 0로 위장 못 함.
+run_ssm "$SEMI_ID" "argocd-install" "[
   \"set -eu\",
-  \"DIR=\$(mktemp -d /tmp/k8s.XXXXXX)\",
-  \"aws s3 sync s3://$BUCKET/ops/k8s/ \\\"\$DIR\\\"/ --region $REGION\",
-  \"test -s \\\"\$DIR/00-namespace.yaml\\\"\",
+  \"DIR=\$(mktemp -d /tmp/argocd.XXXXXX)\",
+  \"aws s3 sync s3://$BUCKET/ops/argocd/ \\\"\$DIR\\\"/ --region $REGION\",
+  \"test -s \\\"\$DIR/kustomization.yaml\\\"\",
   \"sudo k3s kubectl apply -k \\\"\$DIR\\\"/\",
   \"rm -rf \\\"\$DIR\\\"\",
-  \"sudo k3s kubectl -n openat get deploy -o wide\"
+  \"sudo k3s kubectl -n argocd get application openat\",
+  \"sudo k3s kubectl -n argocd get pods -o wide\"
 ]"
 
 cat <<'EOF'
