@@ -3,6 +3,7 @@ import io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension
 plugins {
     id("org.springframework.boot") version "4.1.0" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
+    id("com.diffplug.spotless") version "7.0.2" apply false
     java
 }
 tasks.jar { enabled = false }
@@ -13,9 +14,21 @@ subprojects {
     apply(plugin = "java")
     apply(plugin = "org.springframework.boot")
     apply(plugin = "io.spring.dependency-management")
+    apply(plugin = "com.diffplug.spotless")
 
     group = "com.openat"
     version = "0.0.1-SNAPSHOT"
+
+    // Spotless: 포맷 통일(google-java-format, 2-space). 비차단 시작 —
+    // ratchetFrom("origin/dev")로 dev 이후 "변경된 파일만" 검사해 기존 코드(member 4-space 등)는
+    // 손대지 않고 신규 변경분부터 수렴시킨다(argocd_ci_smoke_plan WS-E). 팀 컨벤션 합의 후 차단 전환.
+    configure<com.diffplug.gradle.spotless.SpotlessExtension> {
+        ratchetFrom("origin/dev")
+        java {
+            googleJavaFormat()
+            targetExclude("**/build/**")
+        }
+    }
 
     java {
         toolchain {

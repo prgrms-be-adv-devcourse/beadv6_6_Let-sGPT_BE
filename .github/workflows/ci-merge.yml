@@ -69,6 +69,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # Spotless ratchetFrom(origin/dev) 비교용 전체 히스토리
 
       - uses: actions/setup-java@v4
         with:
@@ -76,11 +78,18 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
+      # 포맷 검사(비차단). 팀 컨벤션 합의 후 continue-on-error 제거 → 차단 전환.
+      - name: Spotless (${{ matrix.service }}, non-blocking)
+        continue-on-error: true
+        run: |
+          git fetch --no-tags origin dev:refs/remotes/origin/dev || true
+          ./gradlew :${{ matrix.service }}:spotlessCheck
+
       # member/order/payment/product/settlement는 루트 멀티모듈 빌드의 서브프로젝트라
       # 각자 gradlew가 없으므로 루트 wrapper로 해당 서브프로젝트만 빌드.
       # 아직 테스트 코드가 없어 실제 DB/Kafka/Redis 연결은 일어나지 않는다 - 여기서는
       # compose 프로필의 ${...} placeholder가 풀리지 않아 빌드가 깨지는 것만 방지하면 된다.
-      # 실제 인프라 연동 검증은 docker-compose.full.yml(2번, Local Full Stack)에서 수행.
+      # 실제 인프라 연동 검증은 k3s(k8s/) 배포 후 스모크(scripts/smoke-drop-order.sh)에서 수행.
       - name: Build ${{ matrix.service }}
         env:
           SPRING_PROFILES_ACTIVE: compose
@@ -92,7 +101,7 @@ jobs:
           KAFKA_BROKER: ${{ fromJson(vars.CI_VARS).KAFKA_BROKER }}
           REDIS_HOST: ${{ fromJson(vars.CI_VARS).REDIS_HOST }}
           REDIS_PORT: ${{ fromJson(vars.CI_VARS).REDIS_PORT }}
-        run: ./gradlew :${{ matrix.service }}:build
+        run: ./gradlew :${{ matrix.service }}:build -x spotlessCheck    # 빌드는 포맷으로 안 깨지게(비차단)
 
       - uses: docker/setup-buildx-action@v3
 

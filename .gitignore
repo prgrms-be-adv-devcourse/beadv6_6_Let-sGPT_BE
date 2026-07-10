@@ -48,3 +48,7 @@ bin/
 *.html
 *.css
 *.js
+
+# 배포 시크릿/플랜 산출물 (커밋 금지)
+ENV_SECRETS.json
+terraform/tfplan
