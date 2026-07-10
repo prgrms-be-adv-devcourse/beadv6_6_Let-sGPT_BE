@@ -49,6 +49,16 @@ bin/
 *.css
 *.js
 
-# 배포 시크릿/플랜 산출물 (커밋 금지)
+# 배포 시크릿 (커밋 금지)
 ENV_SECRETS.json
+
+# Terraform — state·plan·로컬 캐시는 커밋 금지 (state는 S3 backend, plan은 apply 1회용 임시 아티팩트)
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
 terraform/tfplan
+crash.log
+crash.*.log
+# 프로바이더 잠금(.terraform.lock.hcl)은 재현성 위해 커밋 대상 — 무시하지 않음
+!**/.terraform.lock.hcl
