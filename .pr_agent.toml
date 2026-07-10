@@ -1,10 +1,6 @@
-# PR-Agent(Qodo) 설정 — 모델·리뷰의 도메인 특화 지시.
+# PR-Agent(Qodo) 설정 — 리뷰의 도메인 특화 지시.
 # 전체 리뷰 프롬프트는 PR-Agent 내장 기본값을 쓰고, 아래 extra_instructions로 위험영역만 조준한다.
-# (yml엔 배선만 — 키는 OPENAI_KEY env, 모델은 여기 [config] model.)
-
-[config]
-model = "gpt-4o-mini"          # 가벼운 모델. 상향하려면 이 값만 변경(Gemma 전환 시 gemma 모델명)
-fallback_models = ["gpt-4o-mini"]
+# (모델·키는 워크플로 env에서 CONFIG__MODEL / OPENAI__KEY 로 지정 — 이 파일은 리뷰 지시 전용.)
 
 [pr_reviewer]
 extra_instructions = """
