@@ -18,13 +18,18 @@ spec:
       nodeSelector: { tier: observability }
       tolerations:
         - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: elasticsearch
-          image: docker.elastic.co/elasticsearch/elasticsearch:9.2.5
+          # WS-G(7/10 observability plan) — nori 포함 커스텀 이미지(k8s/images/elasticsearch-nori/).
+          # 태그는 베이스 ES 버전과 반드시 동일(플러그인-ES 버전 정합 필수).
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/elasticsearch-nori:9.2.5
           env:
             - { name: discovery.type, value: single-node }
             - { name: xpack.security.enabled, value: "false" }
-            - { name: ES_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
+            - { name: xpack.ml.enabled, value: "false" }
+            - { name: ES_JAVA_OPTS, value: "-Xms768m -Xmx768m" }
           ports: [{ containerPort: 9200 }]
           readinessProbe:
             exec:
@@ -32,7 +37,7 @@ spec:
             periodSeconds: 10
             failureThreshold: 12
           resources:
-            limits: { memory: "1000Mi" }
+            limits: { memory: "1200Mi" }
             requests: { cpu: "100m" }
           volumeMounts:
             - { name: es-data, mountPath: /usr/share/elasticsearch/data }
