@@ -1,0 +1,65 @@
+name: Terraform Plan
+
+# 인프라 형상관리(IaC) 파이프라인: terraform/** 를 바꾸는 PR에서 `terraform plan`을 돌려
+# 결과를 PR 코멘트로 붙인다(사람이 diff 확인 후 머지). apply는 여기서 안 함(읽기 전용, 안전).
+# tfplan은 이 잡 안에서만 잠깐 존재하고 커밋하지 않는다(형상관리는 .tf=git, state=S3).
+#
+# ── 현재 상태: 비활성(dormant) ──
+# 실행은 vars.TF_CI_ENABLED == 'true' 일 때만. 켜기 전 선행 조건(키리스 인증, Q93):
+#   1) AWS IAM에 GitHub OIDC provider 생성(token.actions.githubusercontent.com)
+#      + terraform이 읽을 수 있는 Role(plan은 describe/get/list 읽기 권한이면 충분).
+#   2) 리포 변수: TF_CI_ENABLED=true, AWS_TF_ROLE_ARN=<그 Role ARN>.
+#   → 정적 AWS 키를 GitHub Secrets에 넣지 않는다(OIDC로 단명 자격만 발급).
+on:
+  pull_request:
+    paths: ["terraform/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write   # plan 결과 코멘트
+  id-token: write        # OIDC 토큰 발급
+
+jobs:
+  plan:
+    if: ${{ vars.TF_CI_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC, 키리스)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TF_ROLE_ARN }}
+          aws-region: ap-northeast-2
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.0"
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -input=false -no-color -lock-timeout=120s 2>&1 | tee plan.txt
+        continue-on-error: true
+
+      - name: Post plan as PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/plan.txt', 'utf8').slice(-60000);
+            const body = `#### Terraform Plan \`${{ steps.plan.outcome }}\`\n<details><summary>plan 펼치기</summary>\n\n\`\`\`\n${plan}\n\`\`\`\n</details>`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, body });
+
+      - name: Fail if plan errored
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
