@@ -1,0 +1,32 @@
+# PR-Agent(Qodo) 설정 — 리뷰의 도메인 특화 지시.
+# 전체 리뷰 프롬프트는 PR-Agent 내장 기본값을 쓰고, 아래 extra_instructions로 위험영역만 조준한다.
+# (모델·키는 워크플로 env에서 CONFIG__MODEL / OPENAI__KEY 로 지정 — 이 파일은 리뷰 지시 전용.)
+
+[pr_reviewer]
+extra_instructions = """
+아래를 우선순위대로 점검하라. (변경된 diff에서 정적으로 판단 가능한 것만 — 런타임 측정이 아님)
+
+[1] 결제/정산 도메인 위험
+- 멱등성: Idempotency-Key, orderId get-or-create, confirm 단일 진입점 4갈래 분기.
+- 동시성: 웹훅 lost-race, 조건부 UPDATE 레이스, TTL 스캐너 경합, 환불 한도 오염.
+- 정합성: 금액 부호(양수) 검증, balanceAfter 스테일, 지갑 생성 race.
+
+[2] 성능/DB/트래픽 (코드·설정 변경에서 드러나는 안티패턴)
+- DB 커넥션을 외부호출(PG/HTTP) 구간 내내 붙잡는 트랜잭션 범위(예: confirmPg가 토스 호출을 TX 안에서).
+- N+1 쿼리, 페이지네이션 없는 대량 조회, 새 조회 패턴에 대한 인덱스 부재, 무제한 IN 절.
+- 타임아웃/서킷브레이커/재시도 누락, 핫패스의 블로킹 I/O, 재시도 폭주(백오프 없음).
+- Hikari 풀·스레드풀·replica·캐시 TTL 설정 변경이 자원 예산과 정합한지.
+
+[3] 인프라/운영 (k8s 매니페스트·terraform·CI 변경 시)
+- requests/limits·readiness/liveness probe 누락, 단일노드 롤링 안전성(maxSurge/maxUnavailable).
+- SecurityContext(non-root)·NetworkPolicy·SG/IAM 최소권한·시크릿 하드코딩·평문 노출.
+
+[4] 보안: SQL 인젝션, 시크릿/키 하드코딩, PII 로그 노출.
+
+동시성/레이스/성능 민감 경로에 테스트가 없으면 지적하라. 확실한 것만 지적하고 추측은 낮은 확신으로 표기. 코멘트는 한국어로.
+"""
+
+[pr_code_suggestions]
+extra_instructions = """
+최소 diff를 선호하라. 결제 무결성에 영향 주는 변경은 테스트 동반을 제안하라.
+"""

@@ -1,5 +1,6 @@
 name: CD-ColdStart
 
+# ⚠️ 2026-07-10 폐기(legacy/로 이동 = GitHub이 워크플로로 인식 안 함 → 비활성). k3s+ArgoCD(deploy.yml)로 대체됨. 아래는 히스토리 보존용.
 # 최초 콜드 배포용(1회성). main 브랜치 보호를 우회하려고 임시 브랜치 push로 트리거한다.
 # 러너(self-hosted, ec2-deploy)의 자동 GITHUB_TOKEN으로 GHCR private 이미지를 pull하므로
 # PAT가 전혀 필요 없다. FE(nginx) 이미지는 박스에 미리 docker load 돼 있어 pull하지 않는다.

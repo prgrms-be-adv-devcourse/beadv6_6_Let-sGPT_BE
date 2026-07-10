@@ -1,0 +1,42 @@
+name: PR-Agent
+
+# AI PR 리뷰(Qodo PR-Agent, 오픈소스). PR diff에 리뷰 코멘트를 달기 때문에
+# push가 아니라 pull_request 트리거여야 의미가 있다(브랜치 push엔 리뷰할 PR이 없음).
+#
+# ── 백엔드: OpenAI GPT (과금, 가벼운 모델) ──
+# 실행 조건: 리포 변수 vars.PR_AGENT_ENABLED == 'true' + 시크릿 OPENAI_API_KEY 등록.
+# 나중에 자체 Gemma 추론서버로 무과금 전환 시 아래 env 주석 블록으로 교체.
+# 리뷰 초점(결제 도메인 위험요소)은 리포 루트 `.pr_agent.toml`의 extra_instructions로 지시.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]         # PR 코멘트로 수동 명령(/review, /improve)
+
+jobs:
+  pr_agent:
+    # 활성 조건 + 비용 남용 방지: issue_comment(수동 명령)는 협업자(OWNER/MEMBER/COLLABORATOR)만.
+    # (fork PR은 GitHub 기본정책상 시크릿이 전달되지 않아 자동 차단됨 — pull_request_target 안 씀)
+    if: >-
+      ${{ vars.PR_AGENT_ENABLED == 'true'
+          && github.event.sender.type != 'Bot'
+          && (github.event_name != 'issue_comment'
+              || contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: write
+    steps:
+      - uses: qodo-ai/pr-agent@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ── 백엔드: OpenAI (pr-agent 공식 규칙 = OPENAI__KEY 이중 언더스코어, CONFIG__MODEL도 이중) ──
+          # ⚠️ 시크릿 OPENAI_API_KEY 값이 "비어 있으면" pr-agent가 기본 placeholder dummy_key로 폴백해
+          #    401이 난다. 이름만 등록으로는 안 되고 실제 sk-... 값이 들어 있어야 함.
+          CONFIG__MODEL: "gpt-4o-mini"
+          OPENAI__KEY: ${{ secrets.OPENAI_API_KEY }}
+          # ── (나중) 자체 Gemma 추론서버로 전환: 위 두 줄을 아래로 교체 ──
+          # CONFIG__MODEL: "<gemma-model-name>"
+          # OPENAI__API_BASE: ${{ secrets.GEMMA_BASE_URL }}   # 자체 서버 OpenAI호환 엔드포인트
+          # OPENAI__KEY: ${{ secrets.GEMMA_API_KEY }}         # 자체 서버 토큰(더미여도 됨)
