@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      k8s_changed: ${{ steps.k8sfilter.outputs.k8s }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +30,17 @@ jobs:
             settlement: ['**/settlement/**']
             search: ['**/search/**']
 
+      # 매니페스트(k8s/**) 변경은 "빌드 매트릭스"와 분리해 감지한다 — 이건 빌드 대상이 아니라
+      # deploy/state(GitOps desired-state) 전파 트리거이기 때문. 위 filter에 같이 넣으면
+      # changes 목록에 'k8s'가 섞여 매트릭스가 그걸 서비스로 오인해 빌드하려다 깨진다(Q100 갭 수정,
+      # plan 7-11-gitops_manifest_propagation §2). deploy.yml이 이 플래그로 매니페스트-only
+      # 변경도 deploy/state에 merge+push 하도록 판단한다.
+      - uses: dorny/paths-filter@v3
+        id: k8sfilter
+        with:
+          filters: |
+            k8s: ['k8s/**']
+
       # common(또는 루트 빌드 설정)이 바뀌면 전 모듈에 영향이 가므로 5개 다 빌드,
       # 그 외에는 실제로 변경된 모듈 폴더만 매트릭스에 세팅. dev/main 동일 로직 —
       # main에서는 이 매트릭스가 곧 "마지막 배포 이후 실제로 바뀐 도메인" 목록이라
@@ -42,16 +54,22 @@ jobs:
             echo 'matrix=${{ steps.filter.outputs.changes }}' >> "$GITHUB_OUTPUT"
           fi
 
-      # main의 매트릭스만 CD(deploy.yml)에 전달 — dev는 배포 대상이 아니라 불필요.
-      - name: Export matrix artifact for CD (main only)
+      # main의 매트릭스 + 매니페스트 변경 플래그를 CD(deploy.yml)에 전달 — dev는 배포 대상 아니라 불필요.
+      # deploy-k8s.txt: k8s/** 변경 여부(true/false). 매트릭스가 []여도 이 값이 true면 deploy.yml이
+      # deploy/state에 매니페스트 merge+push를 수행한다(Q100 갭 수정).
+      - name: Export deploy metadata for CD (main only)
         if: github.ref_name == 'main'
-        run: echo '${{ steps.set-matrix.outputs.matrix }}' > deploy-matrix.json
+        run: |
+          echo '${{ steps.set-matrix.outputs.matrix }}' > deploy-matrix.json
+          echo '${{ steps.k8sfilter.outputs.k8s }}' > deploy-k8s.txt
 
       - uses: actions/upload-artifact@v4
         if: github.ref_name == 'main'
         with:
           name: deploy-matrix
-          path: deploy-matrix.json
+          path: |
+            deploy-matrix.json
+            deploy-k8s.txt
           retention-days: 1
 
   build-and-push:
