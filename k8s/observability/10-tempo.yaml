@@ -59,7 +59,9 @@ spec:
             periodSeconds: 10
             failureThreshold: 12
           resources:
-            limits: { memory: "400Mi" }
+            # 400Mi 원안은 실측 OOMKilled(2026-07-11) — WAL replay+ingester+compactor 동시
+            # 기동 시 400Mi를 초과. final 노드 헤드룸(~1.4Gi) 내에서 600Mi로 상향.
+            limits: { memory: "600Mi" }
             requests: { cpu: "50m" }
           volumeMounts:
             - { name: tempo-config, mountPath: /etc/tempo }
