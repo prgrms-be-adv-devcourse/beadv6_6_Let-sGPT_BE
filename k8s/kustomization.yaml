@@ -22,6 +22,7 @@ resources:
 - 26-search.yaml
 - 30-frontend.yaml
 - 31-ingress.yaml
+- 32-https-redirect-middleware.yaml
 
   # FE는 :latest 미발행(CI가 SHA로만 태깅) → 현행 SHA 핀 유지.
 images:
