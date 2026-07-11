@@ -1,0 +1,37 @@
+# WS-F(7/10 observability plan) — cert-manager ClusterIssuer(cluster-scoped 리소스).
+# k8s/kustomization.yaml(namespace: openat)에는 넣지 않는다 — kustomize의 namespace
+# 트랜스포머는 built-in Kind(ClusterRole 등)는 cluster-scoped로 인식해 건너뛰지만, CRD
+# (ClusterIssuer 등)는 스코프를 몰라서 namespace를 그대로 찍어버린다(구현 시 kustomize build로
+# 실사 확인 — API server가 cluster-scoped 리소스의 namespace 필드를 거부/무시할 수 있어 위험).
+# cert-manager 설치(README 참고, ArgoCD 설치 선례와 동일한 plain manifest 방식)와 함께
+# 1회성 `kubectl apply -f k8s/bootstrap/40-cert-issuer.yaml`로 적용 — 발급 정책만 정의한다.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: whddn04@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik
+---
+# 최초 검증은 staging으로 1회 성공 확인 후 위 prod로 전환(발급 실패 rate-limit 회피).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: whddn04@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

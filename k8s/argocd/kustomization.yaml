@@ -10,6 +10,7 @@ resources:
   - 00-namespace.yaml
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.4/manifests/install.yaml
   - app-openat.yaml
+  - app-observability.yaml
 
 patches:
   - path: delete-extras.yaml    # dex/notifications/applicationset 제거

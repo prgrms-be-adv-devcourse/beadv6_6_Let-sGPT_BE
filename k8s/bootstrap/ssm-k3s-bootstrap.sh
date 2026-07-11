@@ -35,8 +35,13 @@ run_ssm() { # $1=instance-id $2=comment $3...=commands(json array 문자열)
 }
 
 echo "== 1. k3s server 설치 (semi/t3.large, tier=hotpath) =="
+# --kubelet-arg system-reserved/kube-reserved: 콜드부트 시 앱 파드가 CPU를 굶겨도
+# kubelet/containerd/apiserver(kine 포함, 전부 같은 프로세스·같은 2vCPU) 몫은 항상 보장한다.
+# 2026-07-11 k3s_node_coldboot_contention_plan §2-A — 근거: 사고 재현 로그(PLEG unhealthy,
+# kine slow SQL 26.7s, SSM ConnectionLost 20분+)가 컨트롤플레인 자체의 CPU 아사를 직접 입증.
+# Allocatable 2000m→1400m로 줄지만 7개 서비스 CPU request 합계가 700m뿐이라 request 기준 무해.
 run_ssm "$SEMI_ID" "k3s-server-install" '[
-  "curl -sfL https://get.k3s.io | sh -s - server --secrets-encryption --write-kubeconfig-mode 644 --node-label tier=hotpath",
+  "curl -sfL https://get.k3s.io | sh -s - server --secrets-encryption --write-kubeconfig-mode 644 --node-label tier=hotpath --kubelet-arg=\"system-reserved=cpu=300m,memory=256Mi\" --kubelet-arg=\"kube-reserved=cpu=300m,memory=256Mi\"",
   "sudo k3s kubectl get nodes"
 ]'
 

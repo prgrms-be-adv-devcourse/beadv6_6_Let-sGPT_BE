@@ -1,0 +1,86 @@
+# WS-B(7/10 observability plan) — Tempo single binary. medium 노드(tier=observability) 전용
+# 배치는 13-elasticsearch.yaml과 동일 패턴(toleration+nodeSelector 세트 필수 — research §1).
+# 이미지 태그는 구현 시점(2026-07-10) 최신 안정 2.x(2.10.7) 확인 후 고정.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: observability
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            http:
+              endpoint: "0.0.0.0:4318"
+            grpc:
+              endpoint: "0.0.0.0:4317"
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/blocks
+        wal:
+          path: /var/tempo/wal
+    compactor:
+      compaction:
+        block_retention: 48h
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tempo
+  namespace: observability
+spec:
+  serviceName: tempo
+  replicas: 1
+  selector:
+    matchLabels: { app: tempo }
+  template:
+    metadata:
+      labels: { app: tempo }
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.10.7
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          ports:
+            - { containerPort: 3200 }
+            - { containerPort: 4318 }
+            - { containerPort: 4317 }
+          readinessProbe:
+            httpGet: { path: /ready, port: 3200 }
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            limits: { memory: "400Mi" }
+            requests: { cpu: "50m" }
+          volumeMounts:
+            - { name: tempo-config, mountPath: /etc/tempo }
+            - { name: tempo-data, mountPath: /var/tempo }
+      volumes:
+        - name: tempo-config
+          configMap: { name: tempo-config }
+  volumeClaimTemplates:
+    - metadata: { name: tempo-data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: observability
+spec:
+  selector: { app: tempo }
+  ports:
+    - { name: http, port: 3200, targetPort: 3200 }
+    - { name: otlp-http, port: 4318, targetPort: 4318 }
+    - { name: otlp-grpc, port: 4317, targetPort: 4317 }

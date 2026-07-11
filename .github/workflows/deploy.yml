@@ -48,15 +48,18 @@ jobs:
         run: |
           SERVICES=$(jq -r '. | join(" ")' deploy-matrix.json)
           echo "list=$SERVICES" >> "$GITHUB_OUTPUT"
-          if [ -z "$SERVICES" ]; then
-            echo "변경된 도메인이 없어 배포를 스킵합니다."
+          # 매니페스트-only 변경(k8s/**)도 deploy/state에 반영해야 하므로 별도 플래그로 받는다(Q100 갭).
+          K8S_CHANGED=$(cat deploy-k8s.txt 2>/dev/null | tr -d '[:space:]' || echo false)
+          echo "k8s_changed=$K8S_CHANGED" >> "$GITHUB_OUTPUT"
+          if [ -z "$SERVICES" ] && [ "$K8S_CHANGED" != "true" ]; then
+            echo "변경된 도메인/매니페스트가 없어 배포를 스킵합니다."
           else
-            echo "배포 대상: $SERVICES"
+            echo "배포 대상 서비스: ${SERVICES:-(이미지 변경 없음)} / 매니페스트(k8s/**) 변경: $K8S_CHANGED"
           fi
 
       # ENV_SECRETS(JSON 또는 KEY=VALUE) → .env. create-secrets.sh 입력.
       - name: Render .env from ENV_SECRETS
-        if: steps.services.outputs.list != ''
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true'
         env:
           ENV_SECRETS: ${{ secrets.ENV_SECRETS }}
         run: |
@@ -80,7 +83,7 @@ jobs:
       # app-secrets + ghcr-pull(imagePullSecret) + default SA 부착 — 전부 멱등.
       # ghcr-pull을 매 배포 보장 → 노드 교체/신규 클러스터에서도 kubelet이 정석 pull(Q83-6).
       - name: Provision k8s secrets (idempotent)
-        if: steps.services.outputs.list != ''
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true'
         env:
           GHCR_USER: ${{ github.actor }}
           GHCR_PAT: ${{ secrets.GHCR_PULL_PAT }}
@@ -96,36 +99,60 @@ jobs:
             echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           fi
 
-      # deploy/state 브랜치에 변경 서비스만 SHA로 핀 → 누적(미변경 서비스는 기존 pin 유지).
-      - name: Bump image pins on deploy/state (GitOps source of truth)
-        if: steps.services.outputs.list != ''
+      # deploy/state = openat 앱의 desired-state 단일 출처. 두 관심사를 분리한다(Q100 갭 수정):
+      #  (1) main→deploy/state 구조 병합(merge)은 "항상" 수행 — 매니페스트(probe·sync-wave·configmap
+      #      등) 변경을 이미지 재빌드 유무와 무관하게 전파해야 GitOps가 반쪽으로 죽지 않는다.
+      #  (2) 이미지 SHA 핀 루프는 "실제 재빌드된 서비스가 있을 때만" — 매니페스트-only 변경이면 스킵.
+      # 이전 구조는 (1)이 (2)와 한 스텝에 묶여, 이미지 변경이 없으면 merge/push 자체가 스킵됐다.
+      - name: Sync deploy/state (merge main + pin changed images)
+        id: pin
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true'
         env:
           SHA: ${{ github.event.workflow_run.head_sha }}
+          SVCS: ${{ steps.services.outputs.list }}
         run: |
           git config user.name  "deploy-bot"
           git config user.email "deploy-bot@users.noreply.github.com"
           git fetch origin deploy/state || true
           git checkout deploy/state 2>/dev/null || git checkout -b deploy/state
-          # main의 구조 변경(매니페스트 추가/삭제, probe 등)만 흡수, 이미지 pin 충돌은 deploy/state 것 유지.
+          # main의 구조 변경(매니페스트 추가/삭제, probe, sync-wave, configmap 등)을 흡수.
+          # 이미지 pin 충돌은 deploy/state 것 유지(-X ours). 매니페스트-only여도 이 merge로 전파된다.
           git merge -X ours --no-edit "$SHA"
-          for svc in ${{ steps.services.outputs.list }}; do
-            ( cd k8s && kustomize edit set image "$IMG_BASE/$svc=$IMG_BASE/$svc:$SHA" )
-          done
-          git add k8s/kustomization.yaml
-          git commit -m "chore(deploy): pin ${{ steps.services.outputs.list }} to $SHA [skip ci]" || echo "no change to commit"
+          # 이미지 SHA 핀은 재빌드된 서비스가 있을 때만(매니페스트-only 변경이면 SVCS가 비어 스킵).
+          if [ -n "$SVCS" ]; then
+            for svc in $SVCS; do
+              ( cd k8s && kustomize edit set image "$IMG_BASE/$svc=$IMG_BASE/$svc:$SHA" )
+            done
+            git add k8s/kustomization.yaml
+            git commit -m "chore(deploy): pin $SVCS to $SHA [skip ci]" || echo "no image change to commit"
+          fi
+          # merge가 새 커밋을 만들었으면(매니페스트 전파) 또는 핀 커밋이 있으면 push. 없으면 no-op이라
+          # revision=현재 HEAD가 되고 아래 수렴확인이 즉시 통과한다.
           git push origin deploy/state
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # push된 deploy/state를 ArgoCD가 auto-sync — 러너는 apply 없이 수렴 확인만 한다
       # (도구 추가 없음, kubectl만 사용. 리서치 argocd_ci_smoke_research §3.8-A).
+      # ArgoCD 기본 git 폴링 주기(3분)를 기다리면 방금 push한 revision을 아직 못 본 채
+      # "이전 revision 기준 Synced/Healthy"를 그대로 참으로 오인할 수 있어(2026-07-09 실제
+      # CD 1회차에서 재현 확인 — payment 파드가 갱신 안 된 채 convergence 스텝만 성공 처리됨),
+      # ① hard refresh로 즉시 재조회를 강제하고 ② status.sync.revision이 이번에 push한
+      # 커밋과 정확히 일치할 때만 수렴으로 인정한다.
       - name: Wait for ArgoCD convergence
-        if: steps.services.outputs.list != ''
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true'
+        env:
+          TARGET_REV: ${{ steps.pin.outputs.revision }}
         run: |
+          kubectl -n argocd annotate application openat argocd.argoproj.io/refresh=hard --overwrite
           for i in $(seq 1 60); do   # 최대 5분
+            REV=$(kubectl -n argocd get application openat -o jsonpath='{.status.sync.revision}' 2>/dev/null || echo "?")
             S=$(kubectl -n argocd get application openat \
                 -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "?")
-            [ "$S" = "Synced/Healthy" ] && { echo "ArgoCD converged."; exit 0; }
-            echo "waiting... ($S)"; sleep 5
+            if [ "$REV" = "$TARGET_REV" ] && [ "$S" = "Synced/Healthy" ]; then
+              echo "ArgoCD converged at $REV."; exit 0
+            fi
+            echo "waiting... (rev=$REV, want=$TARGET_REV, status=$S)"; sleep 5
           done
-          echo "ERROR: ArgoCD did not converge in 300s (last: $S)" >&2   # 실패는 시끄럽게
+          echo "ERROR: ArgoCD did not converge to $TARGET_REV in 300s (last rev=$REV status=$S)" >&2   # 실패는 시끄럽게
           kubectl -n argocd get application openat -o yaml | tail -40 >&2
           exit 1
