@@ -1,0 +1,11 @@
+# WS-F(7/10 observability plan) — HTTP→HTTPS 리다이렉트용 Traefik Middleware.
+# k3s 번들 Traefik의 CRD 그룹은 traefik.io/v1alpha1(구현 시 실사 확인 — traefik.containo.us 아님).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: openat
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true

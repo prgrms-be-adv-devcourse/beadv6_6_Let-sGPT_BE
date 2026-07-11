@@ -82,6 +82,10 @@ management:
     health:
       probes:
         enabled: true
+  tracing:
+    export:
+      otlp:
+        enabled: false   # 로컬/compose 기본 off — Tempo 없으면 export 실패가 반복 로깅됨(k8s ConfigMap에서 true로 override)
 
 ---
 spring:

@@ -15,6 +15,11 @@ data:
   REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   ELASTICSEARCH_URIS: "http://elasticsearch:9200"
+  # WS-E(7/10 observability plan) — OTLP 트레이스 익스포트(Tempo 수신). 프로퍼티 경로는 Boot 4.1
+  # 실사로 확정(management.otlp.tracing.* 는 4.1에서 deprecated — 아래가 현행 canonical 경로).
+  MANAGEMENT_TRACING_EXPORT_OTLP_ENABLED: "true"
+  MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: "http://tempo.observability.svc.cluster.local:4318/v1/traces"
+  MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
 ---
 # postgres 최초 기동(빈 PVC) 시 docker-entrypoint-initdb.d로 실행되는 스키마 시드.
 # compose의 ./db/init 바인드마운트를 대체한다. 내용은 db/init/01-schemas.sql과 동일 유지할 것.

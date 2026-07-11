@@ -55,6 +55,18 @@ subprojects {
         testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     }
 
+    if (project.name != "common") {
+        dependencies {
+            // WS-E(7/10 observability plan) — OTLP 트레이스 익스포트(Tempo 수신).
+            // Boot 4.1은 트레이싱 자동설정을 별도 모듈로 분리했다(spring-boot-actuator-autoconfigure에는
+            // 더 이상 없음) — spring-boot-micrometer-tracing-opentelemetry를 명시적으로 추가해야
+            // OtlpTracingAutoConfiguration이 활성화된다(4.1.0 jar 실사로 확인, 구현 시점 검증 완료).
+            implementation("org.springframework.boot:spring-boot-micrometer-tracing-opentelemetry")
+            implementation("io.micrometer:micrometer-tracing-bridge-otel")
+            implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+        }
+    }
+
     if (project.name != "apigateway" && project.name != "common") {
         dependencies {
             implementation("org.springframework.boot:spring-boot-starter-data-jpa")

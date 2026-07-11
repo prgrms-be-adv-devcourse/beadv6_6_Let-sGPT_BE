@@ -9,9 +9,10 @@ name: PR-Agent
 # 리뷰 초점(결제 도메인 위험요소)은 리포 루트 `.pr_agent.toml`의 extra_instructions로 지시.
 on:
   pull_request:
+    branches: [main]         # ★ main 대상 PR에서만 자동 리뷰 (dev PR엔 안 돌림 — 빈도 절감)
     types: [opened, reopened, ready_for_review]
   issue_comment:
-    types: [created]         # PR 코멘트로 수동 명령(/review, /improve)
+    types: [created]         # 수동 /review·/improve (사람이 명시적으로 칠 때만, 드묾)
 
 jobs:
   pr_agent:
