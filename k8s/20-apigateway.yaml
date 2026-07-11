@@ -5,6 +5,10 @@ kind: Deployment
 metadata:
   name: apigateway
   namespace: openat
+  annotations:
+    # k3s_node_coldboot_contention_plan §2-C: 7서비스 동시배포(트리거 A) 방지 — ArgoCD가
+    # wave 순서(낮은 값 먼저, 이전 wave 헬스 확인 후 다음 진행)로만 apply하게 강제.
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   replicas: 1
   # 단일 워커 노드: 롤링 시 옛+새 파드 2배 메모리로 Insufficient memory Pending(Q80 #7) 방지.
@@ -32,11 +36,11 @@ spec:
             - secretRef: { name: app-secrets }
           env:
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms64m -Xmx128m" }
-          # 기동 완료까지 최대 180초 유예(2vCPU에서 6개 JVM 동시 부팅 감안) — 이후 liveness로 전환
+          # 기동 완료까지 최대 300초 유예(2vCPU에서 6개 JVM 동시 부팅 + kubelet/kube 예약 감안, 실측 최악 251s) — 이후 liveness로 전환. k3s_node_coldboot_contention_plan §2-B/§2-A 동시 적용 전제
           startupProbe:
             httpGet: { path: /actuator/health/liveness, port: 8000 }
             periodSeconds: 5
-            failureThreshold: 36
+            failureThreshold: 60
           readinessProbe:
             httpGet: { path: /actuator/health/readiness, port: 8000 }
             periodSeconds: 5

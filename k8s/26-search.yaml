@@ -5,6 +5,10 @@ kind: Deployment
 metadata:
   name: search
   namespace: openat
+  annotations:
+    # k3s_node_coldboot_contention_plan §2-C — 순차 롤아웃(wave 낮은 순). final 노드 배치라
+    # semi(hotpath)의 콜드부트 경합과는 무관하나 일관성을 위해 wave 부여.
+    argocd.argoproj.io/sync-wave: "7"
 spec:
   replicas: 1
   strategy:
@@ -37,7 +41,7 @@ spec:
           startupProbe:
             httpGet: { path: /actuator/health/liveness, port: 9240 }
             periodSeconds: 5
-            failureThreshold: 36
+            failureThreshold: 60
           readinessProbe:
             httpGet: { path: /actuator/health/readiness, port: 9240 }
             periodSeconds: 5
