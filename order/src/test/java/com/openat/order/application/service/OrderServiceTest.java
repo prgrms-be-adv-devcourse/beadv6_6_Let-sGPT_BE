@@ -1,6 +1,7 @@
 package com.openat.order.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doThrow;
@@ -273,7 +274,7 @@ class OrderServiceTest {
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
         // when
-        var result = orderService.getPaymentValidationInfo(orderId);
+        var result = orderService.getPaymentValidationInfo(memberId, orderId);
 
         // then
         assertThat(result.orderId()).isEqualTo(orderId);
@@ -281,6 +282,23 @@ class OrderServiceTest {
         assertThat(result.amount()).isEqualTo(order.getTotalPrice());
         assertThat(result.status()).isEqualTo(OrderStatus.PAYMENT_PENDING);
         assertThat(result.paymentExpiresAt()).isEqualTo(order.getPaymentExpiresAt());
+    }
+
+    @Test
+    @DisplayName("주문 검증 조회는 소유자가 아니면 거부한다")
+    void getPaymentValidationInfo_rejectsNonOwner() {
+        // given
+        UUID ownerId = UUID.randomUUID();
+        UUID otherMemberId = UUID.randomUUID();
+        UUID dropId = UUID.randomUUID();
+        Order order = createOrder(ownerId, dropId, snapshot(dropId), 2, "idem-owner");
+        UUID orderId = order.getId();
+
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+
+        // when & then
+        assertThatThrownBy(() -> orderService.getPaymentValidationInfo(otherMemberId, orderId))
+                .isInstanceOf(BusinessException.class);
     }
 
     private OrderSnapshotInfo snapshot(UUID dropId) {

@@ -20,5 +20,5 @@ public interface OrderUseCase {
 
     OrderCancelInfo cancelOrder(UUID memberId, UUID orderId);
 
-    PaymentValidationInfo getPaymentValidationInfo(UUID orderId);
+    PaymentValidationInfo getPaymentValidationInfo(UUID memberId, UUID orderId);
 }
