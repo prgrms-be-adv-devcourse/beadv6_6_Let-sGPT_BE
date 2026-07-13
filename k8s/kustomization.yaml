@@ -45,4 +45,4 @@ images:
     newTag: latest
   # FE는 :latest 미발행(CI가 SHA로만 태깅) → 현행 SHA 핀 유지.
   - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
-    newTag: "83e7fc622038902393b67ac50e8ecbbf37a25f28"
+    newTag: "51b8254017e1c29915beed8f25b10ac21f255622"
