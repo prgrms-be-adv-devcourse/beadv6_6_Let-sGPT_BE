@@ -63,6 +63,8 @@ spec:
         - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
       containers:
         - name: argocd-application-controller
-          resources:
-            limits: { memory: "92Mi" }  # k3s_memory_mitigation_plan §9-7 — final limit 재분배(4종 합 360Mi)
-            requests: { memory: "80Mi" }
+          # k3s_memory_mitigation_plan §9-9 — 92Mi로 줄였다가 실제 적용 시 OOMKilled 크래시루프
+          # 확인(재현: reconcile 캐시가 4종 중 이 컴포넌트에 몰려있어 "합 171Mi 평균 배분" 가정이
+          # 틀렸음). 실측 없이 안전 마진 반영해 300Mi로 교정.
+          limits: { memory: "300Mi" }
+          requests: { memory: "150Mi" }
