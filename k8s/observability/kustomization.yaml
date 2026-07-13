@@ -7,6 +7,7 @@ namespace: observability
 resources:
   - 00-namespace.yaml
   - 10-tempo.yaml
+  - 11-otel-collector.yaml
   - 20-prometheus.yaml
   - 21-postgres-exporter.yaml
   - 30-grafana.yaml

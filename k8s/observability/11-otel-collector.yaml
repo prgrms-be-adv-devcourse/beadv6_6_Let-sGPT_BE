@@ -1,0 +1,92 @@
+# OTel Collector 게이트웨이(단일 인스턴스, final 노드 고정) — 7-13-otel_collector_gateway_plan.md
+# 앱 7종(apigateway/member/product/order/payment/settlement/search)이 Tempo에 직접 push하던 구조를
+# 이 Collector 경유로 전환. 배치(batch)+공통 리소스 속성(resource) 처리 후 Tempo로 전달.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: observability
+data:
+  otel-collector.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 180        # resources.limits.memory(224Mi)보다 낮게 — OOMKill 전에 스스로 드롭
+        spike_limit_mib: 40
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+      resource:
+        attributes:
+          - { key: k8s.cluster.name, value: "openat-k3s", action: upsert }
+          - { key: deployment.environment, value: "production", action: upsert }
+    exporters:
+      otlp/tempo:
+        endpoint: "tempo.observability.svc.cluster.local:4317"
+        tls:
+          insecure: true
+    extensions:
+      health_check:
+        endpoint: "0.0.0.0:13133"
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch, resource]
+          exporters: [otlp/tempo]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: otel-collector }
+  template:
+    metadata:
+      labels: { app: otel-collector }
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.156.0
+          args: ["--config=/etc/otel/otel-collector.yaml"]
+          ports:
+            - { containerPort: 4317 }
+            - { containerPort: 4318 }
+          readinessProbe:
+            httpGet: { path: /, port: 13133 }
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            # k3s_memory_mitigation_plan §9-7 final 재분배표 기준.
+            limits: { memory: "224Mi", cpu: "200m" }
+            requests: { cpu: "50m", memory: "80Mi" }
+          volumeMounts:
+            - { name: otel-config, mountPath: /etc/otel }
+      volumes:
+        - name: otel-config
+          configMap: { name: otel-collector-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  selector: { app: otel-collector }
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: 4317 }
+    - { name: otlp-http, port: 4318, targetPort: 4318 }
