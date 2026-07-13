@@ -22,4 +22,8 @@ spec:
     namespace: argocd
   syncPolicy:
     automated: { prune: true, selfHeal: true }
-    syncOptions: [CreateNamespace=false]
+    # ServerSideApply=true: helm 렌더 전환(Q112) 후 self-sync가 client-side 3-way merge로
+    # Deployment/StatefulSet의 immutable spec.selector 를 패치에 포함해 "field is immutable"로
+    # sync 전체가 실패하던 문제(Q113-C) 해소. SSA는 managedFields 기반이라 값이 일치하면
+    # 불변 필드를 패치에 넣지 않는다. CreateNamespace=false 는 부트스트랩 규약 유지.
+    syncOptions: [CreateNamespace=false, ServerSideApply=true]
