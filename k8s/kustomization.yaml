@@ -49,4 +49,4 @@ images:
   newTag: e2aaa0cd35d919a12078f4f846c675a428970607
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
-  newTag: 9c4c41b731f7076a306b746f14b9b5550aea2768
+  newTag: fe3f92bf9902e1abfd93ebc46e39cb248283cc78
