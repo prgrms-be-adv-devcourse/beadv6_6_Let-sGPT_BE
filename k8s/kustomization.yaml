@@ -48,4 +48,5 @@ images:
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
   newTag: e2aaa0cd35d919a12078f4f846c675a428970607
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
-  newTag: 83e7fc622038902393b67ac50e8ecbbf37a25f28
+  newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
+  newTag: 9c4c41b731f7076a306b746f14b9b5550aea2768
