@@ -1,0 +1,52 @@
+# ArgoCD 설치 설정의 단일 출처(source of truth).
+# 이 values 를 argo-helm 의 argo-cd 차트에 먹여 렌더한 결과가 ../argocd-install.yaml 이며,
+# 그 산출물이 실제 클러스터에 적용된다(GitOps sync 대상). 렌더는 render.sh 참고.
+#   - 차트 버전 10.1.2  ↔  ArgoCD 앱버전 v3.4.4 (기존 install.yaml URL 과 동일 앱버전 핀. 10.1.3=v3.4.5)
+#   - 이전 구조(원격 install.yaml URL + delete-extras.yaml + patch-resources.yaml 손패치)를
+#     이 values 하나로 대체. k3s_memory_mitigation_plan §9-12(C안) 참고.
+
+# 모든 컴포넌트를 medium(관측) 노드에 배치 — Q74 스케줄링 규약.
+# helm 이 global.nodeSelector 기본값(kubernetes.io/os: linux)과 깊은 병합하므로 tier 만 추가하면 됨.
+global:
+  nodeSelector:
+    kubernetes.io/os: linux
+    tier: observability
+  tolerations:
+    - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+
+# CRD 는 차트가 함께 설치(기본값 install:true/keep:true 유지).
+# 단, applicationset CRD 는 render.sh 가 컨트롤러와 함께 제거함(아래 주석).
+
+# --- 상주 비용 절감: 이 규모(medium 4GB, 관측 스택 동거)에서 불필요한 컴포넌트 off ---
+# dex(SSO)·notifications 는 차트 토글로 끔. argocd_ci_smoke_research §3.3 근거.
+# applicationset-controller 는 차트 10.x 에서 비활성 토글이 사라진(코어 편입) 컴포넌트라
+# values 로 못 끄고 render.sh 후처리에서 매니페스트째 제거한다(그 CRD 포함).
+dex:
+  enabled: false
+notifications:
+  enabled: false
+
+# --- 컴포넌트별 memory limit/request — k3s_memory_mitigation_plan §9-7/§9-9/§9-11 ---
+controller:
+  # §9-11: 92Mi/300Mi 둘 다 OOMKilled 실측. 1000Mi 임시 안정화 후 실측(peak 307Mi) 근거로 확정.
+  resources:
+    limits: { memory: "600Mi" }
+    requests: { memory: "280Mi" }
+
+repoServer:
+  # §9-12: C안이 원격 fetch 부하를 repo-server 에서 제거(로컬 정적 렌더만) → 근원 완화.
+  # 다만 커밋된 대용량 install 을 로컬 kustomize build 하는 부하는 남으므로 관측형 파드보다는 무거움.
+  # §9-11 교훈(넉넉히 시작→실측→여유 반영) 적용해 잠정 256Mi 로 시작. 실측 후 트림 예정.
+  resources:
+    limits: { memory: "256Mi" }
+    requests: { memory: "128Mi" }
+
+server:
+  resources:
+    limits: { memory: "80Mi" }
+    requests: { memory: "48Mi" }
+
+redis:
+  resources:
+    limits: { memory: "48Mi" }
+    requests: { memory: "32Mi" }
