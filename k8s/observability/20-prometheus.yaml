@@ -89,8 +89,9 @@ spec:
             periodSeconds: 10
             failureThreshold: 12
           resources:
-            limits: { memory: "512Mi" }
-            requests: { cpu: "50m" }
+            # k3s_memory_mitigation_plan §9-7 — final limit 재분배, live 45Mi 대비 여유 충분해 축소.
+            limits: { memory: "288Mi" }
+            requests: { cpu: "50m", memory: "192Mi" }
           volumeMounts:
             - { name: prometheus-config, mountPath: /etc/prometheus }
             - { name: prometheus-data, mountPath: /prometheus }

@@ -29,10 +29,11 @@ spec:
             exec:
               command: ["/bin/sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
             periodSeconds: 5
+            timeoutSeconds: 3   # k3s_memory_mitigation_plan §4 — Q105 "1초 데드라인 초과 연쇄" 재발 방지
             failureThreshold: 6
           resources:
             limits: { memory: "768Mi" }
-            requests: { cpu: "100m" }
+            requests: { cpu: "100m", memory: "512Mi" }
           volumeMounts:
             - { name: data, mountPath: /var/lib/postgresql/data }
             - { name: db-init, mountPath: /docker-entrypoint-initdb.d }

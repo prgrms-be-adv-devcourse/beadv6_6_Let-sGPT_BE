@@ -29,8 +29,9 @@ spec:
           envFrom:
             - secretRef: { name: pg-exporter-secret }
           resources:
-            limits: { memory: "64Mi" }
-            requests: { cpu: "20m" }
+            # k3s_memory_mitigation_plan §9-7 — final limit 재분배, live 9Mi 대비 여유 충분.
+            limits: { memory: "48Mi" }
+            requests: { cpu: "20m", memory: "32Mi" }
 ---
 apiVersion: v1
 kind: Service
