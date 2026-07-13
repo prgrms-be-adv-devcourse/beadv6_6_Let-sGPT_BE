@@ -34,14 +34,36 @@ run_ssm() { # $1=instance-id $2=comment $3...=commands(json array 문자열)
   fi
 }
 
+# k3s_memory_mitigation_plan.md §2(WS-M1 zram) — 스왑 없음+eviction-hard 기본 100Mi라
+# 메모리 압박 시 파드 단위 시끄러운 실패(Evicted) 없이 노드가 통째로 스래싱(Q104/Q105 사고
+# 원출처). zram은 디스크 I/O 0(EBS 스왑파일은 gp3 읽기상한과 경합해 기각)이고 k8s NoSwap 정책상
+# 파드는 못 쓰지만 k3s server/containerd/sshd/ssm-agent 등 관리면이 죽지 않게 하는 효과.
+# server/agent 공통 — 두 노드 동일 적용(§0 "둘 다 고쳐야 드리프트가 안 남").
+ZRAM_CMDS='[
+  "sudo apt-get update -qq",
+  "sudo apt-get install -y zram-tools",
+  "printf \"ALGO=zstd\\nPERCENT=25\\nPRIORITY=100\\n\" | sudo tee /etc/default/zramswap >/dev/null",
+  "sudo systemctl enable --now zramswap",
+  "sudo systemctl restart zramswap",
+  "echo \"vm.swappiness=100\" | sudo tee /etc/sysctl.d/99-zram.conf >/dev/null",
+  "sudo sysctl -p /etc/sysctl.d/99-zram.conf",
+  "swapon --show; zramctl"
+]'
+
+echo "== 0. zram 스왑 (semi) =="
+run_ssm "$SEMI_ID" "zram-swap-semi" "$ZRAM_CMDS"
+
 echo "== 1. k3s server 설치 (semi/t3.large, tier=hotpath) =="
 # --kubelet-arg system-reserved/kube-reserved: 콜드부트 시 앱 파드가 CPU를 굶겨도
 # kubelet/containerd/apiserver(kine 포함, 전부 같은 프로세스·같은 2vCPU) 몫은 항상 보장한다.
 # 2026-07-11 k3s_node_coldboot_contention_plan §2-A — 근거: 사고 재현 로그(PLEG unhealthy,
 # kine slow SQL 26.7s, SSM ConnectionLost 20분+)가 컨트롤플레인 자체의 CPU 아사를 직접 입증.
 # Allocatable 2000m→1400m로 줄지만 7개 서비스 CPU request 합계가 700m뿐이라 request 기준 무해.
+# eviction-hard/soft: k3s_memory_mitigation_plan.md §3(WS-M2) — 기본 100Mi는 스래싱 진입
+# 수위(200~300Mi대)보다 낮아 사후 도달 → 400Mi로 상향해 진입 전 시끄러운 Evicted로 전환.
+# allocatable −300Mi(≈7.1Gi)는 현 requests(75%)로 수용 가능(research §3-2).
 run_ssm "$SEMI_ID" "k3s-server-install" '[
-  "curl -sfL https://get.k3s.io | sh -s - server --secrets-encryption --write-kubeconfig-mode 644 --node-label tier=hotpath --kubelet-arg=\"system-reserved=cpu=300m,memory=256Mi\" --kubelet-arg=\"kube-reserved=cpu=300m,memory=256Mi\"",
+  "curl -sfL https://get.k3s.io | sh -s - server --secrets-encryption --write-kubeconfig-mode 644 --node-label tier=hotpath --kubelet-arg=\"system-reserved=cpu=300m,memory=256Mi\" --kubelet-arg=\"kube-reserved=cpu=300m,memory=256Mi\" --kubelet-arg=\"eviction-hard=memory.available<400Mi\" --kubelet-arg=\"eviction-soft=memory.available<600Mi\" --kubelet-arg=\"eviction-soft-grace-period=memory.available=60s\" --kubelet-arg=\"eviction-max-pod-grace-period=30\"",
   "sudo k3s kubectl get nodes"
 ]'
 
@@ -58,6 +80,9 @@ echo "== 3. k3s agent 조인 (final/t3.medium, tier=observability) =="
 run_ssm "$FINAL_ID" "k3s-agent-join" "[
   \"curl -sfL https://get.k3s.io | K3S_URL=https://$SEMI_PRIV:6443 K3S_TOKEN=$K3S_TOKEN sh -s - agent --node-label tier=observability\"
 ]"
+
+echo "== 3-1. zram 스왑 (final, WS-M1 권장 — semi와 동일 PERCENT 25) =="
+run_ssm "$FINAL_ID" "zram-swap-final" "$ZRAM_CMDS"
 
 echo "== 4. taint + helm CLI (서버 노드) =="
 run_ssm "$SEMI_ID" "taint-and-helm" '[

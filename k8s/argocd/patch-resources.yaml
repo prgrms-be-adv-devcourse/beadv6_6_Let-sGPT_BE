@@ -16,7 +16,8 @@ spec:
       containers:
         - name: redis
           resources:
-            limits: { memory: "64Mi" }
+            limits: { memory: "48Mi" }  # k3s_memory_mitigation_plan §9-7 — final limit 재분배
+            requests: { memory: "32Mi" }  # k3s_memory_mitigation_plan §7-2
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -31,7 +32,8 @@ spec:
       containers:
         - name: argocd-repo-server
           resources:
-            limits: { memory: "256Mi" }
+            limits: { memory: "140Mi" }  # k3s_memory_mitigation_plan §9-7 — final limit 재분배
+            requests: { memory: "96Mi" }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -46,7 +48,8 @@ spec:
       containers:
         - name: argocd-server
           resources:
-            limits: { memory: "128Mi" }
+            limits: { memory: "80Mi" }  # k3s_memory_mitigation_plan §9-7 — final limit 재분배
+            requests: { memory: "48Mi" }
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -61,4 +64,5 @@ spec:
       containers:
         - name: argocd-application-controller
           resources:
-            limits: { memory: "256Mi" }
+            limits: { memory: "92Mi" }  # k3s_memory_mitigation_plan §9-7 — final limit 재분배(4종 합 360Mi)
+            requests: { memory: "80Mi" }

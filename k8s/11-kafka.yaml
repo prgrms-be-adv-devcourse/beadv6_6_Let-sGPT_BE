@@ -39,7 +39,9 @@ spec:
             - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
             - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
             - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
-            - { name: KAFKA_HEAP_OPTS, value: "-Xms350M -Xmx500M" }
+            # k3s_memory_mitigation_plan.md §7-1(WS-M5) — 토픽 수·3파티션 규모에 500M은 과대
+            # 추정(★검수, 드롭 창 이벤트 버스트 우려 시 448M 절충).
+            - { name: KAFKA_HEAP_OPTS, value: "-Xms256M -Xmx384M" }
             # ★ S1(final_dayplan_v2_plan §1): 자동 생성 토픽 기본 파티션 3.
             # 근거 = 계획된 최대 컨슈머 병렬성(pre-scale replica 3)과 일치(Q74 §1).
             # 파티션 키 전송 여부는 S8에서 별도 확인(파티션>1 + 키 미전송 = 순서 역전).
@@ -47,7 +49,7 @@ spec:
             - { name: KAFKA_LOG_DIRS, value: "/var/lib/kafka/data" }
           resources:
             limits: { memory: "700Mi" }
-            requests: { cpu: "100m" }
+            requests: { cpu: "100m", memory: "550Mi" }
           volumeMounts:
             - { name: data, mountPath: /var/lib/kafka/data }
   volumeClaimTemplates:

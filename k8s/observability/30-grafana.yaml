@@ -68,8 +68,9 @@ spec:
             periodSeconds: 10
             failureThreshold: 12
           resources:
-            limits: { memory: "256Mi" }
-            requests: { cpu: "30m" }
+            # k3s_memory_mitigation_plan §9-7 — final limit 재분배. live 143Mi 대비 여유 축소(victim #1 유지).
+            limits: { memory: "176Mi" }
+            requests: { cpu: "30m", memory: "128Mi" }  # k3s_memory_mitigation_plan §7-2 — 의도적 usage>request(eviction victim #1)
           volumeMounts:
             - { name: datasources, mountPath: /etc/grafana/provisioning/datasources }
             - { name: dashboard-providers, mountPath: /etc/grafana/provisioning/dashboards }
