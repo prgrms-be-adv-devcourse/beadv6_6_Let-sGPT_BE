@@ -63,8 +63,9 @@ spec:
         - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
       containers:
         - name: argocd-application-controller
-          # k3s_memory_mitigation_plan §9-9 — 92Mi로 줄였다가 실제 적용 시 OOMKilled 크래시루프
-          # 확인(재현: reconcile 캐시가 4종 중 이 컴포넌트에 몰려있어 "합 171Mi 평균 배분" 가정이
-          # 틀렸음). 실측 없이 안전 마진 반영해 300Mi로 교정.
-          limits: { memory: "300Mi" }
-          requests: { memory: "150Mi" }
+          # k3s_memory_mitigation_plan §9-9~11 — 92Mi/300Mi 둘 다 OOMKilled 실측(300Mi는
+          # 기동 7초 만에 죽음 — 추측치로는 재현 불가). 1000Mi로 임시 상향해 안정화시킨 뒤
+          # 실측(steady-state 257~307Mi, 재시작 0)한 결과를 근거로 여유 2배 반영해 확정.
+          resources:
+            limits: { memory: "600Mi" }
+            requests: { memory: "280Mi" }
