@@ -45,6 +45,12 @@ metadata:
   namespace: observability
 spec:
   replicas: 1
+  # k3s_memory_mitigation_plan §9-7 구현기 — 기본 25% surge 전략은 final 노드에
+  # 여유가 없을 때 신규 파드 스케줄링 자체가 막혀 롤아웃이 Pending으로 정지함(실사고).
+  # 앱 7종과 동일하게 maxSurge:0으로 구파드 먼저 내리고 새 파드를 띄우게 강제.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
   selector:
     matchLabels: { app: grafana }
   template:
