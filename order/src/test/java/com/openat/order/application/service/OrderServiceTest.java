@@ -20,9 +20,7 @@ import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderFailCode;
-import com.openat.order.domain.model.OrderHistory;
 import com.openat.order.domain.model.OrderStatus;
-import com.openat.order.domain.repository.OrderHistoryRepository;
 import com.openat.order.domain.repository.OrderRepository;
 import java.time.Instant;
 import java.util.Optional;
@@ -44,7 +42,7 @@ class OrderServiceTest {
     private OrderRepository orderRepository;
 
     @Mock
-    private OrderHistoryRepository orderHistoryRepository;
+    private OrderHistoryRecorder orderHistoryRecorder;
 
     @Mock
     private ProductIntegrationPort productIntegrationPort;
@@ -260,7 +258,7 @@ class OrderServiceTest {
         assertThat(restoreCommand.getValue().orderId()).isEqualTo(orderId);
         assertThat(restoreCommand.getValue().buyerId()).isEqualTo(memberId);
         assertThat(restoreCommand.getValue().quantity()).isEqualTo(order.getQuantity());
-        verify(orderHistoryRepository).save(any(OrderHistory.class));
+        verify(orderHistoryRecorder).record(any(), any(), any(), any(), any());
     }
 
     @Test

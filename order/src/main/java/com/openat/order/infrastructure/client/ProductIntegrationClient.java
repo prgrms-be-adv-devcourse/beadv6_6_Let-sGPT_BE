@@ -19,9 +19,8 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class ProductIntegrationClient implements ProductIntegrationPort {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
     private final ProductInternalApiClient productInternalApiClient;
+    private final ObjectMapper objectMapper;
 
     @Override
     public OrderSnapshotInfo fetchOrderSnapshot(UUID dropId) {
@@ -70,7 +69,7 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
 
     private ProductErrorResponse readErrorResponse(FeignException e) {
         try {
-            return OBJECT_MAPPER.readValue(e.contentUTF8(), ProductErrorResponse.class);
+            return objectMapper.readValue(e.contentUTF8(), ProductErrorResponse.class);
         } catch (Exception ignored) {
             return new ProductErrorResponse(null, null, e.getMessage());
         }

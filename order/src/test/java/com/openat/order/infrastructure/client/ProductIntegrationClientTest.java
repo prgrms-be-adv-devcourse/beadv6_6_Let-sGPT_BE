@@ -8,6 +8,7 @@ import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openat.order.application.dto.StockDecreaseCommand;
 import com.openat.order.application.dto.StockRestoreCommand;
 import com.openat.order.application.port.ProductPortException;
@@ -21,13 +22,13 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -39,8 +40,12 @@ class ProductIntegrationClientTest {
     @Mock
     private ProductInternalApiClient productInternalApiClient;
 
-    @InjectMocks
     private ProductIntegrationClient productIntegrationClient;
+
+    @BeforeEach
+    void setUp() {
+        productIntegrationClient = new ProductIntegrationClient(productInternalApiClient, new ObjectMapper());
+    }
 
     @Test
     @DisplayName("상품 주문 기준정보 내부 API 경로는 order-snapshot을 사용한다")

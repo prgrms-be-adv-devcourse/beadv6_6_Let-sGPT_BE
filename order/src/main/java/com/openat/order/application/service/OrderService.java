@@ -16,9 +16,7 @@ import com.openat.order.application.usecase.OrderUseCase;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderFailCode;
-import com.openat.order.domain.model.OrderHistory;
 import com.openat.order.domain.model.OrderStatus;
-import com.openat.order.domain.repository.OrderHistoryRepository;
 import com.openat.order.domain.repository.OrderRepository;
 import java.time.Instant;
 import java.util.UUID;
@@ -37,7 +35,7 @@ import org.springframework.util.StringUtils;
 public class OrderService implements OrderUseCase {
 
     private final OrderRepository orderRepository;
-    private final OrderHistoryRepository orderHistoryRepository;
+    private final OrderHistoryRecorder orderHistoryRecorder;
     private final ProductIntegrationPort productIntegrationPort;
     private final PendingOrderCreator pendingOrderCreator;
     private final OrderFailureRecorder orderFailureRecorder;
@@ -97,13 +95,13 @@ public class OrderService implements OrderUseCase {
             if (!order.cancelPending(now)) {
                 throw new BusinessException(OrderErrorCode.INVALID_STATUS);
             }
-            recordHistory(order, before, "ORDER_CANCELLED", "결제 대기 주문 취소", "cancel-" + order.getId());
+            orderHistoryRecorder.record(order, before, "ORDER_CANCELLED", "결제 대기 주문 취소", "cancel-" + order.getId());
             restoreStockAfterCommit(order);
         } else if (before == OrderStatus.COMPLETED) {
             if (!order.requestRefund(now)) {
                 throw new BusinessException(OrderErrorCode.INVALID_STATUS);
             }
-            recordHistory(order, before, "ORDER_CANCEL_REQUESTED", "취소 요청 등록", "cancel-" + order.getId());
+            orderHistoryRecorder.record(order, before, "ORDER_CANCEL_REQUESTED", "취소 요청 등록", "cancel-" + order.getId());
         } else {
             throw new BusinessException(OrderErrorCode.INVALID_STATUS);
         }
@@ -203,19 +201,6 @@ public class OrderService implements OrderUseCase {
                 restoreStock(order);
             }
         });
-    }
-
-    private void recordHistory(Order order, OrderStatus previousStatus, String reasonCode, String reasonMessage, String sourceEventKey) {
-        orderHistoryRepository.save(
-                OrderHistory.record()
-                        .orderId(order.getId())
-                        .previousStatus(previousStatus)
-                        .newStatus(order.getStatus())
-                        .reasonCode(reasonCode)
-                        .reasonMessage(reasonMessage)
-                        .sourceEventKey(sourceEventKey)
-                        .build()
-        );
     }
 
     private void validateCreateCommand(CreateOrderCommand command) {

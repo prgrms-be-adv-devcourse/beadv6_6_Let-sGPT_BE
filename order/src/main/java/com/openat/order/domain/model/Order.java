@@ -147,10 +147,6 @@ public class Order {
         return memberId.equals(requesterId);
     }
 
-    public boolean isCompletedWith(UUID paymentId) {
-        return status == OrderStatus.COMPLETED && this.paymentId != null && this.paymentId.equals(paymentId);
-    }
-
     public boolean complete(UUID paymentId, Instant paidAt) {
         if (status != OrderStatus.PAYMENT_PENDING) {
             return false;
