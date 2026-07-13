@@ -35,7 +35,10 @@ spec:
             - secretRef: { name: app-secrets }
           env:
             # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 핫패스(G1 유지, limit 비례 65%).
-            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
+            # Q113: MaxMetaspaceSize 128m→256m. 128m 하드실링에서 OutOfMemoryError: Metaspace 실측
+            # (springdoc/swagger 클래스 로드로 Metaspace 초과, 프로브 timeout→502). 실 RSS 383Mi로
+            # 700Mi 리밋 여유 있어 상한만 상향(실 commit은 워킹셋만큼만 증가, ~150-180m 예상).
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
             - { name: SPRING_JPA_OPEN_IN_VIEW, value: "false" }
