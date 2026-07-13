@@ -66,6 +66,11 @@ metadata:
   namespace: observability
 spec:
   replicas: 1
+  # k3s_memory_mitigation_plan §9-7 구현기 — final 노드 여유 없을 때 기본 surge 전략이면
+  # 신규 파드가 Pending으로 막힘(실사고). maxSurge:0으로 구파드 먼저 내림.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
   selector:
     matchLabels: { app: prometheus }
   template:

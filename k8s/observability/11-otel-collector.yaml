@@ -50,6 +50,10 @@ metadata:
   namespace: observability
 spec:
   replicas: 1
+  # k3s_memory_mitigation_plan §9-7 구현기 — final 노드 여유 없을 때 기본 surge 전략 방지.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
   selector:
     matchLabels: { app: otel-collector }
   template:
