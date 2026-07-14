@@ -79,5 +79,20 @@ services:
       - redis
     restart: always
 
+  # Kafka 토픽/컨슈머 그룹/메시지를 브라우저에서 확인하기 위한 웹 UI(redis-commander와 같은 취지).
+  # 같은 compose 네트워크 안이라 내부 리스너(kafka:9092)로 접속 — 브로커의 EXTERNAL 리스너(29092,
+  # 호스트에서 bootRun하는 서비스용)와는 별개.
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: local-kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "8090:8080"
+    depends_on:
+      - kafka
+    restart: always
+
 volumes:
   pgdata:
