@@ -4,12 +4,12 @@ import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import com.openat.search.product.application.dto.ProductSearchResult;
 import com.openat.search.product.infrastructure.elasticsearch.ProductDocument;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -17,8 +17,6 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
-import org.springframework.data.elasticsearch.core.query.Criteria;
-import org.springframework.data.elasticsearch.core.query.CriteriaQuery;
 import org.springframework.data.elasticsearch.core.query.FetchSourceFilter;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -31,8 +29,7 @@ public class ProductSearchService {
   private static final int MAX_SIZE = 100;
   private static final int KNN_CANDIDATE_MULTIPLIER = 5;
   private static final int MIN_KNN_CANDIDATES = 100;
-  private static final float VECTOR_SCORE_WEIGHT = 0.45F;
-  private static final float LEXICAL_SCORE_WEIGHT = 0.55F;
+  private static final float LEXICAL_SCORE_BOOST_WEIGHT = 0.30F;
   private static final String[] VECTOR_SEARCH_SOURCE_INCLUDES = {
     "id",
     "sellerId",
@@ -40,19 +37,19 @@ public class ProductSearchService {
     "description",
     "categoryId",
     "categoryName",
+    "sellerName",
     "price",
     "thumbnailKey",
     "imageKeys",
+    "imgDescription",
     "embedding",
     "createdAt",
-    "updatedAt"
+    "updatedAt",
+    "deletedAt"
   };
 
   private final ElasticsearchOperations elasticsearchOperations;
   private final ProductEmbeddingService productEmbeddingService;
-
-  @Value("${elastic.search.score:0.0}")
-  private float minimumSearchScore;
 
   public Page<ProductSearchResult> search(
       String queryText,
@@ -61,8 +58,20 @@ public class ProductSearchService {
       Long endPrice,
       Integer page,
       Integer size) {
+    return search(queryText, categoryName, startPrice, endPrice, page, size, null);
+  }
+
+  public Page<ProductSearchResult> search(
+      String queryText,
+      String categoryName,
+      Long startPrice,
+      Long endPrice,
+      Integer page,
+      Integer size,
+      String sort) {
     int normalizedPage = normalizePage(page);
     int normalizedSize = normalizeSize(size);
+    ProductSort requestedSort = ProductSort.from(sort);
 
     if (StringUtils.hasText(queryText)) {
       return vectorSearch(
@@ -70,25 +79,22 @@ public class ProductSearchService {
           categoryName,
           startPrice,
           endPrice,
-          PageRequest.of(normalizedPage, normalizedSize));
+          PageRequest.of(normalizedPage, normalizedSize),
+          requestedSort);
     }
 
+    ProductSort productSort = requestedSort == null ? ProductSort.CREATED_AT_DESC : requestedSort;
     PageRequest pageable =
-        PageRequest.of(normalizedPage, normalizedSize, Sort.by(Sort.Direction.DESC, "createdAt"));
+        PageRequest.of(normalizedPage, normalizedSize, productSort.toSpringSort());
 
-    Criteria criteria = new Criteria();
-
-    if (StringUtils.hasText(categoryName)) {
-      criteria = criteria.and(new Criteria("categoryName").contains(categoryName.trim()));
-    }
-    if (startPrice != null) {
-      criteria = criteria.and(new Criteria("price").greaterThanEqual(startPrice));
-    }
-    if (endPrice != null) {
-      criteria = criteria.and(new Criteria("price").lessThanEqual(endPrice));
-    }
-
-    CriteriaQuery query = new CriteriaQuery(criteria).setPageable(pageable);
+    NativeQuery query =
+        NativeQuery.builder()
+            .withQuery(
+                queryBuilder ->
+                    queryBuilder.bool(
+                        bool -> bool.filter(buildSearchFilters(categoryName, startPrice, endPrice))))
+            .withPageable(pageable)
+            .build();
 
     var searchHits = elasticsearchOperations.search(query, ProductDocument.class);
     var content = searchHits.stream().map(this::toResult).toList();
@@ -96,7 +102,12 @@ public class ProductSearchService {
   }
 
   private Page<ProductSearchResult> vectorSearch(
-      String queryText, String categoryName, Long startPrice, Long endPrice, PageRequest pageable) {
+      String queryText,
+      String categoryName,
+      Long startPrice,
+      Long endPrice,
+      PageRequest pageable,
+      ProductSort requestedSort) {
     float[] queryVector =
         productEmbeddingService
             .embed(queryText.trim())
@@ -118,7 +129,7 @@ public class ProductSearchService {
                         .k(candidateWindow)
                         .numCandidates(numCandidates)
                         .rescoreVector(rescore -> rescore.oversample(3.0f))
-                        .filter(buildVectorFilters(categoryName, startPrice, endPrice)))
+                        .filter(buildSearchFilters(categoryName, startPrice, endPrice)))
             .withPageable(candidatePageable)
             .withSourceFilter(
                 FetchSourceFilter.of(
@@ -126,20 +137,33 @@ public class ProductSearchService {
             .build();
 
     var searchHits = elasticsearchOperations.search(query, ProductDocument.class);
+    Comparator<ProductSearchResult> resultComparator =
+        requestedSort == null
+            ? Comparator.comparing(
+                ProductSearchResult::score, Comparator.nullsLast(Comparator.reverseOrder()))
+            : requestedSort.resultComparator();
+
     var rankedResults =
         searchHits.stream()
             .map(searchHit -> toHybridResult(searchHit, queryVector, queryText))
-            .filter(this::hasEnoughScore)
-            .sorted(
-                (left, right) ->
-                    Float.compare(scoreOrZero(right.score()), scoreOrZero(left.score())))
+            .filter(result -> hasLexicalMatch(queryText, result.document()))
+            .sorted(resultComparator)
             .toList();
 
     return new PageImpl<>(pageContent(rankedResults, pageable), pageable, rankedResults.size());
   }
 
-  private List<Query> buildVectorFilters(String categoryName, Long startPrice, Long endPrice) {
+  private List<Query> buildSearchFilters(String categoryName, Long startPrice, Long endPrice) {
     List<Query> filters = new ArrayList<>();
+
+    filters.add(
+        Query.of(
+            query ->
+                query.bool(
+                    bool ->
+                        bool.mustNot(
+                            Query.of(
+                                mustNot -> mustNot.exists(exists -> exists.field("deletedAt")))))));
 
     if (StringUtils.hasText(categoryName)) {
       filters.add(
@@ -183,8 +207,7 @@ public class ProductSearchService {
     }
 
     float lexicalScore = lexicalScore(queryText, document);
-    float hybridScore =
-        (scoreOrZero(vectorScore) * VECTOR_SCORE_WEIGHT) + (lexicalScore * LEXICAL_SCORE_WEIGHT);
+    float hybridScore = scoreOrZero(vectorScore) + (lexicalScore * LEXICAL_SCORE_BOOST_WEIGHT);
     return new ProductSearchResult(document, Math.min(1.0F, hybridScore));
   }
 
@@ -231,7 +254,7 @@ public class ProductSearchService {
     String normalizedQuery = normalizeText(queryText);
     String name = normalizeText(document.name());
     String description = normalizeText(document.description());
-    String categoryName = normalizeText(document.categoryName());
+    String imgDescription = normalizeText(document.imgDescription());
 
     float score = 0.0F;
     if (!normalizedQuery.isBlank() && name.contains(normalizedQuery)) {
@@ -240,20 +263,27 @@ public class ProductSearchService {
     if (!normalizedQuery.isBlank() && description.contains(normalizedQuery)) {
       score += 0.2F;
     }
+    if (!normalizedQuery.isBlank() && imgDescription.contains(normalizedQuery)) {
+      score += 0.25F;
+    }
 
     for (String term : terms) {
       if (name.contains(term)) {
         score += 0.35F;
       }
-      if (categoryName.contains(term)) {
-        score += 0.25F;
-      }
       if (description.contains(term)) {
         score += 0.12F;
+      }
+      if (imgDescription.contains(term)) {
+        score += 0.18F;
       }
     }
 
     return Math.min(1.0F, score);
+  }
+
+  private boolean hasLexicalMatch(String queryText, ProductDocument document) {
+    return lexicalScore(queryText, document) > 0.0F;
   }
 
   private Set<String> searchTerms(String queryText) {
@@ -267,26 +297,6 @@ public class ProductSearchService {
       if (token.length() >= 2) {
         terms.add(token);
       }
-    }
-
-    if (normalizedQuery.contains("가방") || normalizedQuery.contains("백")) {
-      terms.add("가방");
-      terms.add("백");
-      terms.add("크로스백");
-      terms.add("미니백");
-      terms.add("토트백");
-      terms.add("숄더백");
-      terms.add("백팩");
-      terms.add("핸드백");
-    }
-
-    if (normalizedQuery.contains("가볍")
-        || normalizedQuery.contains("들고")
-        || normalizedQuery.contains("휴대")) {
-      terms.add("가벼운");
-      terms.add("미니");
-      terms.add("컴팩트");
-      terms.add("크로스");
     }
 
     return terms;
@@ -304,10 +314,6 @@ public class ProductSearchService {
     int fromIndex = Math.min((int) pageable.getOffset(), rankedResults.size());
     int toIndex = Math.min(fromIndex + pageable.getPageSize(), rankedResults.size());
     return rankedResults.subList(fromIndex, toIndex);
-  }
-
-  private boolean hasEnoughScore(ProductSearchResult result) {
-    return scoreOrZero(result.score()) >= minimumSearchScore;
   }
 
   private float scoreOrZero(Float score) {
@@ -333,5 +339,55 @@ public class ProductSearchService {
       return DEFAULT_SIZE;
     }
     return Math.min(size, MAX_SIZE);
+  }
+
+  private enum ProductSort {
+    CREATED_AT_DESC("createdAt", Sort.Direction.DESC),
+    PRICE_ASC("price", Sort.Direction.ASC),
+    PRICE_DESC("price", Sort.Direction.DESC);
+
+    private final String field;
+    private final Sort.Direction direction;
+
+    ProductSort(String field, Sort.Direction direction) {
+      this.field = field;
+      this.direction = direction;
+    }
+
+    private static ProductSort from(String value) {
+      if (!StringUtils.hasText(value)) {
+        return null;
+      }
+
+      return switch (value) {
+        case "createdAt,desc" -> CREATED_AT_DESC;
+        case "price,asc" -> PRICE_ASC;
+        case "price,desc" -> PRICE_DESC;
+        default ->
+            throw new IllegalArgumentException(
+                "sort must be one of createdAt,desc, price,asc, price,desc");
+      };
+    }
+
+    private Sort toSpringSort() {
+      return Sort.by(direction, field);
+    }
+
+    private Comparator<ProductSearchResult> resultComparator() {
+      return switch (this) {
+        case CREATED_AT_DESC ->
+            Comparator.comparing(
+                result -> result.document().createdAt(),
+                Comparator.nullsLast(Comparator.reverseOrder()));
+        case PRICE_ASC ->
+            Comparator.comparing(
+                result -> result.document().price(),
+                Comparator.nullsLast(Comparator.naturalOrder()));
+        case PRICE_DESC ->
+            Comparator.comparing(
+                result -> result.document().price(),
+                Comparator.nullsLast(Comparator.reverseOrder()));
+      };
+    }
   }
 }

@@ -12,9 +12,12 @@ public record ProductDocument(
     @Id String id,
     @Field(type = FieldType.Text) String name,
     @Field(type = FieldType.Text) String description,
-    @Field(type = FieldType.Text) String categoryName,
+    @Field(type = FieldType.Keyword) String categoryId,
+    @Field(type = FieldType.Keyword) String categoryName,
+    @Field(type = FieldType.Text) String sellerName,
     @Field(type = FieldType.Long) Long price,
     @Field(type = FieldType.Keyword) String thumbnailKey,
+    @Field(type = FieldType.Text) String imgDescription,
     @Field(
             type = FieldType.Dense_Vector,
             dims = 1536,
@@ -22,7 +25,8 @@ public record ProductDocument(
             knnSimilarity = KnnSimilarity.COSINE)
         float[] embedding,
     @Field(type = FieldType.Date, format = DateFormat.date_time) Instant createdAt,
-    @Field(type = FieldType.Date, format = DateFormat.date_time) Instant updatedAt) {
+    @Field(type = FieldType.Date, format = DateFormat.date_time) Instant updatedAt,
+    @Field(type = FieldType.Date, format = DateFormat.date_time) Instant deletedAt) {
 
   public static ProductDocument from(Product product) {
     Category category = product.getCategory();
@@ -30,16 +34,49 @@ public record ProductDocument(
         product.getId().toString(),
         product.getName(),
         product.getDescription(),
+        category != null ? category.getId().toString() : null,
         category != null ? category.getName() : null,
+        null,
         product.getPrice(),
         product.getThumbnailKey(),
+        product.getImgDescription(),
         null,
         product.getCreatedAt(),
-        product.getUpdatedAt());
+        product.getUpdatedAt(),
+        null);
   }
 
   public ProductDocument withEmbedding(float[] embedding) {
     return new ProductDocument(
-        id, name, description, categoryName, price, thumbnailKey, embedding, createdAt, updatedAt);
+        id,
+        name,
+        description,
+        categoryId,
+        categoryName,
+        sellerName,
+        price,
+        thumbnailKey,
+        imgDescription,
+        embedding,
+        createdAt,
+        updatedAt,
+        deletedAt);
+  }
+
+  public ProductDocument withImgDescription(String imgDescription) {
+    return new ProductDocument(
+        id,
+        name,
+        description,
+        categoryId,
+        categoryName,
+        sellerName,
+        price,
+        thumbnailKey,
+        imgDescription,
+        embedding,
+        createdAt,
+        updatedAt,
+        deletedAt);
   }
 }

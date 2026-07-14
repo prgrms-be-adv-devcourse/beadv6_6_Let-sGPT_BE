@@ -79,3 +79,9 @@ CREATE SEQUENCE IF NOT EXISTS search.batch_job_execution_seq
     MAXVALUE 9223372036854775807 NO CYCLE;
 CREATE SEQUENCE IF NOT EXISTS search.batch_job_instance_seq
     MAXVALUE 9223372036854775807 NO CYCLE;
+
+CREATE TABLE IF NOT EXISTS search.search_index_refresh_state (
+    state_key VARCHAR(50) PRIMARY KEY,
+    last_indexed_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
