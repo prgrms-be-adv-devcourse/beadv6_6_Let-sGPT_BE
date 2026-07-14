@@ -18,7 +18,7 @@ spring:
             - id: member
               uri: http://localhost:9100
               predicates:
-                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks
+                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks,/api/v1/wishlist/**
             - id: search-api
               uri: http://localhost:9240
               predicates:

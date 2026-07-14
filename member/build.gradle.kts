@@ -9,6 +9,10 @@ dependencies {
     // 리프레시 토큰 저장(TTL 자동 만료)
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
 
+    // 찜(wishlist) 변경 이벤트 발행(아웃박스 → Kafka)
+    implementation("org.springframework.kafka:spring-kafka")
+    testImplementation("org.springframework.kafka:spring-kafka-test")
+
     // RSA 공개키를 JWKS(JSON Web Key Set) 포맷으로 노출하기 위함
     // (버전은 apigateway가 spring-security-oauth2-jose로 끌어오는 버전과 맞춤)
     implementation("com.nimbusds:nimbus-jose-jwt:10.9")

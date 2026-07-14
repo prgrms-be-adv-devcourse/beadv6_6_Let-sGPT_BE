@@ -20,6 +20,8 @@ spring:
     redis:
       host: localhost                              # 로컬 도커 redis
       port: 6379
+  kafka:
+    bootstrap-servers: localhost:29092             # order-local과 동일 브로커
 
 services:
   order:
