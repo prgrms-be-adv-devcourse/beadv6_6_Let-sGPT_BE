@@ -13,8 +13,12 @@ import com.openat.search.product.presentation.dto.TopicProduceTestResponse;
 import com.openat.search.support.docs.ApiErrorResponses;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.Job;
@@ -78,9 +82,34 @@ public class ProductController {
   @ApiErrorResponses
   @PostMapping("/search")
   public ResponseEntity<PageResponse<ProductResponse>> searchProducts(
-      @RequestBody ProductSearchApiRequest request) {
+      @io.swagger.v3.oas.annotations.parameters.RequestBody(
+              description = "Product search conditions including the sort field",
+              required = true,
+              content =
+                  @Content(
+                      schema = @Schema(implementation = ProductSearchApiRequest.class),
+                      examples =
+                          @ExampleObject(
+                              name = "latestProducts",
+                              value =
+                                  """
+                                  {
+                                    "query": null,
+                                    "categoryName": null,
+                                    "startPrice": null,
+                                    "endPrice": null,
+                                    "page": 0,
+                                    "size": 20,
+                                    "sort": "createdAt,desc"
+                                  }
+                                  """)))
+          @Valid
+          @RequestBody
+          ProductSearchApiRequest request) {
     ProductSearchApiRequest safeRequest =
-        request == null ? new ProductSearchApiRequest(null, null, null, null, null, null) : request;
+        request == null
+            ? new ProductSearchApiRequest(null, null, null, null, null, null, null)
+            : request;
 
     Page<ProductResponse> products =
         productSearchService
@@ -90,7 +119,8 @@ public class ProductController {
                 safeRequest.startPrice(),
                 safeRequest.endPrice(),
                 safeRequest.page(),
-                safeRequest.size())
+                safeRequest.size(),
+                safeRequest.sort())
             .map(ProductResponse::from);
 
     return ResponseEntity.ok(PageResponse.of(products));
@@ -104,6 +134,18 @@ public class ProductController {
       @Parameter(description = "분석할 이미지") @RequestPart("image") MultipartFile image,
       @Parameter(description = "선택 프롬프트") @RequestParam(required = false) String prompt) {
     return aiImageService.analyze(image, prompt);
+  }
+
+  @Operation(summary = "이미지 URL 분석", description = "이미지 URL을 내려받아 AI가 설명합니다.")
+  @ApiResponse(responseCode = "200", description = "이미지 URL 분석 성공")
+  @ApiErrorResponses
+  @RequestMapping(
+      value = "/analyzeImgUrl",
+      method = {RequestMethod.GET, RequestMethod.POST})
+  public AiImageAnalyzeResponse analyzeImgUrl(
+      @Parameter(description = "분석할 이미지 URL") @RequestParam("imgurl") String imgurl,
+      @Parameter(description = "선택 프롬프트") @RequestParam(required = false) String prompt) {
+    return aiImageService.analyzeImageUrl(imgurl, prompt);
   }
 
   @Operation(
