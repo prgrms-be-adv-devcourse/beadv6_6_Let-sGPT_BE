@@ -38,6 +38,12 @@ public class Refund {
 
   private LocalDateTime createdAt;
 
+  // PG 대사(WS-0) — WALLET 환불은 PG 호출이 없어 완료 시점에 바로 MATCHED로 마킹(RefundService.creditWallet 이후).
+  // PG 환불은 NOT_CHECKED로 시작해 PgReconciliationService가 토스와 대조한다.
+  @Builder.Default private PgReconStatus pgReconStatus = PgReconStatus.NOT_CHECKED;
+
+  private LocalDateTime pgReconciledAt;
+
   // 환불 접수 — 항상 PENDING(RefundService.requestRefund).
   public static Refund pending(
       UUID paymentId, Long amount, String reason, String idempotencyKey, String requestHash) {

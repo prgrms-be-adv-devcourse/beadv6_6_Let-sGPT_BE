@@ -1,6 +1,7 @@
 package com.openat.payment.domain.repository;
 
 import com.openat.payment.domain.model.Payment;
+import com.openat.payment.domain.model.PgReconStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -38,4 +39,16 @@ public interface PaymentRepository {
 
     // PG가 환불을 명시적으로 거절했을 때 한도를 원복(보정용).
     int tryDecreaseRefundedAmount(UUID paymentId, Long amount);
+
+    // PG 대사 배치(WS-0) — APPROVED이면서 아직 MATCHED 아닌 row(NOT_CHECKED/MISMATCH), 롤링 윈도우로 조회.
+    List<Payment> findForPgReconciliation(LocalDateTime from, LocalDateTime to);
+
+    // PG 대사 결과 반영.
+    int markPgReconResult(UUID paymentId, PgReconStatus pgReconStatus, LocalDateTime reconciledAt);
+
+    // 정산 대사 일별 API(reconciliation.md) — PG 대사 MATCHED 행만 반환.
+    List<Payment> findMatchedApprovedBetween(LocalDateTime from, LocalDateTime to);
+
+    // 환불 조립용 배치 조회(N+1 회피).
+    List<Payment> findAllByIds(List<UUID> ids);
 }

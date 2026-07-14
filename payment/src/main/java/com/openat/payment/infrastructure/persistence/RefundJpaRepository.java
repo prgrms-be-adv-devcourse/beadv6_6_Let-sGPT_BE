@@ -1,5 +1,6 @@
 package com.openat.payment.infrastructure.persistence;
 
+import com.openat.payment.domain.model.PgReconStatus;
 import com.openat.payment.domain.model.Refund;
 import com.openat.payment.infrastructure.persistence.entity.RefundJpaEntity;
 import java.time.LocalDateTime;
@@ -39,4 +40,27 @@ public interface RefundJpaRepository extends JpaRepository<RefundJpaEntity, UUID
     @Query("SELECT COUNT(r) FROM RefundJpaEntity r WHERE r.paymentId IN "
             + "(SELECT p.id FROM PaymentJpaEntity p WHERE p.memberId = :memberId)")
     long countByMemberId(@Param("memberId") UUID memberId);
+
+    // PG 대사 배치(WS-0) — COMPLETE이면서 아직 MATCHED 확정 안 된 row.
+    List<RefundJpaEntity> findByStatusAndPgReconStatusNotAndCompletedAtBetween(
+            Refund.Status status, PgReconStatus pgReconStatus, LocalDateTime from, LocalDateTime to);
+
+    // PG 대사 결과 반영. flushAutomatically=true 필수 — PgReconciliationService가 이 UPDATE 직전에
+    // discrepancyRepository.save()로 불일치 행을 저장하는데, 자동 flush 없이는 그 INSERT가 유실된다
+    // (PaymentJpaRepository.markPgReconResult/tryTransitionFromPending과 동일 원인, 실기동 검증으로 확인).
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE RefundJpaEntity r SET r.pgReconStatus = :pgReconStatus, r.pgReconciledAt = :reconciledAt "
+            + "WHERE r.id = :id")
+    int markPgReconResult(@Param("id") UUID id, @Param("pgReconStatus") PgReconStatus pgReconStatus,
+            @Param("reconciledAt") LocalDateTime reconciledAt);
+
+    // WALLET 환불 완료 직후 즉시 MATCHED 마킹(PG 호출 없음, RefundService.creditWallet 이후).
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE RefundJpaEntity r SET r.pgReconStatus = 'MATCHED', r.pgReconciledAt = :reconciledAt "
+            + "WHERE r.id = :id")
+    int markPgReconMatched(@Param("id") UUID id, @Param("reconciledAt") LocalDateTime reconciledAt);
+
+    // 정산 대사 일별 API — PG 대사 MATCHED 행만 정산에 노출(WS-0.3).
+    List<RefundJpaEntity> findByStatusAndCompletedAtGreaterThanEqualAndCompletedAtLessThanAndPgReconStatus(
+            Refund.Status status, LocalDateTime from, LocalDateTime to, PgReconStatus pgReconStatus);
 }

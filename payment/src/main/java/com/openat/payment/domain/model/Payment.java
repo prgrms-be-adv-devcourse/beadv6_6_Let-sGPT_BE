@@ -48,6 +48,12 @@ public class Payment {
   // 누적 환불 금액(의도적 비정규화) — 갱신은 조건부 UPDATE(refundedAmount+? <= amount)
   @Builder.Default private Long refundedAmount = 0L;
 
+  // PG 대사(payment DB ↔ 토스) 검증 상태(WS-0) — 정산 대사 일별 API는 이 값이 MATCHED인 행만 노출한다.
+  // WALLET 결제는 PG 호출 자체가 없어 approvedWallet()에서 생성 즉시 MATCHED로 확정한다.
+  @Builder.Default private PgReconStatus pgReconStatus = PgReconStatus.NOT_CHECKED;
+
+  private LocalDateTime pgReconciledAt;
+
   // 멱등키는 시도 단위로 발급(orderId 단독 아님)
   private String idempotencyKey;
 
@@ -122,6 +128,8 @@ public class Payment {
         .idempotencyKey(idempotencyKey)
         .requestHash(requestHash)
         .approvedAt(now)
+        .pgReconStatus(PgReconStatus.MATCHED)
+        .pgReconciledAt(now)
         .createdAt(now)
         .updatedAt(now)
         .build();

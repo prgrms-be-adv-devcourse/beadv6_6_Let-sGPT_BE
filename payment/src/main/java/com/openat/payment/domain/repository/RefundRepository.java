@@ -1,5 +1,6 @@
 package com.openat.payment.domain.repository;
 
+import com.openat.payment.domain.model.PgReconStatus;
 import com.openat.payment.domain.model.Refund;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -25,4 +26,16 @@ public interface RefundRepository {
     List<Refund> findByMemberId(UUID memberId, int page, int size);
 
     long countByMemberId(UUID memberId);
+
+    // PG 대사 배치(WS-0) — COMPLETE이면서 아직 MATCHED 아닌 row, 롤링 윈도우로 조회.
+    List<Refund> findForPgReconciliation(LocalDateTime from, LocalDateTime to);
+
+    // PG 대사 결과 반영.
+    int markPgReconResult(UUID refundId, PgReconStatus pgReconStatus, LocalDateTime reconciledAt);
+
+    // WALLET 환불 완료 직후 즉시 MATCHED 마킹(PG 호출 없음).
+    void markPgReconMatched(UUID refundId, LocalDateTime reconciledAt);
+
+    // 정산 대사 일별 API — PG 대사 MATCHED 행만 반환.
+    List<Refund> findMatchedCompletedBetween(LocalDateTime from, LocalDateTime to);
 }

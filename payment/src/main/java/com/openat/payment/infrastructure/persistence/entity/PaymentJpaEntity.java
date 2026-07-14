@@ -1,6 +1,7 @@
 package com.openat.payment.infrastructure.persistence.entity;
 
 import com.openat.payment.domain.model.Payment;
+import com.openat.payment.domain.model.PgReconStatus;
 import com.openat.payment.infrastructure.persistence.converter.EncryptedStringConverter;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
@@ -74,6 +75,14 @@ public class PaymentJpaEntity {
     @Column(name = "refunded_amount", nullable = false)
     private Long refundedAmount;
 
+    // PG 대사(WS-0) — 정산 대사 일별 API는 이 값이 MATCHED인 행만 노출한다.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "pg_recon_status", nullable = false, length = 20)
+    private PgReconStatus pgReconStatus;
+
+    @Column(name = "pg_reconciled_at")
+    private LocalDateTime pgReconciledAt;
+
     // 멱등키는 시도 단위로 발급(orderId 단독 아님)
     @Column(name = "idempotency_key", nullable = false, unique = true, length = 100)
     private String idempotencyKey;
@@ -96,7 +105,8 @@ public class PaymentJpaEntity {
 
     private PaymentJpaEntity(UUID id, UUID orderId, UUID memberId, UUID sellerId, UUID productId, Long amount,
             Payment.Method method, String pgProvider, String pgPaymentKey, String pgPaymentKeyHash, String pgTxId,
-            Payment.Status status, Long refundedAmount, String idempotencyKey, String requestHash,
+            Payment.Status status, Long refundedAmount, PgReconStatus pgReconStatus, LocalDateTime pgReconciledAt,
+            String idempotencyKey, String requestHash,
             LocalDateTime approvedAt, LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.id = id;
         this.orderId = orderId;
@@ -111,6 +121,8 @@ public class PaymentJpaEntity {
         this.pgTxId = pgTxId;
         this.status = status;
         this.refundedAmount = refundedAmount;
+        this.pgReconStatus = pgReconStatus;
+        this.pgReconciledAt = pgReconciledAt;
         this.idempotencyKey = idempotencyKey;
         this.requestHash = requestHash;
         this.approvedAt = approvedAt;
@@ -123,7 +135,8 @@ public class PaymentJpaEntity {
                 payment.getId(), payment.getOrderId(), payment.getMemberId(), payment.getSellerId(),
                 payment.getProductId(), payment.getAmount(), payment.getMethod(), payment.getPgProvider(),
                 payment.getPgPaymentKey(), payment.getPgPaymentKeyHash(), payment.getPgTxId(), payment.getStatus(),
-                payment.getRefundedAmount(), payment.getIdempotencyKey(), payment.getRequestHash(),
+                payment.getRefundedAmount(), payment.getPgReconStatus(), payment.getPgReconciledAt(),
+                payment.getIdempotencyKey(), payment.getRequestHash(),
                 payment.getApprovedAt(), payment.getCreatedAt(), payment.getUpdatedAt());
     }
 
@@ -142,6 +155,8 @@ public class PaymentJpaEntity {
                 .pgTxId(pgTxId)
                 .status(status)
                 .refundedAmount(refundedAmount)
+                .pgReconStatus(pgReconStatus)
+                .pgReconciledAt(pgReconciledAt)
                 .idempotencyKey(idempotencyKey)
                 .requestHash(requestHash)
                 .approvedAt(approvedAt)

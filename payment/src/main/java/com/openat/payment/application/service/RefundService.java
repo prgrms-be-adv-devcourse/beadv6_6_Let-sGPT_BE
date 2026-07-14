@@ -18,6 +18,7 @@ import com.openat.payment.domain.repository.PaymentRepository;
 import com.openat.payment.domain.repository.RefundRepository;
 import com.openat.payment.domain.repository.WalletRepository;
 import com.openat.payment.domain.repository.WalletTransactionRepository;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -92,6 +93,8 @@ public class RefundService implements RefundUseCase {
     if (payment.getMethod() == Payment.Method.WALLET) {
       // WALLET 결제는 PG 호출 없음 — 지갑으로 즉시 반환.
       creditWallet(payment, pending);
+      // PG 대사(WS-0) — WALLET 환불은 대조할 PG 거래가 없어 바로 MATCHED 확정.
+      refundRepository.markPgReconMatched(pending.getId(), LocalDateTime.now());
       return toResult(refundFinalizer.complete(pending.getId(), payment, null), pending);
     }
 
