@@ -4,7 +4,6 @@ import com.openat.common.auth.CurrentUser;
 import com.openat.common.auth.UserContext;
 import com.openat.common.error.CommonErrorCode;
 import com.openat.common.exception.BusinessException;
-import com.openat.payment.application.dto.PayWithPgCommand;
 import com.openat.payment.application.dto.PayWithWalletCommand;
 import com.openat.payment.application.dto.PaymentResult;
 import com.openat.payment.application.dto.PgConfirmCommand;
@@ -39,7 +38,8 @@ public class PaymentController {
         this.paymentUseCase = paymentUseCase;
     }
 
-    @Operation(summary = "결제 생성", description = "WALLET은 즉시 승인하고 지갑에서 차감, PG는 PENDING row만 생성하며 승인은 /confirm에서 처리한다.")
+    // 7-13 plan D1 — WALLET 전용으로 축소(PG 분기 삭제). PG PENDING 선생성 없이 confirm이 유일한 진입점.
+    @Operation(summary = "결제 생성", description = "WALLET 전용 — 즉시 승인하고 지갑에서 차감한다. PG 결제는 /confirm 단일 진입점을 사용한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "생성 성공"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
@@ -58,32 +58,33 @@ public class PaymentController {
         PaymentResult result = switch (request.method()) {
             case "WALLET" -> paymentUseCase.payWithWallet(
                     new PayWithWalletCommand(request.orderId(), memberId, request.amount(), idempotencyKey));
-            case "PG" -> paymentUseCase.payWithPg(
-                    new PayWithPgCommand(request.orderId(), memberId, request.amount(), idempotencyKey));
-            default -> throw new BusinessException(CommonErrorCode.INVALID_INPUT, "지원하지 않는 결제수단: " + request.method());
+            default -> throw new BusinessException(CommonErrorCode.INVALID_INPUT,
+                    "PG 결제는 /confirm 단일 진입점을 사용합니다: " + request.method());
         };
 
         PaymentResponse body = new PaymentResponse(result.paymentId(), result.status(), result.pgPaymentKey());
         return ResponseEntity.status(HttpStatus.CREATED).body(body);
     }
 
-    // A16 — PG 결제 승인의 메인 경로. successUrl=(가) 프론트엔드 페이지 확정에 따라, 프론트가 이 엔드포인트를 호출.
-    @Operation(summary = "PG 결제 승인", description = "브라우저의 토스 SDK 호출 후 successUrl로 전달받은 paymentKey로 PG 승인을 확정한다.")
+    // A16 — PG 결제 승인의 메인 경로이자 유일한 진입점(get-or-create 예약, 7-13 plan D1·D4).
+    // successUrl=(가) 프론트엔드 페이지 확정에 따라, 프론트가 이 엔드포인트를 호출.
+    @Operation(summary = "PG 결제 승인", description = "브라우저의 토스 SDK 호출 후 successUrl로 전달받은 paymentKey로 PG 승인을 확정한다("
+            + "PG 결제의 유일한 진입점 — get-or-create 예약).")
     @ApiResponses({
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "승인 처리 완료(승인/거절 모두 200, status로 구분)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "승인/거절/레이스(PAYMENT_PENDING) 모두 200, status로 구분"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "ORDER_VALIDATION_FAILED"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "NOT_FOUND(대상 결제 없음)")
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                    description = "ALREADY_PROCESSED(종결+key불일치) / PAYMENT_ATTEMPT_IN_PROGRESS(PENDING+key불일치)")
     })
     @PostMapping("/confirm")
     public ResponseEntity<PaymentResponse> confirm(
             @Parameter(description = "인증된 회원 정보(게이트웨이 주입)", required = true)
             @CurrentUser UserContext userContext,
-            @Parameter(description = "멱등키, 재시도 시 동일 키 재사용", required = true)
-            @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody PaymentConfirmRequest request) {
         UUID memberId = UUID.fromString(userContext.userId());
         PaymentResult result = paymentUseCase.confirmPg(
-                new PgConfirmCommand(request.orderId(), memberId, request.amount(), request.paymentKey(), idempotencyKey));
+                new PgConfirmCommand(request.orderId(), memberId, request.amount(), request.paymentKey()));
         PaymentResponse body = PaymentResponse.of(result.paymentId(), result.status());
         return ResponseEntity.ok(body);
     }

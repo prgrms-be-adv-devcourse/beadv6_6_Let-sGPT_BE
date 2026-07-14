@@ -2,105 +2,120 @@ package com.openat.payment.infrastructure.webhook;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
-// 프레임워크(Spring) 의존 없이 템플릿 골격(멱등→조건부UPDATE→분기)만 검증하는 순수 단위테스트(A13 목표).
-// 서명검증 단계는 제거됨(2026-06-24, I1) — PG 재조회(queryPaymentStatus/queryRefundStatus)가 source of truth.
+// 프레임워크(Spring) 의존 없이 템플릿 골격(파싱→멱등→조건부UPDATE→분기)만 검증하는 순수 단위테스트(A13 목표).
+// Observer(WebhookOutcomeListener)는 제거됨(7-12 plan WS-E, ★검수②) — 확정 이벤트 발행은 application/service의
+// Finalizer로 이동. 서명검증 단계도 제거됨(2026-06-24, I1) — PG 재조회가 source of truth.
 class AbstractPgWebhookHandlerTest {
 
-    @Test
-    void 이미_처리된_이벤트는_재처리_없이_200을_반환한다() {
-        FakePgWebhookHandler handler = new FakePgWebhookHandler(List.of());
-        handler.idempotent = true;
+  @Test
+  void 파싱이_실패하면_이후_단계_없이_200을_반환한다() {
+    FakePgWebhookHandler handler = new FakePgWebhookHandler();
+    handler.parsedPayload = null;
 
-        WebhookResult result = handler.handle(new WebhookRequest("body"));
+    WebhookResult result = handler.handle(new WebhookRequest("body"));
 
-        assertThat(result.getStatus()).isEqualTo(HttpStatus.OK);
-        assertThat(handler.applyConditionalUpdateCalled).isFalse();
+    assertThat(result.getStatus()).isEqualTo(HttpStatus.OK);
+    assertThat(handler.checkIdempotencyCalled).isFalse();
+    assertThat(handler.applyConditionalUpdateCalled).isFalse();
+  }
+
+  @Test
+  void 이미_처리된_이벤트는_재처리_없이_200을_반환한다() {
+    FakePgWebhookHandler handler = new FakePgWebhookHandler();
+    handler.idempotent = true;
+
+    WebhookResult result = handler.handle(new WebhookRequest("body"));
+
+    assertThat(result.getStatus()).isEqualTo(HttpStatus.OK);
+    assertThat(handler.applyConditionalUpdateCalled).isFalse();
+  }
+
+  @Test
+  void APPROVED면_onApproved만_호출된다() {
+    UUID referenceId = UUID.randomUUID();
+    FakePgWebhookHandler handler = new FakePgWebhookHandler();
+    handler.updateResult = WebhookUpdateResult.approved(referenceId, "ok");
+
+    WebhookResult result = handler.handle(new WebhookRequest("body"));
+
+    assertThat(result.getStatus()).isEqualTo(HttpStatus.OK);
+    assertThat(handler.onApprovedCalled).isTrue();
+    assertThat(handler.onRejectedCalled).isFalse();
+  }
+
+  @Test
+  void REJECTED면_onRejected만_호출된다() {
+    UUID referenceId = UUID.randomUUID();
+    FakePgWebhookHandler handler = new FakePgWebhookHandler();
+    handler.updateResult = WebhookUpdateResult.rejected(referenceId, "rejected");
+
+    WebhookResult result = handler.handle(new WebhookRequest("body"));
+
+    assertThat(result.getStatus()).isEqualTo(HttpStatus.OK);
+    assertThat(handler.onRejectedCalled).isTrue();
+    assertThat(handler.onApprovedCalled).isFalse();
+  }
+
+  // §4.1 결함 재현 지점 — LOST_RACE/NO_MATCH/UNVERIFIABLE은 onApproved/onRejected 둘 다 호출하지 않는다.
+  @Test
+  void LOST_RACE_NO_MATCH_UNVERIFIABLE은_어떤_부수효과_콜백도_호출하지_않는다() {
+    for (WebhookUpdateResult<String> result :
+        new WebhookUpdateResult[] {
+          WebhookUpdateResult.lostRace(UUID.randomUUID()),
+          WebhookUpdateResult.noMatch(),
+          WebhookUpdateResult.unverifiable()
+        }) {
+      FakePgWebhookHandler handler = new FakePgWebhookHandler();
+      handler.updateResult = result;
+
+      WebhookResult webhookResult = handler.handle(new WebhookRequest("body"));
+
+      assertThat(webhookResult.getStatus()).isEqualTo(HttpStatus.OK);
+      assertThat(handler.onApprovedCalled).as(result.outcome().name()).isFalse();
+      assertThat(handler.onRejectedCalled).as(result.outcome().name()).isFalse();
+    }
+  }
+
+  private static class FakePgWebhookHandler extends AbstractPgWebhookHandler<String, String> {
+
+    private String parsedPayload = "payload";
+    private boolean idempotent = false;
+    private WebhookUpdateResult<String> updateResult =
+        WebhookUpdateResult.approved(UUID.randomUUID(), "ok");
+    private boolean checkIdempotencyCalled = false;
+    private boolean applyConditionalUpdateCalled = false;
+    private boolean onApprovedCalled = false;
+    private boolean onRejectedCalled = false;
+
+    @Override
+    protected String parse(WebhookRequest request) {
+      return parsedPayload;
     }
 
-    @Test
-    void 조건부_UPDATE가_성공하면_onSuccess가_호출되고_리스너에_성공으로_통지된다() {
-        UUID referenceId = UUID.randomUUID();
-        RecordingListener listener = new RecordingListener();
-        FakePgWebhookHandler handler = new FakePgWebhookHandler(List.of(listener));
-        handler.updateResult = UpdateResult.success(referenceId, "ok");
-
-        WebhookResult result = handler.handle(new WebhookRequest("body"));
-
-        assertThat(result.getStatus()).isEqualTo(HttpStatus.OK);
-        assertThat(handler.onSuccessCalled).isTrue();
-        assertThat(handler.onFailureCalled).isFalse();
-        assertThat(listener.outcomes).hasSize(1);
-        assertThat(listener.outcomes.get(0).isSuccess()).isTrue();
-        assertThat(listener.outcomes.get(0).getReferenceId()).isEqualTo(referenceId);
-        assertThat(listener.outcomes.get(0).getHandlerType()).isEqualTo("FAKE");
+    @Override
+    protected boolean checkIdempotency(String payload) {
+      checkIdempotencyCalled = true;
+      return idempotent;
     }
 
-    @Test
-    void 조건부_UPDATE가_실패하면_onFailure가_호출되고_리스너에_실패로_통지된다() {
-        UUID referenceId = UUID.randomUUID();
-        RecordingListener listener = new RecordingListener();
-        FakePgWebhookHandler handler = new FakePgWebhookHandler(List.of(listener));
-        handler.updateResult = UpdateResult.failure(referenceId, "race-lost");
-
-        WebhookResult result = handler.handle(new WebhookRequest("body"));
-
-        assertThat(result.getStatus()).isEqualTo(HttpStatus.OK);
-        assertThat(handler.onFailureCalled).isTrue();
-        assertThat(handler.onSuccessCalled).isFalse();
-        assertThat(listener.outcomes.get(0).isSuccess()).isFalse();
+    @Override
+    protected WebhookUpdateResult<String> applyConditionalUpdate(String payload) {
+      applyConditionalUpdateCalled = true;
+      return updateResult;
     }
 
-    private static class RecordingListener implements WebhookOutcomeListener {
-        private final List<WebhookOutcome> outcomes = new ArrayList<>();
-
-        @Override
-        public void onOutcome(WebhookOutcome outcome) {
-            outcomes.add(outcome);
-        }
+    @Override
+    protected void onApproved(String entity) {
+      onApprovedCalled = true;
     }
 
-    private static class FakePgWebhookHandler extends AbstractPgWebhookHandler<String> {
-
-        private boolean idempotent = false;
-        private UpdateResult<String> updateResult = UpdateResult.success(UUID.randomUUID(), "ok");
-        private boolean applyConditionalUpdateCalled = false;
-        private boolean onSuccessCalled = false;
-        private boolean onFailureCalled = false;
-
-        FakePgWebhookHandler(List<WebhookOutcomeListener> listeners) {
-            super(listeners);
-        }
-
-        @Override
-        protected boolean checkIdempotency(WebhookRequest request) {
-            return idempotent;
-        }
-
-        @Override
-        protected UpdateResult<String> applyConditionalUpdate(WebhookRequest request) {
-            applyConditionalUpdateCalled = true;
-            return updateResult;
-        }
-
-        @Override
-        protected void onSuccess(UpdateResult<String> result) {
-            onSuccessCalled = true;
-        }
-
-        @Override
-        protected void onFailure(UpdateResult<String> result) {
-            onFailureCalled = true;
-        }
-
-        @Override
-        protected String handlerType() {
-            return "FAKE";
-        }
+    @Override
+    protected void onRejected(String entity) {
+      onRejectedCalled = true;
     }
+  }
 }

@@ -19,6 +19,8 @@ public interface PaymentJpaRepository extends JpaRepository<PaymentJpaEntity, UU
 
     Optional<PaymentJpaEntity> findByPgPaymentKeyHash(String pgPaymentKeyHash);
 
+    Optional<PaymentJpaEntity> findByOrderId(UUID orderId);
+
     // order_completed 이벤트로 sellerId/productId 사후채움(#14) — 이미 채워져 있으면 0행(멱등).
     @Modifying(clearAutomatically = true)
     @Query("UPDATE PaymentJpaEntity p SET p.sellerId = :sellerId, p.productId = :productId "
@@ -32,14 +34,6 @@ public interface PaymentJpaRepository extends JpaRepository<PaymentJpaEntity, UU
             + "WHERE p.id = :id AND p.status = 'PAYMENT_PENDING'")
     int tryTransitionFromPending(@Param("id") UUID id, @Param("newStatus") Payment.Status newStatus,
             @Param("pgTxId") String pgTxId, @Param("approvedAt") LocalDateTime approvedAt);
-
-    // PG 토큰발급 응답 반영(#9) — 이 시점엔 해당 row를 우리만 갖고 있어 조건부 UPDATE 불필요.
-    // pgPaymentKey는 암호화 컬럼이라 등호조회가 안 되므로, 평문 해시(pgPaymentKeyHash)를 같이 저장해 그걸로 조회.
-    @Modifying(clearAutomatically = true)
-    @Query("UPDATE PaymentJpaEntity p SET p.pgPaymentKey = :pgPaymentKey, p.pgPaymentKeyHash = :pgPaymentKeyHash "
-            + "WHERE p.id = :id")
-    void updatePgPaymentKey(@Param("id") UUID id, @Param("pgPaymentKey") String pgPaymentKey,
-            @Param("pgPaymentKeyHash") String pgPaymentKeyHash);
 
     // TTL 스캐너(§3) — 생성 후 threshold 이전인 PAYMENT_PENDING row 전체.
     List<PaymentJpaEntity> findByStatusAndCreatedAtBefore(Payment.Status status, LocalDateTime threshold);

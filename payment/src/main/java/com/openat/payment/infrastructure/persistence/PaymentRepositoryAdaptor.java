@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -59,8 +60,18 @@ public class PaymentRepositoryAdaptor implements PaymentRepository {
     }
 
     @Override
-    public void updatePgPaymentKey(UUID id, String pgPaymentKey) {
-        paymentJpaRepository.updatePgPaymentKey(id, pgPaymentKey, RequestHasher.hash(pgPaymentKey));
+    public Optional<Payment> tryReserveForConfirm(Payment pending) {
+        try {
+            // saveAndFlush 필수 — order_id 유니크 충돌을 이 지점에서 즉시 감지(지연 flush면 catch가 못 잡음).
+            return Optional.of(paymentJpaRepository.saveAndFlush(PaymentJpaEntity.fromDomain(pending)).toDomain());
+        } catch (DataIntegrityViolationException e) {
+            return Optional.empty(); // order_id 충돌 — 기존 행 존재, 호출측이 findByOrderId로 재조회
+        }
+    }
+
+    @Override
+    public Optional<Payment> findByOrderId(UUID orderId) {
+        return paymentJpaRepository.findByOrderId(orderId).map(PaymentJpaEntity::toDomain);
     }
 
     @Override

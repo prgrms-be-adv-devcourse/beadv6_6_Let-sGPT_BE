@@ -44,6 +44,7 @@ bin/
 ### Mac OS ###
 .DS_Store
 
+.ai
 .claude
 *.html
 *.css

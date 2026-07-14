@@ -18,14 +18,17 @@ public interface PaymentRepository {
 
     Optional<Payment> findByPgPaymentKey(String pgPaymentKey);
 
+    // confirm 단일 진입점(7-13 plan WS-B) — order_id 유니크 예약 INSERT. 충돌 시 빈 Optional(호출측이
+    // findByOrderId로 기존 행을 재조회해 4갈래 분기).
+    Optional<Payment> tryReserveForConfirm(Payment pending);
+
+    Optional<Payment> findByOrderId(UUID orderId);
+
     // order_completed 사후채움(#14) — affected rows 반환(0이면 대상 없음/이미 채움, 멱등).
     int tryFillSellerAndProduct(UUID orderId, UUID sellerId, UUID productId);
 
     // 웹훅 처리(#10) — WHERE status='PAYMENT_PENDING' 조건부 UPDATE, affected rows=0이면 이미 처리됐거나 대상 없음.
     int tryTransitionFromPending(UUID id, Payment.Status newStatus, String pgTxId, LocalDateTime approvedAt);
-
-    // PG confirm 요청으로 전달받은 값 반영(A16) — 이 시점엔 해당 row를 우리만 갖고 있어 조건부 UPDATE 불필요.
-    void updatePgPaymentKey(UUID id, String pgPaymentKey);
 
     // TTL 스캐너(§3) — 생성 후 threshold 이전인 PAYMENT_PENDING row 전체(pgPaymentKey null/有 둘 다 포함, 분기는 호출 측이 처리).
     List<Payment> findStalePending(LocalDateTime threshold);
