@@ -1,7 +1,9 @@
 plugins {
     kotlin("jvm")
     kotlin("plugin.spring")
-    kotlin("plugin.jpa")
+    // "plugin.jpa"는 적용하지 않는다 - queue는 @Entity/JpaRepository가 하나도 없는 Redis 전용
+    // 모듈이라(WaitingQueueRedisRepository 등), JPA를 열어줄 이유가 없다(루트 build.gradle.kts
+    // subprojects 블록도 queue를 spring-boot-starter-data-jpa/postgres 적용 대상에서 제외함).
 }
 
 dependencies {
@@ -41,9 +43,8 @@ dependencies {
 kotlin {
     compilerOptions {
         freeCompilerArgs.add("-Xjsr305=strict")
-        // "kotlin.plugin.jpa"가 @Entity/@MappedSuperclass/@Embeddable을 자동으로 open 처리하고,
-        // "kotlin.plugin.spring"이 @Configuration/@Service/@Component 등을 자동으로 open 처리한다.
-        // (코틀린 클래스는 기본이 final이라 이 플러그인들 없이는 Hibernate 프록시/CGLIB이 실패한다.)
+        // "kotlin.plugin.spring"이 @Configuration/@Service/@Component 등을 자동으로 open
+        // 처리한다(코틀린 클래스는 기본이 final이라 이 플러그인 없이는 CGLIB 프록시가 실패한다).
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
     }
 }

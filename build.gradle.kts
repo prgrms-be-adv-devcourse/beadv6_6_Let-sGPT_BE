@@ -82,12 +82,10 @@ subprojects {
 
     if (project.name != "apigateway" && project.name != "common") {
         dependencies {
-            implementation("org.springframework.boot:spring-boot-starter-data-jpa")
             implementation("org.springframework.boot:spring-boot-starter-web")
             // IntelliJ Run/Gradle bootRun에서도 루트 .env를 자동으로 읽어 ${DB_USER} 같은 placeholder를 채워줌
             implementation("me.paulschwarz:springboot4-dotenv:5.1.0")
             implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3")
-            runtimeOnly("org.postgresql:postgresql")
 
             //Security
             implementation("org.springframework.boot:spring-boot-starter-security")
@@ -95,6 +93,18 @@ subprojects {
             implementation("io.jsonwebtoken:jjwt-api:0.12.3")
             runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.3")
             runtimeOnly("io.jsonwebtoken:jjwt-gson:0.12.3")
+        }
+    }
+
+    // JPA + Postgres: 실제로 RDB를 쓰는 도메인 모듈(member/order/product/payment)에만 적용한다.
+    // queue는 대기열 상태를 전부 Redis(WaitingQueueRedisRepository 등)로만 다루고
+    // @Entity/JpaRepository가 단 하나도 없는데도 예전엔 이 블록에 함께 묶여 있어, 안 쓰는
+    // DataSource/EntityManagerFactory가 기동 시 자동구성되고(HikariCP가 실제로 postgres에
+    // 연결을 시도) DB_USER/DB_PASSWORD 등 불필요한 외부 의존성까지 생기던 문제가 있었다.
+    if (project.name != "apigateway" && project.name != "common" && project.name != "queue") {
+        dependencies {
+            implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+            runtimeOnly("org.postgresql:postgresql")
         }
     }
 

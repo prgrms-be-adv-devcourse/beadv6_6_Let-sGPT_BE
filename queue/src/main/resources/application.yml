@@ -1,5 +1,5 @@
 server:
-  port: 9200
+  port: 9150   # 9200은 Elasticsearch 기본 포트와 겹쳐(local-elasticsearch, docker-compose.yml) 회피
 
 springdotenv:
   directory: ..
@@ -9,12 +9,6 @@ spring:
     active: local
   application:
     name: queue-service
-  jpa:
-    properties:
-      hibernate:
-        default_schema: queue # 스키마 분리
-    hibernate:
-      ddl-auto: create-drop
   kafka:
     consumer:
       group-id: queue-service
@@ -46,7 +40,7 @@ management:
 # 정적 hot-drops 목록 없음 - 모든 드롭에 균일 적용(WaitingQueueRepository.activeDropIds()로 동적 발견).
 queue:
   admission:
-    batch-size: 50             # N - 이번 tick에 살펴볼 대기자 후보 상한(maxScan). 실제 입장 수는 재고가 결정.
+    batch-size: 50             # N - 입장은 엄격한 FIFO(새치기 없음). 이 값은 비정상 유령 항목 방어용 상한일 뿐.
     interval-ms: 1000           # admit.lua 실행 주기(ms)
     ttl-seconds: 180            # 입장권 세션 창(초)
     sweep-interval-ms: 5000     # 미소진 입장권(TTL 경과) 회수 스위퍼 주기(ms)
