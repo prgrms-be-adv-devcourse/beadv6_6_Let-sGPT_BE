@@ -102,8 +102,8 @@ com.openat
 
 **컨트롤러는 얇게** — 명세 구현 + 인증 추출 + 검증 + 유스케이스 호출 + 응답 구성만. 비즈니스 로직은 service.
 - Swagger 명세 전담 인터페이스(`ProductApiSpec`)를 `implements` → 컨트롤러엔 제어 흐름만, 문서 어노테이션은 인터페이스로 분리.
-- 인증 식별자(`@CurrentUser UUID`)는 **회원(memberId)** 이다(게이트웨이 전달, 현재 임시 `X-User-Id`). **API 명세엔 노출하지 않는다**(내부 파라미터).
-- 상품 소유 주체인 **판매자(`sellerId`)는 회원과 1:N**이라 memberId에서 곧장 얻지 못한다 — sellerId 해석 방식은 게이트웨이/JWT 인증 연동 시 확정(**열린 설계 포인트**). 현 코드는 인증 스텁 단계라 임시로 인증 주체를 sellerId로 사용 — **임시 연동 방침·교체 대상은 §12.**
+- 인증 식별자(`@CurrentUser UUID sellerId`)는 활성 스토어의 **`sellerInfoId`**다. 게이트웨이가 판매자 scoped JWT를 검증해 `X-Seller-Id`로 주입하며, 인증 파라미터는 API 입력 모델에 노출하지 않는다.
+- 회원과 판매자는 1:N이므로 memberId를 상품 소유 식별자로 사용하지 않는다. member가 판매자 토큰 발급 시 회원↔판매자 소유를 검증하고, product는 상품·드롭↔sellerId 리소스 소유를 검증한다. 상세 계약은 §12.
 - 입력 검증은 `@Valid`(Bean Validation). 단일 진입 가정으로 도메인 중복 검증 생략. (`spring-boot-starter-validation`)
 
 **예외**
@@ -121,9 +121,10 @@ com.openat
 
 ---
 
-## 9. 보안 (임시)
-- 현재 `config.SecurityConfig`: `csrf` off + `anyRequest().permitAll()`.
-- **임시 베이스라인**이다 — 게이트웨이/JWT 인증(PROJECT §3)이 붙으면 교체한다. (판매자 식별 연동 방침은 §12)
+## 9. 보안 경계
+- 외부 인증·인가는 게이트웨이가 담당한다. product의 `config.SecurityConfig`는 `csrf` off + `anyRequest().permitAll()`을 유지하며, 서비스 직접 포트는 외부에 노출하지 않는다.
+- 게이트웨이는 클라이언트가 보낸 `X-User-Id`·`X-User-Roles`·`X-Seller-Id`를 모두 제거한 뒤 검증된 토큰에서 신뢰 헤더를 다시 만든다.
+- 상품·드롭 쓰기 경로는 `typ=scoped`, `aud=openat-product` 판매자 JWT만 허용한다. product의 `CurrentUserArgumentResolver`는 `X-Seller-Id`가 없거나 UUID 형식이 아니면 `UNAUTHENTICATED(401)`로 거절한다.
 
 ---
 
@@ -151,23 +152,25 @@ com.openat
 
 ---
 
-## 12. 인증·판매자 식별 연동 (임시 지침)
+## 12. 인증·판매자 식별 계약
 
-> 회원 도메인의 게이트웨이/JWT 인증은 dev에 병합됐으나 **product 연동은 미완**이다. 아래는 **확정 전 임시 방침**으로, 회원 측 판매자 토큰 발급이 구현돼 dev에 병합되면 **그 코드 기준으로 맞춰 교체**한다. (전역 인증 계약은 PROJECT §3)
+판매자 식별은 **member 소유권 검증 + 게이트웨이 신뢰 헤더 + product 리소스 소유 검증**으로 분담한다. (근거: DECISIONS 2026-06-25 #3, 전역 계약 PROJECT §3)
 
-**현재 상태 (임시 스텁)**
-- 게이트웨이는 `X-User-Id`로 **memberId**만 전달한다(+`X-User-Roles`). sellerId는 토큰·헤더에 없다(회원:판매자 1:N).
-- product는 임시로 `support.auth.CurrentUserArgumentResolver`가 `X-User-Id`를 `@CurrentUser UUID sellerId`에 그대로 주입 → **memberId를 sellerId로 오용**한다(sellerId 진위 검증 없음 — 게이트웨이 미연동 임시 상태. 리소스 소유 검증 `getOwnedProduct`는 동작하나 sellerId가 가짜라 실효 없음).
+**토큰 발급**
+- 클라이언트는 회원 access JWT로 `POST /api/v1/seller/token`에 `{ "sellerInfoId": "..." }`를 요청한다.
+- member는 요청한 `sellerInfoId`가 해당 memberId 소유의 활성 스토어인지 검증한다.
+- 성공하면 `sub=sellerInfoId`, `act.sub=memberId`, `aud=openat-product`, `scope=product:write`, `typ=scoped`인 단기 판매자 JWT를 발급한다. memberId는 위임 감사 정보이며 product 소유 식별자로 전달하지 않는다.
 
-**연동 방침 (미확정 — 합의된 방향)**
-- **신뢰 모델: 게이트웨이 신뢰.** 회원이 sellerId 귀속(회원↔판매자)을 **판매자 토큰 발급 시점에 보증**하므로, product는 게이트웨이가 전달하는 sellerId의 **진위**를 자체 검증하지 않는다(게이트웨이 신뢰). 단, 상품·드롭이 그 sellerId의 것인지(**리소스 소유**)는 product가 별도로 검증한다(아래 '연동 시 교체 대상' 참고).
-- **판매자 토큰:** 클라가 로그인 상태에서 판매자를 선택하면 회원 API로 **토큰을 재발급**받는다 — 회원 토큰과 **독립적인 판매자 토큰**. 게이트웨이가 이를 검증해 sellerId를 product로 전달한다.
-- **product 수신:** 게이트웨이가 전달하는 sellerId 헤더를 받아 사용한다(OpenFeign 내부 검증·fail-closed 불필요).
-- **미확정:** 판매자 토큰 구조·sellerId 전달 헤더 이름·memberId 동시 전달 여부는 **회원 도메인이 구현 시 확정** → product는 그에 맞춰 연동한다. (근거: DECISIONS 2026-06-25 #3 — 내부 API 검증에서 게이트웨이 신뢰 방식으로 변경)
+**게이트웨이 전달**
+- 상품·드롭 쓰기 경로는 `typ=scoped`이고 audience에 `openat-product`가 포함된 JWT만 허용한다.
+- 게이트웨이는 외부 요청의 인증 컨텍스트 헤더를 제거한 뒤 scoped JWT의 `sub`를 `X-Seller-Id`로 주입한다. scoped 요청에는 `X-User-Id`·`X-User-Roles`를 주입하지 않는다.
+- product의 `support.auth.CurrentUserArgumentResolver`는 `UserHeaders.SELLER_ID`를 UUID로 변환해 `@CurrentUser UUID sellerId`에 주입한다.
 
-**연동 시 교체 대상**
-- `support.auth.*`(임시 `@CurrentUser`/Resolver) → 게이트웨이가 전달하는 sellerId 헤더 수신으로 교체(sellerId 진위 검증 없음 — 게이트웨이 신뢰).
-- 게이트웨이가 보증하는 것은 **sellerId의 진위**(회원↔판매자 매핑)뿐이다. "그 상품·드롭이 이 sellerId의 것인지"(리소스 소유)는 **product가 계속 검증**한다 — `getOwnedProduct`가 `PRODUCT_NOT_OWNER`로 남의 리소스 접근을 차단하며, 이 검증은 연동 후에도 유지한다.
+**책임 경계**
+- member는 **회원↔판매자 소유와 활성 상태**를 판매자 토큰 발급 시 검증한다.
+- 게이트웨이는 **토큰 서명·만료·타입·대상 서비스와 헤더 위조 방지**를 책임진다.
+- product는 전달된 sellerId의 회원 귀속을 다시 조회하지 않는다. 대신 상품·드롭이 그 sellerId 소유인지 계속 검증하며, 불일치하면 `PRODUCT_NOT_OWNER` 등 도메인 오류로 거절한다.
+- product 전 계층의 `sellerId`는 `SellerInfo.id`와 같은 값인 **sellerInfoId**를 뜻한다.
 
 ---
 

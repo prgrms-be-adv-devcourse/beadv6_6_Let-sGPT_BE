@@ -14,7 +14,9 @@ import com.openat.common.exception.BusinessException;
 import com.openat.product.application.dto.ProductCreateCommand;
 import com.openat.product.application.dto.ProductUpdateCommand;
 import com.openat.product.domain.error.ProductErrorCode;
+import com.openat.product.domain.event.ProductCreatedEvent;
 import com.openat.product.domain.event.ProductDeletedEvent;
+import com.openat.product.domain.event.ProductUpdatedEvent;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.fixture.ProductFixture;
@@ -126,6 +128,26 @@ class ProductCommandServiceTest {
           .hasFieldOrPropertyWithValue("errorCode", CategoryErrorCode.NOT_FOUND);
       then(productRepository).should(never()).save(any());
     }
+
+    @Test
+    @DisplayName("상품을 등록하면 저장된 상품의 생성 이벤트를 발행한다")
+    void create_validProduct_publishesCreatedEvent() {
+      // given
+      UUID sellerId = UUID.randomUUID();
+      UUID productId = UUID.randomUUID();
+      Product savedProduct = ProductFixture.persisted(productId, sellerId);
+      ProductCreateCommand command = uncategorizedCommand(sellerId);
+      given(productRepository.save(any(Product.class))).willReturn(savedProduct);
+
+      // when
+      productCommandService.create(command);
+
+      // then
+      ArgumentCaptor<ProductCreatedEvent> eventCaptor =
+          ArgumentCaptor.forClass(ProductCreatedEvent.class);
+      then(eventPublisher).should().publishEvent(eventCaptor.capture());
+      assertThat(eventCaptor.getValue().product()).isSameAs(savedProduct);
+    }
   }
 
   @Nested
@@ -185,6 +207,29 @@ class ProductCommandServiceTest {
           .isInstanceOf(BusinessException.class)
           .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.NOT_OWNER);
     }
+
+    @Test
+    @DisplayName("상품을 수정하면 갱신된 상품의 수정 이벤트를 발행한다")
+    void update_validOwner_publishesUpdatedEvent() {
+      // given
+      UUID sellerId = UUID.randomUUID();
+      UUID productId = UUID.randomUUID();
+      Product product = ProductFixture.persisted(productId, sellerId);
+      given(productRepository.findById(productId)).willReturn(Optional.of(product));
+      ProductUpdateCommand command =
+          new ProductUpdateCommand(
+              productId, sellerId, "수정 상품", "수정 설명", null, 20_000L, null, null);
+
+      // when
+      productCommandService.update(command);
+
+      // then
+      ArgumentCaptor<ProductUpdatedEvent> eventCaptor =
+          ArgumentCaptor.forClass(ProductUpdatedEvent.class);
+      then(eventPublisher).should().publishEvent(eventCaptor.capture());
+      assertThat(eventCaptor.getValue().product()).isSameAs(product);
+      assertThat(eventCaptor.getValue().product().getName()).isEqualTo("수정 상품");
+    }
   }
 
   @Nested
@@ -205,7 +250,11 @@ class ProductCommandServiceTest {
 
       // then
       then(productRepository).should().delete(product);
-      then(eventPublisher).should().publishEvent(any(ProductDeletedEvent.class));
+      ArgumentCaptor<ProductDeletedEvent> eventCaptor =
+          ArgumentCaptor.forClass(ProductDeletedEvent.class);
+      then(eventPublisher).should().publishEvent(eventCaptor.capture());
+      assertThat(eventCaptor.getValue().productId()).isEqualTo(productId);
+      assertThat(eventCaptor.getValue().deletedAt()).isNotNull();
     }
 
     @Test
