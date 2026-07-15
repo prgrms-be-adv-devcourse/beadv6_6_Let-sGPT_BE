@@ -76,7 +76,7 @@ Spring Boot 4는 테스트 슬라이스를 기술별 모듈로 쪼갰다. 아래
 
 ```java
 @WebMvcTest(XxxController.class)
-@AutoConfigureMockMvc(addFilters = false)               // 시큐리티 필터 제외(임시 permitAll이라 검증 대상 아님)
+@AutoConfigureMockMvc(addFilters = false)               // 인증·인가는 게이트웨이 경계, MVC 슬라이스는 resolver·응답 계약 검증
 @Import({WebConfig.class, GlobalExceptionHandler.class}) // /api/v1 프리픽스·@CurrentUser·에러 매핑
 class XxxControllerTest {
   @Autowired MockMvc mockMvc;
@@ -86,7 +86,7 @@ class XxxControllerTest {
 ```
 
 - 응답 단언은 MockMvc DSL(`andExpect(status()/jsonPath()/header())`) — 여기 쓰는 Hamcrest matcher는 MockMvc 표준이라 §4의 "AssertJ 통일"과 무관.
-- `@CurrentUser`는 `X-Seller-Id` 헤더(게이트웨이가 scoped 토큰 검증 후 주입하는 sellerInfoId)로 주입된다.
+- `@CurrentUser`는 `X-Seller-Id` 헤더(게이트웨이가 scoped 토큰 검증 후 주입하는 sellerInfoId)로 주입된다. `X-User-Id`(memberId)는 판매자 식별자로 받지 않는 회귀 테스트를 둔다.
 
 **영속 슬라이스 템플릿**
 

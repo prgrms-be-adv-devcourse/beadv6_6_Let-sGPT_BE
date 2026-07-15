@@ -55,10 +55,11 @@
 - **API Gateway (Spring Cloud Gateway):** 모든 외부 요청은 Gateway 통과.
   - `/api/**` → 외부 노출 + JWT 검증.
   - `/internal/**` → 서비스 간 호출 전용, **외부 차단.**
-- **인증(JWT):** 회원 서비스가 **RS256**으로 발급(`sub`=memberId, `roles`=접두사 없는 `USER`/`SELLER`/`ADMIN`), Gateway가 **JWKS**(`/auth/jwks`)로 공개키를 받아 검증·인가한 뒤 사용자 정보를 헤더로 전달한다. 미인증·위조 요청의 사용자 헤더는 강제 제거한다.
-  - **전달 헤더(서비스 간 계약, `common.auth.UserHeaders`):** `X-User-Id`(= **memberId**) · `X-User-Roles`(`ROLE_USER,ROLE_SELLER` 형식).
-  - **수신 측:** `common`의 `UserContextFilter`(자동설정)가 헤더를 읽어 `UserContextHolder`(ThreadLocal)에 `UserContext(userId, roles)`로 적재 → `@CurrentUser UserContext` 파라미터 또는 `UserContextHolder` 정적 메서드로 사용. (가이드: `common/docs/CURRENT_USER_GUIDE.md`)
-  - **식별자 주의:** 헤더가 주는 건 **memberId이며 sellerId가 아니다**(회원:판매자 1:N). 판매자 행위 식별 방법은 [§12](#12-열린-결정-사항-작업-중-합의-필요)에서 합의.
+- **인증(JWT):** 회원 서비스가 **RS256**으로 토큰을 발급하고 Gateway가 **JWKS**(`/auth/jwks`)로 공개키를 받아 검증·인가한 뒤 신뢰 헤더를 주입한다. 클라이언트가 직접 보낸 인증 컨텍스트 헤더는 토큰 유무와 관계없이 먼저 제거한다.
+  - **회원 access JWT:** `sub`=memberId, `roles`=접두사 없는 `USER`/`SELLER`/`ADMIN`. Gateway가 `X-User-Id`(memberId)와 `X-User-Roles`(`ROLE_USER,ROLE_SELLER` 형식)를 주입한다. 수신 서비스는 `common`의 `UserContextFilter`·`@CurrentUser UserContext`를 사용한다. (가이드: `common/docs/CURRENT_USER_GUIDE.md`)
+  - **판매자 scoped JWT:** 회원 access JWT로 `POST /api/v1/seller/token`을 호출하면 member가 활성 `sellerInfoId` 소유권을 검증하고 `sub`=sellerInfoId, `act.sub`=memberId, `aud`=`openat-product`, `scope`=`product:write`, `typ`=`scoped`인 단기 토큰을 발급한다.
+  - **상품 전달 계약:** Gateway는 product 쓰기 경로에서 scoped JWT의 `typ`·`aud`를 검사하고 `X-Seller-Id`(sellerInfoId)만 주입한다. `X-User-Id`·`X-User-Roles`는 전달하지 않으며 memberId는 감사용 `act.sub`에만 남는다. product의 `@CurrentUser UUID`는 `X-Seller-Id`를 바인딩한다.
+  - **헤더 상수:** 세 헤더 모두 `common.auth.UserHeaders`를 사용한다.
 - **통신 방식 분리 (핵심 설계):**
   - **동기 (OpenFeign 내부 API):** 즉시 성공/실패 판단이 필요한 호출. → **재고 감소·재고 롤백·재고 이력 조회.** (우리 DB라 빠르고 외부 의존 없음)
   - **비동기 (Kafka 이벤트):** 결과를 기다릴 필요 없는 전파. → **결제·환불 결과, 정산 적재, 상품 색인.** (PG처럼 느리거나 사후 통지 성격)
@@ -235,7 +236,6 @@
 - 예치금·장바구니: 과제 필수지만 현재 **TODO**. 현재는 PG 직접 결제·드롭 즉시 주문.
 - 카테고리: 상품 서비스 내 **`categories` 테이블**로 분리 완료(`Product`가 `@ManyToOne`으로 **선택 참조** — nullable, 카테고리 없이 상품 등록 가능·삭제 시 미분류). 계층 구조·카테고리별 수수료는 추후 컬럼 확장으로 대응.
 - 공통 모듈 범위·QueryDSL 도입 여부: 도메인별 결정 사항.
-- **product 판매자 식별(인증 연동):** 게이트웨이는 `X-User-Id`로 **memberId만** 전달한다(회원:판매자 1:N). 회원 도메인이 **게이트웨이 신뢰 방식**을 채택 — 클라가 판매자 선택 시 회원 API로 **토큰을 재발급**받고(회원 토큰과 **독립적인 판매자 토큰**), 게이트웨이가 이를 검증해 sellerId를 전달한다. product는 게이트웨이가 보증한 sellerId의 **진위**를 신뢰한다(자체 진위 검증 없음) — 단, 상품·드롭의 **리소스 소유**는 product가 검증한다(`getOwnedProduct`). **회원 측 판매자 토큰 구현은 미확정** — 토큰 구조·sellerId 전달 헤더 확정 후 연동. 현재 product는 임시로 `X-User-Id`(memberId)를 `sellerId` 자리에 사용(`support.auth`), 연동 시 교체. (근거: `product/docs/DECISIONS.md` 2026-06-25 #3)
 
 ---
 

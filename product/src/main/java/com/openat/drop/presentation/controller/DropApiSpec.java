@@ -55,8 +55,8 @@ public interface DropApiSpec {
 
   // NOTE(auth): @CurrentUser UUID sellerId = 활성 스토어 sellerInfoId(판매자 토큰 스코프). 드롭은 회원이 아니라
   //   스토어(SellerInfo)에 귀속되며 write(create/delete)·본인 드롭(/me)의 소유·필터 기준으로 쓴다.
-  //   게이트웨이가 판매자 토큰의 스토어 스코프를 검증해 주입하는 전제(임시 주입: CurrentUserArgumentResolver 스텁). 상세: FE
-  // docs/auth.md.
+  //   게이트웨이가 scoped JWT를 검증한 뒤 X-Seller-Id로 주입하고 CurrentUserArgumentResolver가 이를 바인딩한다.
+  //   상세: FE docs/auth.md.
 
   // TODO(fe-api): DropResponse 에 판매자 표시명(sellerName/storeName) 미포함 → 드롭 카드·상세 벤더 표기에 필요.
   //   출처는 member SellerInfo.storeName. ProductResponse 와 동일 이슈(ProductApiSpec 참고). (현재 FE 는 MSW
