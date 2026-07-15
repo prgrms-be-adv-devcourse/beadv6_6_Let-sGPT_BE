@@ -28,25 +28,28 @@ resources:
 images:
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
-  newTag: e2aaa0cd35d919a12078f4f846c675a428970607
+  newTag: 15c22da218157e0d4a921b1888dc18e1219aec77
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
-  newTag: e2aaa0cd35d919a12078f4f846c675a428970607
+  newTag: 15c22da218157e0d4a921b1888dc18e1219aec77
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order
-  newTag: e2aaa0cd35d919a12078f4f846c675a428970607
+  newTag: 15c22da218157e0d4a921b1888dc18e1219aec77
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
-  newTag: e2aaa0cd35d919a12078f4f846c675a428970607
+  newTag: 15c22da218157e0d4a921b1888dc18e1219aec77
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
-  newTag: e2aaa0cd35d919a12078f4f846c675a428970607
+  newTag: 15c22da218157e0d4a921b1888dc18e1219aec77
+- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
+  newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
+  newTag: 15c22da218157e0d4a921b1888dc18e1219aec77
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/search
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/search
-  newTag: e2aaa0cd35d919a12078f4f846c675a428970607
+  newTag: 15c22da218157e0d4a921b1888dc18e1219aec77
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
-  newTag: e2aaa0cd35d919a12078f4f846c675a428970607
+  newTag: 15c22da218157e0d4a921b1888dc18e1219aec77
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
   newTag: b2c8786c5f5f1cf743883c270af55f3f93d109ab
