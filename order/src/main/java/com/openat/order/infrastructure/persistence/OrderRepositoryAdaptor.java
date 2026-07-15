@@ -17,11 +17,6 @@ public class OrderRepositoryAdaptor implements OrderRepository {
     private final OrderJpaRepository orderJpaRepository;
 
     @Override
-    public Order save(Order order) {
-        return orderJpaRepository.save(order);
-    }
-
-    @Override
     public Order saveAndFlush(Order order) {
         return orderJpaRepository.saveAndFlush(order);
     }

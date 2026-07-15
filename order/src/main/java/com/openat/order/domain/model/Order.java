@@ -160,17 +160,6 @@ public class Order {
         return true;
     }
 
-    public boolean failPayment(String reason, Instant failedAt) {
-        if (status != OrderStatus.PAYMENT_PENDING) {
-            return false;
-        }
-        this.status = OrderStatus.FAILED;
-        this.failCode = OrderFailCode.PAYMENT_FAILED;
-        this.failMessage = reason;
-        this.cancelledAt = failedAt;
-        return true;
-    }
-
     public boolean fail(OrderFailCode failCode, String message, Instant failedAt) {
         if (status != OrderStatus.PAYMENT_PENDING) {
             return false;

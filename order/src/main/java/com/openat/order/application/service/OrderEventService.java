@@ -37,13 +37,7 @@ public class OrderEventService {
             return;
         }
 
-        if (order.getStatus() != OrderStatus.PAYMENT_PENDING) {
-            throw new BusinessException(
-                    OrderErrorCode.INVALID_STATUS,
-                    "결제 성공 이벤트 처리 가능한 상태가 아닙니다: orderId=%s, status=%s"
-                            .formatted(command.orderId(), order.getStatus())
-            );
-        }
+        requireStatus(order, "결제 성공", OrderStatus.PAYMENT_PENDING);
 
         validateAmount(order, command.amount());
 
@@ -80,13 +74,7 @@ public class OrderEventService {
             return;
         }
 
-        if (order.getStatus() != OrderStatus.CANCEL_REQUESTED && order.getStatus() != OrderStatus.REFUND_PENDING) {
-            throw new BusinessException(
-                    OrderErrorCode.INVALID_STATUS,
-                    "환불 완료 이벤트 처리 가능한 상태가 아닙니다: orderId=%s, status=%s"
-                            .formatted(command.orderId(), order.getStatus())
-            );
-        }
+        requireStatus(order, "환불 완료", OrderStatus.CANCEL_REQUESTED, OrderStatus.REFUND_PENDING);
 
         validateAmount(order, command.amount());
 
@@ -107,13 +95,7 @@ public class OrderEventService {
             return;
         }
 
-        if (order.getStatus() != OrderStatus.CANCEL_REQUESTED && order.getStatus() != OrderStatus.REFUND_PENDING) {
-            throw new BusinessException(
-                    OrderErrorCode.INVALID_STATUS,
-                    "환불 실패 이벤트 처리 가능한 상태가 아닙니다: orderId=%s, status=%s"
-                            .formatted(command.orderId(), order.getStatus())
-            );
-        }
+        requireStatus(order, "환불 실패", OrderStatus.CANCEL_REQUESTED, OrderStatus.REFUND_PENDING);
 
         OrderStatus before = order.getStatus();
         if (!order.failRefund(command.reason())) {
@@ -132,6 +114,18 @@ public class OrderEventService {
                             .formatted(order.getId(), order.getTotalPrice(), eventAmount)
             );
         }
+    }
+
+    private void requireStatus(Order order, String eventName, OrderStatus... allowedStatuses) {
+        for (OrderStatus allowedStatus : allowedStatuses) {
+            if (order.getStatus() == allowedStatus) {
+                return;
+            }
+        }
+        throw new BusinessException(
+                OrderErrorCode.INVALID_STATUS,
+                "%s 이벤트 처리 가능한 상태가 아닙니다: orderId=%s, status=%s"
+                        .formatted(eventName, order.getId(), order.getStatus()));
     }
 
     private String eventSourceKey(String type, UUID orderId, UUID correlationId) {
