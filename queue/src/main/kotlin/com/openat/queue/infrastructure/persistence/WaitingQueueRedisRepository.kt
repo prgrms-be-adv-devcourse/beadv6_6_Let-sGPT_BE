@@ -149,7 +149,7 @@ class WaitingQueueRedisRepository(
         redisTemplate.opsForHash<String, String>().put(RedisKeys.decision(dropId), userId, WAIT_CONFIRMED_VALUE)
     }
 
-    override fun admitSingle(dropId: String, userId: String, maxScan: Int, ttlSeconds: Long): AdmittedEntry? {
+    override fun admitSingle(dropId: String, userId: String, ttlSeconds: Long): AdmittedEntry? {
         val grant = redisTemplate.execute(
             decidePartialScript,
             listOf(
@@ -166,7 +166,6 @@ class WaitingQueueRedisRepository(
             userId,
             ttlSeconds.toString(),
             Instant.now().toEpochMilli().toString(),
-            maxScan.toString(),
         ) ?: 0
 
         return if (grant > 0) AdmittedEntry(userId = userId, quantity = grant.toInt()) else null

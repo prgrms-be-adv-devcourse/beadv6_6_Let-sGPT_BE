@@ -87,7 +87,7 @@ class QueueService(
             // 실패(그 사이 재고가 완전히 사라짐)해도 별도 처리 불필요 - 아래 resolveStatus가
             // 최신 상태를 다시 계산해서 보여준다(예: WAITING 또는 다시 DECISION_REQUIRED).
             DecisionChoice.PARTIAL -> waitingQueueRepository.admitSingle(
-                dropId, userId, queueProperties.admission.batchSize, queueProperties.admission.ttlSeconds,
+                dropId, userId, queueProperties.admission.ttlSeconds,
             )
         }
         return resolveStatus(dropId, userId, touchHeartbeat = false)
@@ -149,14 +149,14 @@ class QueueService(
             return waitingInfo(ticket, grantableNow = null, optimisticMax = null, pollIntervalMs)
         }
 
-        // 공정성 방어: admit.lua의 스캔 범위(맨 앞 maxScan명) 밖에 있는 사람에게는 결정을 묻지
-        // 않는다. 물어보면 그 사람이 PARTIAL로 즉시 그 순간 가용 재고를 받아가는데, 이는 실제로는
-        // 아직 스캔조차 안 된(즉 순번상 자기 차례가 한참 남은) 사람이 앞사람들을 제치고 새치기하는
-        // 것과 같다 - "순번대로, 못 든 사람은 대기"라는 이 시스템의 대전제를 깨는 결함이다.
-        // decide-partial.lua에도 같은 범위 검사를 원자적으로 넣어 이 앱 레이어 체크와 그 사이의
-        // 레이스(예: 막 스캔범위에 들어온 순간)까지 막는다(이중 방어, admit.lua의 outstanding
-        // 중복가산 방어와 동일한 패턴).
-        if (ticket.rank >= queueProperties.admission.batchSize) {
+        // 공정성 방어: 엄격한 FIFO 정책상 지금 내 차례(rank 0)가 아니면 결정을 묻지 않는다.
+        // admit.lua도 이제 맨 앞사람이 안 풀리면 뒷사람은 아예 보지도 않고 그 자리에서 멈추므로
+        // (새치기 불가), rank>0인 사람에게 PARTIAL을 허용해버리면 아직 자기 차례도 안 된 사람이
+        // 앞사람을 제치고 가용 재고를 가로채는 셈이 된다 - "순번대로, 못 든 사람은 대기"라는 이
+        // 시스템의 대전제를 깨는 결함이다. decide-partial.lua에도 같은 rank==0 검사를 원자적으로
+        // 넣어 이 앱 레이어 체크와 그 사이의 레이스(예: 막 앞사람이 빠져나가 방금 rank 0이 된
+        // 순간)까지 막는다(이중 방어, admit.lua의 outstanding 중복가산 방어와 동일한 패턴).
+        if (ticket.rank > 0) {
             return waitingInfo(ticket, grantableNow = null, optimisticMax = null, pollIntervalMs)
         }
 

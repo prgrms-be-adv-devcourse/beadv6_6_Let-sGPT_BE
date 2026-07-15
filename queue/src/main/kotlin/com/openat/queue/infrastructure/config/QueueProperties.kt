@@ -11,8 +11,10 @@ import org.springframework.boot.context.properties.bind.DefaultValue
  * 알려준다). 경쟁이 없는 드롭은 `enqueueOrFastAdmit`의 즉시 입장 fast path로 대기 없이
  * 통과하므로, 균일 적용에 따른 지연은 실제로 경쟁이 있는 드롭에만 발생한다.
  *
- * `admission.batch-size`는 한 tick에 살펴볼 대기자 후보 상한(maxScan, 성능 보호용 캡)이고,
- * 실제 입장 인원/수량은 그 시점 가용 재고(remaining-outstanding)가 결정한다.
+ * 입장은 엄격한 FIFO다 - 맨 앞(지금 차례인) 사람 몫이 그 시점 가용 재고로 안 되면 뒷사람은
+ * 아예 보지 않고 그 자리에서 멈춘다(새치기 없음, "먼저 온 사람이 자리를 지킨다"). 그래서
+ * `admission.batch-size`(maxScan)는 이제 정상적인 스캔 범위가 아니라, 이미 입장권을 보유한
+ * 비정상 유령 항목이 연달아 있을 때만 관여하는 방어용 상한일 뿐이다.
  */
 @ConfigurationProperties("queue")
 data class QueueProperties(
@@ -22,9 +24,9 @@ data class QueueProperties(
 ) {
     data class Admission(
         /**
-         * 재고 인지형 admit.lua가 이번 tick에 대기열 앞에서부터 살펴볼 최대 인원(maxScan).
-         * 실제 입장 수는 이 값과 무관하게 그 시점 가용 재고(remaining-outstanding)로 결정되고,
-         * 이 값은 한 tick에서 Lua가 훑는 후보 범위의 상한(성능 보호용 캡)일 뿐이다.
+         * admit.lua가 엄격한 FIFO로 멈추기 전, "이미 입장권을 보유한 비정상 유령 항목"을
+         * 연달아 건너뛸 수 있는 최대 횟수(방어용 상한, maxScan). 정상 흐름에서는 맨 앞
+         * 정상 대기자를 만나는 즉시 스캔이 끝나므로 이 값에 도달할 일이 거의 없다.
          */
         @DefaultValue("50") val batchSize: Int = 50,
         /** admit.lua 실행 주기(ms) */

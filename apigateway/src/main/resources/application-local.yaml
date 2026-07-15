@@ -14,7 +14,7 @@ spring:
         webflux:
           routes:
             - id: queue-api
-              uri: http://localhost:9200
+              uri: http://localhost:9150
               predicates:
                 - Path=/api/v1/queues/**
             - id: member-docs
@@ -90,4 +90,4 @@ openapi:
       order-service: http://localhost:9120/api-docs
       payment-service: http://localhost:9130/api-docs
       settlement-service: http://localhost:9140/api-docs
-      queue-service: http://localhost:9200/api-docs
+      queue-service: http://localhost:9150/api-docs
