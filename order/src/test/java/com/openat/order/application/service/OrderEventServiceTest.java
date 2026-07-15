@@ -12,7 +12,9 @@ import com.openat.order.application.dto.PaymentCompletedCommand;
 import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
-import com.openat.order.application.port.OrderCompletedEventPublishPort;
+import com.openat.order.application.port.OrderCompletedOutboxPort;
+import com.openat.order.application.event.StockAdjustment;
+import com.openat.order.application.event.StockAdjustmentReason;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderFailCode;
@@ -30,6 +32,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.context.ApplicationEventPublisher;
 
 @ExtendWith(MockitoExtension.class)
 class OrderEventServiceTest {
@@ -41,7 +44,13 @@ class OrderEventServiceTest {
     private OrderHistoryRecorder orderHistoryRecorder;
 
     @Mock
-    private OrderCompletedEventPublishPort orderCompletedEventPublishPort;
+    private OrderCompletedOutboxPort orderCompletedOutboxPort;
+
+    @Mock
+    private OrderSagaRecorder orderSagaRecorder;
+
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
 
     @InjectMocks
     private OrderEventService orderEventService;
@@ -67,7 +76,14 @@ class OrderEventServiceTest {
         ArgumentCaptor<String> sourceEventKey = ArgumentCaptor.forClass(String.class);
         verify(orderHistoryRecorder).record(any(), any(), any(), any(), sourceEventKey.capture());
         assertThat(sourceEventKey.getValue()).hasSizeLessThanOrEqualTo(100);
-        verify(orderCompletedEventPublishPort).publish(order);
+        verify(orderSagaRecorder).recordCompleted(orderId);
+        verify(orderCompletedOutboxPort).save(order);
+        ArgumentCaptor<StockAdjustment> adjustment = ArgumentCaptor.forClass(StockAdjustment.class);
+        verify(applicationEventPublisher).publishEvent(adjustment.capture());
+        assertThat(adjustment.getValue().eventId()).isNotNull();
+        assertThat(adjustment.getValue().dropId()).isEqualTo(order.getDropId());
+        assertThat(adjustment.getValue().count()).isEqualTo(order.getQuantity());
+        assertThat(adjustment.getValue().reason()).isEqualTo(StockAdjustmentReason.COMPLETED);
     }
 
     @Test
@@ -88,7 +104,9 @@ class OrderEventServiceTest {
 
         // then
         verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
-        verify(orderCompletedEventPublishPort, never()).publish(any());
+        verify(orderSagaRecorder, never()).recordCompleted(any());
+        verify(orderCompletedOutboxPort, never()).save(any());
+        verify(applicationEventPublisher, never()).publishEvent(any());
     }
 
     @Test
@@ -136,6 +154,12 @@ class OrderEventServiceTest {
         // then
         assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
         verify(orderHistoryRecorder).record(any(), any(), any(), any(), any());
+        ArgumentCaptor<StockAdjustment> adjustment = ArgumentCaptor.forClass(StockAdjustment.class);
+        verify(applicationEventPublisher).publishEvent(adjustment.capture());
+        assertThat(adjustment.getValue().eventId()).isNotNull();
+        assertThat(adjustment.getValue().dropId()).isEqualTo(order.getDropId());
+        assertThat(adjustment.getValue().count()).isEqualTo(order.getQuantity());
+        assertThat(adjustment.getValue().reason()).isEqualTo(StockAdjustmentReason.REFUNDED);
     }
 
     @Test

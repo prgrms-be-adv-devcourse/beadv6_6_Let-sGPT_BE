@@ -32,7 +32,8 @@ import org.hibernate.annotations.UuidGenerator;
         indexes = {
             @Index(name = "idx_orders_member_id", columnList = "member_id"),
             @Index(name = "idx_orders_drop_id", columnList = "drop_id"),
-            @Index(name = "idx_orders_status", columnList = "status")
+            @Index(name = "idx_orders_status", columnList = "status"),
+            @Index(name = "idx_orders_saga_id", columnList = "saga_id")
         })
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Order {
@@ -93,6 +94,9 @@ public class Order {
     @Column(name = "fail_message")
     private String failMessage;
 
+    @Column(name = "saga_id", length = 64)
+    private String sagaId;
+
     @Version
     @Column(nullable = false)
     private long version;
@@ -145,6 +149,15 @@ public class Order {
 
     public boolean isOwnedBy(UUID requesterId) {
         return memberId.equals(requesterId);
+    }
+
+    public void assignSagaId(String sagaId) {
+        this.sagaId = sagaId;
+    }
+
+    public void recordFailure(OrderFailCode failCode, String failMessage) {
+        this.failCode = failCode;
+        this.failMessage = failMessage;
     }
 
     public boolean complete(UUID paymentId, Instant paidAt) {

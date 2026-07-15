@@ -24,6 +24,8 @@ public class OrderCancellationService {
     private final OrderRepository orderRepository;
     private final OrderHistoryRecorder orderHistoryRecorder;
     private final ProductIntegrationPort productIntegrationPort;
+    private final OrderSagaRecorder orderSagaRecorder;
+    private final OrderCompensationFailureRecorder compensationFailureRecorder;
 
     @Transactional
     public OrderCancelInfo cancel(UUID memberId, UUID orderId) {
@@ -48,6 +50,7 @@ public class OrderCancellationService {
         }
         orderHistoryRecorder.record(
                 order, previousStatus, "ORDER_CANCELLED", "결제 대기 주문 취소", "cancel-" + order.getId());
+        orderSagaRecorder.recordCompensating(order.getId());
         restoreStockAfterCommit(order);
     }
 
@@ -87,7 +90,9 @@ public class OrderCancellationService {
                     order.getDropId(),
                     new StockRestoreCommand(order.getId(), order.getMemberId(), order.getQuantity()));
         } catch (ProductPortException exception) {
-            throw new BusinessException(OrderErrorCode.PORT_ERROR, exception.getMessage(), exception);
+            compensationFailureRecorder.recordStockRollbackFailure(order.getId(), exception.getMessage());
+            return;
         }
+        orderSagaRecorder.recordCompensationCompleted(order.getId());
     }
 }

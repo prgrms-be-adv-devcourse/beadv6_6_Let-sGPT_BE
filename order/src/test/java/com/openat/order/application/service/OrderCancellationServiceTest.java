@@ -3,17 +3,21 @@ package com.openat.order.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.openat.common.exception.BusinessException;
+import com.openat.order.application.dto.OrderCancelInfo;
 import com.openat.order.application.dto.OrderSnapshotInfo;
 import com.openat.order.application.dto.StockRestoreCommand;
 import com.openat.order.application.port.ProductIntegrationPort;
+import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderStatus;
+import com.openat.order.domain.model.OrderFailCode;
 import com.openat.order.domain.repository.OrderRepository;
 import java.time.Instant;
 import java.util.Optional;
@@ -39,6 +43,12 @@ class OrderCancellationServiceTest {
     @Mock
     private ProductIntegrationPort productIntegrationPort;
 
+    @Mock
+    private OrderSagaRecorder orderSagaRecorder;
+
+    @Mock
+    private OrderCompensationFailureRecorder compensationFailureRecorder;
+
     @InjectMocks
     private OrderCancellationService orderCancellationService;
 
@@ -58,6 +68,8 @@ class OrderCancellationServiceTest {
         assertThat(command.getValue().buyerId()).isEqualTo(memberId);
         assertThat(command.getValue().quantity()).isEqualTo(order.getQuantity());
         verify(orderHistoryRecorder).record(any(), any(), any(), any(), any());
+        verify(orderSagaRecorder).recordCompensating(order.getId());
+        verify(orderSagaRecorder).recordCompensationCompleted(order.getId());
     }
 
     @Test
@@ -73,6 +85,24 @@ class OrderCancellationServiceTest {
         assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
         verify(productIntegrationPort, never()).restoreStock(any(), any());
         verify(orderHistoryRecorder).record(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("재고 롤백 실패 시 취소 성공을 반환하고 보상 실패를 기록한 채 사가를 COMPENSATING에 유지한다")
+    void cancelPaymentPendingOrder_whenStockRestoreFails_recordsCompensationFailure() {
+        UUID memberId = UUID.randomUUID();
+        Order order = createOrder(memberId);
+        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        doThrow(new ProductPortException(OrderFailCode.STOCK_ROLLBACK_FAILED, "rollback failed"))
+                .when(productIntegrationPort)
+                .restoreStock(any(), any());
+
+        OrderCancelInfo result = orderCancellationService.cancel(memberId, order.getId());
+
+        assertThat(result.status()).isEqualTo(OrderStatus.CANCELLED);
+        verify(orderSagaRecorder).recordCompensating(order.getId());
+        verify(orderSagaRecorder, never()).recordCompensationCompleted(order.getId());
+        verify(compensationFailureRecorder).recordStockRollbackFailure(order.getId(), "rollback failed");
     }
 
     @Test
