@@ -5,10 +5,10 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.UUID;
 
 public record ProductRecommendationResponse(
-    @Schema(description = "Product id") UUID id,
-    @Schema(description = "Product name") String name,
-    @Schema(description = "Product description") String description,
-    @Schema(description = "AI image description indexed in Elasticsearch") String imgDescription) {
+    @Schema(description = "상품 ID") UUID id,
+    @Schema(description = "상품명") String name,
+    @Schema(description = "상품 설명") String description,
+    @Schema(description = "Elasticsearch에 저장된 AI 이미지 설명") String imgDescription) {
 
   public static ProductRecommendationResponse from(ProductDocument document) {
     return new ProductRecommendationResponse(

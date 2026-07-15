@@ -11,15 +11,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class AdminReconciliationController {
 
-    private final DailyReconciliationService dailyReconciliationService;
+  private final DailyReconciliationService dailyReconciliationService;
 
-    public AdminReconciliationController(DailyReconciliationService dailyReconciliationService) {
-        this.dailyReconciliationService = dailyReconciliationService;
-    }
+  public AdminReconciliationController(DailyReconciliationService dailyReconciliationService) {
+    this.dailyReconciliationService = dailyReconciliationService;
+  }
 
-    @PostMapping("/api/v1/admin/reconciliation/run")
-    public DailyReconciliationSummary run(@RequestParam(required = false) LocalDate businessDate) {
-        LocalDate target = businessDate != null ? businessDate : LocalDate.now().minusDays(1);
-        return dailyReconciliationService.reconcile(target);
-    }
+  @PostMapping("/api/v1/settlements/admin/reconciliation/run")
+  public DailyReconciliationSummary run(@RequestParam(required = false) LocalDate businessDate) {
+    LocalDate target = businessDate != null ? businessDate : LocalDate.now().minusDays(1);
+    return dailyReconciliationService.reconcile(target);
+  }
 }
