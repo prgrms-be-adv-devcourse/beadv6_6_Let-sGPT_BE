@@ -3,6 +3,7 @@ package com.openat.payment.infrastructure.client;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.openat.payment.application.client.TossConfirmResult;
 import com.openat.payment.application.client.TossPaymentClient;
+import com.openat.payment.application.client.TossPaymentDetail;
 import com.openat.payment.application.client.TossQueryResult;
 import com.openat.payment.application.client.TossRefundResult;
 import java.util.List;
@@ -81,6 +82,27 @@ public class RealTossPaymentClient implements TossPaymentClient {
     }
 
     @Override
+    public TossPaymentDetail queryPaymentDetail(String pgPaymentKey) {
+        // PG 대사(WS-0) — queryPaymentStatus와 같은 조회 API지만 totalAmount까지 파싱해 금액 대조에 쓴다.
+        return tossRestClient.get()
+                .uri("/v1/payments/{paymentKey}", pgPaymentKey)
+                .exchange((request, response) -> {
+                    if (response.getStatusCode().value() == 404) {
+                        return TossPaymentDetail.of(TossPaymentDetail.Status.NOT_FOUND, null, null);
+                    }
+                    if (response.getStatusCode().is2xxSuccessful()) {
+                        QueryDetailResponse body = response.bodyTo(QueryDetailResponse.class);
+                        TossPaymentDetail.Status status = "DONE".equals(body.status())
+                                ? TossPaymentDetail.Status.APPROVED
+                                : TossPaymentDetail.Status.FAILED;
+                        return TossPaymentDetail.of(status, body.totalAmount(), body.lastTransactionKey());
+                    }
+                    // 5xx/그 외 — PgReconciliationService가 예외로 받아 NOT_CHECKED 유지, 다음 배치에 재시도.
+                    throw new IllegalStateException("토스 결제조회(대사) 실패: status=" + response.getStatusCode());
+                });
+    }
+
+    @Override
     public TossRefundResult refundPayment(String pgPaymentKey, Long amount, String idempotencyKey) {
         try {
             return tossRestClient.post()
@@ -153,6 +175,10 @@ public class RealTossPaymentClient implements TossPaymentClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record QueryResponse(String status, String lastTransactionKey) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record QueryDetailResponse(String status, String lastTransactionKey, Long totalAmount) {
     }
 
     private record CancelRequest(String cancelReason, Long cancelAmount) {

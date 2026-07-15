@@ -2,6 +2,7 @@ package com.openat.payment.infrastructure.client;
 
 import com.openat.payment.application.client.TossConfirmResult;
 import com.openat.payment.application.client.TossPaymentClient;
+import com.openat.payment.application.client.TossPaymentDetail;
 import com.openat.payment.application.client.TossQueryResult;
 import com.openat.payment.application.client.TossRefundResult;
 import java.util.UUID;
@@ -35,6 +36,13 @@ public class StubTossPaymentClient implements TossPaymentClient {
         // §3의 "신-하자드9"(confirm은 PG호출까지 갔는데 우리 기록만 끊긴 케이스)를 시연하려면 DB에서
         // pgPaymentKey만 직접 세팅해두고 호출하는 수동 테스트로 확인(day4.md 참고).
         return TossQueryResult.of(TossQueryResult.Status.NOT_FOUND, null);
+    }
+
+    @Override
+    public TossPaymentDetail queryPaymentDetail(String pgPaymentKey) {
+        // PG 대사(WS-0) 스텁 — 실제 PG가 없는 환경이라 금액은 모른다(totalAmount=null → 호출측이 상태만으로 판정).
+        // 상태는 항상 APPROVED로 응답해 local/compose 데모에서 대사가 자연스럽게 MATCHED로 수렴하게 한다.
+        return TossPaymentDetail.of(TossPaymentDetail.Status.APPROVED, null, "stub_pg_tx_" + UUID.randomUUID());
     }
 
     @Override

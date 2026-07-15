@@ -5,6 +5,7 @@ import com.openat.common.error.ErrorResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.stereotype.Component;
@@ -51,7 +52,11 @@ public class ApiErrorResponseWriter {
         return write(exchange, status, ErrorResponse.of(errorCode, resolvedMessage));
     }
 
-    private Mono<Void> write(ServerWebExchange exchange, HttpStatus status, ErrorResponse body) {
+    public Mono<Void> write(ServerWebExchange exchange, HttpStatusCode status, String errorCode, String message) {
+        return write(exchange, status, new ErrorResponse(errorCode, message));
+    }
+
+    private Mono<Void> write(ServerWebExchange exchange, HttpStatusCode status, ErrorResponse body) {
         ServerHttpResponse response = exchange.getResponse();
         if (response.isCommitted()) {
             return Mono.empty();

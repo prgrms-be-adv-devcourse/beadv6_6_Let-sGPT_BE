@@ -1,16 +1,6 @@
 package com.openat.search.product.domain.model;
 
-import jakarta.persistence.CollectionTable;
-import jakarta.persistence.Column;
-import jakarta.persistence.ElementCollection;
-import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Index;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
-import jakarta.persistence.OrderColumn;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -45,6 +35,9 @@ public class Product {
 
   @Column(columnDefinition = "text")
   private String description;
+
+  @Column(columnDefinition = "text")
+  private String imgDescription;
 
   @ManyToOne(fetch = FetchType.EAGER)
   @JoinColumn(name = "category_id")

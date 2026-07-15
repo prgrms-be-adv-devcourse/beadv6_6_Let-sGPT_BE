@@ -15,6 +15,10 @@ dependencies {
     implementation("com.github.f4b6a3:uuid-creator:5.3.3")
     // Spring Boot 4.x는 Kafka 자동설정(@KafkaListener 등록 등)도 별도 모듈로 분리됨(flyway와 같은 이유)
     implementation("org.springframework.boot:spring-boot-kafka")
+    // Spring Boot 4.x는 RestClient 자동설정(RestClient.Builder 빈, 트레이스 계측 포함)도 별도 모듈로
+    // 분리됨(flyway/kafka와 같은 이유) — 없으면 OrderClientConfig/TossClientConfig의
+    // RestClient.Builder 주입이 실패해 real 프로필 기동이 깨짐(7-15 research)
+    implementation("org.springframework.boot:spring-boot-restclient")
 }
 
 tasks.withType<Test> {

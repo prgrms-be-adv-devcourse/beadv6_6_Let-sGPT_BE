@@ -4,11 +4,19 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: http://localhost:9100/auth/jwks
+  data:
+    redis:
+      host: localhost
+      port: 6379
   cloud:
     gateway:
       server:
         webflux:
           routes:
+            - id: queue-api
+              uri: http://localhost:9200
+              predicates:
+                - Path=/api/v1/queues/**
             - id: member-docs
               uri: http://localhost:9100
               predicates:
@@ -18,7 +26,7 @@ spring:
             - id: member
               uri: http://localhost:9100
               predicates:
-                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks
+                - Path=/api/v1/members/**,/api/v1/seller/**,/auth/jwks,/api/v1/wishlist/**
             - id: search-api
               uri: http://localhost:9240
               predicates:
@@ -43,6 +51,8 @@ spring:
               uri: http://localhost:9120
               predicates:
                 - Path=/api/v1/orders/**
+              filters:
+                - AdmissionCheck
             - id: order
               uri: http://localhost:9120
               predicates:
@@ -80,3 +90,4 @@ openapi:
       order-service: http://localhost:9120/api-docs
       payment-service: http://localhost:9130/api-docs
       settlement-service: http://localhost:9140/api-docs
+      queue-service: http://localhost:9200/api-docs
