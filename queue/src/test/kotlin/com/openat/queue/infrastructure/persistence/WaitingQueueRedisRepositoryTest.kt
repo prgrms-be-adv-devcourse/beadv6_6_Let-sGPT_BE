@@ -132,8 +132,11 @@ class WaitingQueueRedisRepositoryTest {
         val front = "front-user"
         val back = "back-user"
         seedRemaining(dropId, 0) // 아무도 즉시 입장 못 하게 해서 둘 다 대기열에 줄서게 한다
-        repository.enqueueOrFastAdmit(dropId, front, 5, TTL_SECONDS, Instant.now())
-        repository.enqueueOrFastAdmit(dropId, back, 1, TTL_SECONDS, Instant.now())
+        // 같은 밀리초에 enqueue되면 ZSET score가 같아져 사전순("back-user" < "front-user")으로
+        // 순위가 뒤집힌다 - 명시적으로 다른 타임스탬프를 줘서 줄 선 순서를 결정적으로 만든다.
+        val t0 = Instant.now()
+        repository.enqueueOrFastAdmit(dropId, front, 5, TTL_SECONDS, t0)
+        repository.enqueueOrFastAdmit(dropId, back, 1, TTL_SECONDS, t0.plusMillis(1))
         seedRemaining(dropId, 3) // 앞사람(5개)은 부족하지만 뒷사람(1개)은 충분한 재고
 
         val admitted = repository.admitBatch(dropId, MAX_SCAN, TTL_SECONDS)
@@ -152,8 +155,9 @@ class WaitingQueueRedisRepositoryTest {
         val front = "front-user"
         val back = "back-user"
         seedRemaining(dropId, 0)
-        repository.enqueueOrFastAdmit(dropId, front, 5, TTL_SECONDS, Instant.now())
-        repository.enqueueOrFastAdmit(dropId, back, 1, TTL_SECONDS, Instant.now())
+        val t0 = Instant.now()
+        repository.enqueueOrFastAdmit(dropId, front, 5, TTL_SECONDS, t0)
+        repository.enqueueOrFastAdmit(dropId, back, 1, TTL_SECONDS, t0.plusMillis(1))
         seedRemaining(dropId, 3)
         assertThat(repository.admitBatch(dropId, MAX_SCAN, TTL_SECONDS)).isEmpty() // 여전히 막혀 있음 확인
 
@@ -172,8 +176,9 @@ class WaitingQueueRedisRepositoryTest {
         val front = "front-user"
         val back = "back-user"
         seedRemaining(dropId, 0)
-        repository.enqueueOrFastAdmit(dropId, front, 5, TTL_SECONDS, Instant.now())
-        repository.enqueueOrFastAdmit(dropId, back, 1, TTL_SECONDS, Instant.now())
+        val t0 = Instant.now()
+        repository.enqueueOrFastAdmit(dropId, front, 5, TTL_SECONDS, t0)
+        repository.enqueueOrFastAdmit(dropId, back, 1, TTL_SECONDS, t0.plusMillis(1))
         seedRemaining(dropId, 3)
 
         assertThat(repository.admitSingle(dropId, back, TTL_SECONDS)).isNull()
