@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.openat.common.exception.BusinessException;
+import com.openat.order.application.dto.OrderCancelInfo;
 import com.openat.order.application.dto.OrderSnapshotInfo;
 import com.openat.order.application.dto.StockRestoreCommand;
 import com.openat.order.application.port.ProductIntegrationPort;
@@ -87,7 +88,7 @@ class OrderCancellationServiceTest {
     }
 
     @Test
-    @DisplayName("재고 롤백 실패 시 보상 실패를 기록하고 사가를 COMPENSATING에 유지한다")
+    @DisplayName("재고 롤백 실패 시 취소 성공을 반환하고 보상 실패를 기록한 채 사가를 COMPENSATING에 유지한다")
     void cancelPaymentPendingOrder_whenStockRestoreFails_recordsCompensationFailure() {
         UUID memberId = UUID.randomUUID();
         Order order = createOrder(memberId);
@@ -96,8 +97,9 @@ class OrderCancellationServiceTest {
                 .when(productIntegrationPort)
                 .restoreStock(any(), any());
 
-        assertThrows(BusinessException.class, () -> orderCancellationService.cancel(memberId, order.getId()));
+        OrderCancelInfo result = orderCancellationService.cancel(memberId, order.getId());
 
+        assertThat(result.status()).isEqualTo(OrderStatus.CANCELLED);
         verify(orderSagaRecorder).recordCompensating(order.getId());
         verify(orderSagaRecorder, never()).recordCompensationCompleted(order.getId());
         verify(compensationFailureRecorder).recordStockRollbackFailure(order.getId(), "rollback failed");

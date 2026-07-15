@@ -91,7 +91,7 @@ public class OrderCancellationService {
                     new StockRestoreCommand(order.getId(), order.getMemberId(), order.getQuantity()));
         } catch (ProductPortException exception) {
             compensationFailureRecorder.recordStockRollbackFailure(order.getId(), exception.getMessage());
-            throw new BusinessException(OrderErrorCode.PORT_ERROR, exception.getMessage(), exception);
+            return;
         }
         orderSagaRecorder.recordCompensationCompleted(order.getId());
     }

@@ -5,6 +5,7 @@ import com.openat.order.domain.model.InboxEventStatus;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.repository.InboxEventRepository;
 import com.openat.order.domain.repository.OrderRepository;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,12 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class InboxEventFailureRecorder {
+
+    private static final Set<String> FINANCIAL_IMPACT_EVENT_TYPES = Set.of(
+            "payment.completed",
+            "refund.completed",
+            "refund.failed"
+    );
 
     private final InboxEventRepository inboxEventRepository;
     private final OrderRepository orderRepository;
@@ -38,6 +45,8 @@ public class InboxEventFailureRecorder {
 
         if (businessDecisionFailure && orderId != null) {
             orderRepository.findById(orderId).ifPresent(order -> recordRejectedEvent(order, eventId, exception));
+        }
+        if (businessDecisionFailure && FINANCIAL_IMPACT_EVENT_TYPES.contains(eventType) && orderId != null) {
             log.error(
                     "Business event sent to DLQ. financialImpact=true, eventId={}, orderId={}, eventType={}",
                     eventId,
