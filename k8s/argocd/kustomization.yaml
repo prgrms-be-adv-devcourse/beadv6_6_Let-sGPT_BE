@@ -1,6 +1,6 @@
 # ArgoCD 자체 설치 kustomization. k8s/(앱 매니페스트) kustomization 과 완전히 분리된 디렉토리 —
-# openat Application(source.path=k8s)이 이 디렉토리를 sync 대상으로 삼지 않도록
-# k8s/kustomization.yaml 의 resources 에는 절대 넣지 않는다.
+# openat Application(source.path=k8s/overlay)이 이 디렉토리를 sync 대상으로 삼지 않도록
+# k8s/base/kustomization.yaml 의 resources 에는 절대 넣지 않는다.
 #
 # 설치본은 원격 install.yaml URL 이 아니라 helm 렌더 산출물(argocd-install.yaml, 로컬 정적 파일)이다.
 # 설정 변경은 helm/values.yaml 에서 하고 `bash helm/render.sh`(또는 CI argocd-render.yml)로 재생성한다.
