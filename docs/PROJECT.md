@@ -78,7 +78,7 @@
    - FAILED → **재고 롤백(보상)** + `order.cancelled` / `payment_failed`
 5. 결제 미회신 시간초과 → **주문(order)이 TTL 기준으로 타임아웃 감지** → 상품 재고 롤백(보상) API 호출 → `order.failed`. (상품은 롤백 API만 제공하고 타임아웃을 감지하지 않음 — 재고 통신은 동기 API 단일 경로)
 6. 주문 취소 → 환불 요청 → 환불 결과 이벤트 (COMPLETE: `order.refund` / FAILED: `order.refund_failed` 수동 처리)
-7. 월 정산: `order.completed`·`refund.completed` 적재 → **Spring Batch** (`cron 0 3 5 * *`)로 수수료·환불 차감 정산
+7. 월 정산: 결제가 발행하는 `payment.settlement.events` 적재 → **Spring Batch** (`cron 0 0 3 1 * *`, 매월 1일 03시)로 수수료·환불 차감 정산 *(2026-07-09 코드 기준 갱신 — 정산은 `order.completed`를 구독하지 않음)*
 
 ---
 
@@ -87,7 +87,7 @@
 | 대상 | 값 |
 |---|---|
 | drop | `REGISTERED` / `OPEN` / `CLOSE` / `SOLD_OUT` (DB 저장은 영구 마일스톤 `REGISTERED`·`CLOSE`만, `OPEN`·`SOLD_OUT`은 캐시 잔여+시각으로 파생) |
-| order | `PAYMENT_PENDING` / `COMPLETE` / `CANCELLED` / `PAYMENT_FAILED` / `FAILED` / `REFUND` / `REFUND_FAILED` |
+| order | `PAYMENT_PENDING` / `COMPLETED` / `FAILED` / `CANCELLED` / `CANCEL_REQUESTED` / `REFUND_PENDING`(예약 — 현재 전이 경로 없음) / `REFUNDED` / `REFUND_FAILED` *(2026-07-09 코드 `OrderStatus.java` 기준 갱신)* |
 | payment | `PENDING` / `COMPLETE` / `FAILED` |
 | refund | `PENDING` / `COMPLETE` / `FAILED` |
 | member role | `USER` / `SELLER` / `ADMIN` (JWT·헤더는 `ROLE_` 접두사) |
@@ -194,13 +194,15 @@
 
 | 토픽 | 발행 | 구독 | payload(요약) |
 |---|---|---|---|
-| `order.completed.events` | 주문 | 정산 | orderId, sellerId, productId, memberId, saleAmount, quantity |
+| `order.completed.events` | 주문 | **결제** | orderId, sellerId, productId, memberId, amount — 결제에 대한 주문 원장 처리 완료 ACK *(2026-07-09 코드 확인: 정산은 미구독)* |
 | `payment.completed.events` | 결제 | 주문 | paymentId, orderId, amount, pgPaymentKey |
 | `payment.failed.events` | 결제 | 주문 | orderId, reason |
-| `refund.completed.events` | 결제 | 주문, 정산 | refundId, orderId, amount |
+| `refund.completed.events` | 결제 | 주문 | refundId, orderId, amount *(정산은 미구독 — 아래 `payment.settlement.events`로 적재)* |
+| `payment.settlement.events` | 결제 | 정산 | 정산 적재용 판매·환불 데이터 *(payload는 payment·정산 계약 참조, 2026-07-09 코드 확인으로 카탈로그 추가)* |
 | `refund.failed.events` | 결제 | 주문 | orderId, reason |
 | `product.created.events` | 상품 | 검색·AI(파이널) | productId, name, category, price |
 | `product.updated.events` | 상품 | 검색·AI(파이널) | productId, name, category, price |
+| `order.stock.adjusted.events` | 주문 | 대기열(파이널) | eventId, dropId, count(변경 수량), reason(`COMPLETED`\|`REFUNDED`) — 드롭별 판매 증감 통지 *(2026-07-14 계약 확정, 유실·중복 상호 감수)* |
 
 ---
 
