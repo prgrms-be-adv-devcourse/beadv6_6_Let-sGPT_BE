@@ -25,8 +25,14 @@ systemctl enable --now docker
 
 # =====================================================================
 # 1-b) AWS CLI (부트스트랩 §5의 서버측 `aws s3 sync` 등에 필요 — Ubuntu AMI 미탑재)
+#    2026-07-15 GATE-1 debloat 반영: snap 대신 공식 zip 인스톨러 사용
+#    (snapd 자체를 신규 인스턴스에 들이지 않기 위함, infra_sequencing_plan.md §7).
 # =====================================================================
-snap install aws-cli --classic || true
+apt-get install -y unzip
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install
+rm -rf /tmp/awscliv2.zip /tmp/aws
 
 # -----------------------------------------------------------------------
 # 안내: 내부 서비스(PostgreSQL, Kafka 등)는 보안그룹에서 외부 인바운드를
@@ -43,12 +49,38 @@ useradd -m -s /bin/bash ${deployer_user}
 usermod -aG docker ${deployer_user}
 
 # =====================================================================
-# 3) SSM Agent 활성화 확인
-#    Ubuntu 22.04 AMI에는 snap으로 사전 설치되어 있다.
-#    IAM 인스턴스 프로파일(AmazonSSMManagedInstanceCore)이 연결되면
-#    에이전트가 자동으로 SSM에 등록된다.
+# 3) SSM Agent: snap → deb 전환
+#    Ubuntu 22.04 AMI엔 snap판이 사전 설치돼 있음 — 그대로 두면 GATE-1에서
+#    걷어낸 snapd 의존이 신규 인스턴스마다 재생성된다(infra_sequencing_plan.md
+#    §7 TODO). deb판으로 교체 후 snapd를 통째로 purge한다.
+#    절차는 GATE-1 라이브 마이그레이션(같은 문서 §7-4~7)과 동일 원칙:
+#    snap이 떠 있으면 deb install이 거부되므로 snap 제거가 먼저다.
 # =====================================================================
-systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent || true
+snap stop amazon-ssm-agent 2>/dev/null || true
+snap remove amazon-ssm-agent 2>/dev/null || true
+
+curl -fsSL "https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb" \
+  -o /tmp/amazon-ssm-agent.deb
+
+# dpkg 락 대기 (최대 60초) — GATE-1 final 노드 실제 장애 재발 방지
+# (직전 unzip/apt-get install이 dpkg frontend lock을 순간적으로 쥐고 있어
+# dpkg -i가 실패한 사례, infra_sequencing_plan.md §8-5).
+DPKG_LOCK_WAITED=0
+while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+  if [ "$DPKG_LOCK_WAITED" -ge 60 ]; then
+    echo "ERROR: dpkg lock 60s 대기 후에도 안 풀림 — SSM agent 설치 중단" >&2
+    exit 1
+  fi
+  sleep 1
+  DPKG_LOCK_WAITED=$((DPKG_LOCK_WAITED + 1))
+done
+
+dpkg -i /tmp/amazon-ssm-agent.deb
+rm -f /tmp/amazon-ssm-agent.deb
+systemctl enable --now amazon-ssm-agent
+
+# snapd 및 부수 데몬 purge (GATE-1 §7-8과 동일 목록)
+apt-get purge -y snapd multipathd unattended-upgrades networkd-dispatcher policykit-1 || true
 
 # =====================================================================
 # 4) GitHub Actions self-hosted runner 설치 (등록은 제외)
