@@ -1,0 +1,25 @@
+# ArgoCD가 자기 자신(k8s/argocd/)을 감시하게 하는 self-management Application("app of apps"
+# 패턴의 최소 형태). 이전엔 이 디렉토리가 GitOps 관리 밖이라 patch-resources.yaml 변경마다
+# kubectl apply -k를 수동으로 다시 태워야 했음(k3s_memory_mitigation_plan §9-9 사고 대응 중 확인).
+# targetRevision=main — 관측 스택과 동일하게 이미지 SHA 핀이 필요 없는 정적 인프라라 main 직추적.
+#
+# 부트스트랩 순서(닭-달걀 불변 — qna.md Q92-3): 이 리소스 자체는 여전히 최초 1회
+# `kubectl apply -k k8s/argocd/`로 수동 설치되어야 한다(ArgoCD가 존재하기 전엔 ArgoCD가
+# 자신을 못 깖). 이후부터는 이 Application이 main의 k8s/argocd/ 변경을 auto-sync한다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/prgrms-be-adv-devcourse/beadv6_6_Let-sGPT_BE
+    targetRevision: main
+    path: k8s/argocd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=false]

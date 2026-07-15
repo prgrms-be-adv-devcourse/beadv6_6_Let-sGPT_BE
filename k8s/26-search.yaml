@@ -5,6 +5,10 @@ kind: Deployment
 metadata:
   name: search
   namespace: openat
+  annotations:
+    # k3s_node_coldboot_contention_plan §2-C — 순차 롤아웃(wave 낮은 순). final 노드 배치라
+    # semi(hotpath)의 콜드부트 경합과는 무관하나 일관성을 위해 wave 부여.
+    argocd.argoproj.io/sync-wave: "7"
 spec:
   replicas: 1
   strategy:
@@ -33,11 +37,16 @@ spec:
             - configMapRef: { name: app-config }
             - secretRef: { name: app-secrets }
           env:
-            - { name: JAVA_TOOL_OPTIONS, value: "-Xms400m -Xmx500m" }
+            # k3s_memory_mitigation_plan.md §7-5(WS-M5) — ES 프록시(G1, limit 비례 60%).
+            # open-in-view는 application.yaml에 이미 false.
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+            - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
+            - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: "3" }
           startupProbe:
             httpGet: { path: /actuator/health/liveness, port: 9240 }
             periodSeconds: 5
-            failureThreshold: 36
+            failureThreshold: 60
           readinessProbe:
             httpGet: { path: /actuator/health/readiness, port: 9240 }
             periodSeconds: 5
@@ -45,10 +54,13 @@ spec:
           livenessProbe:
             httpGet: { path: /actuator/health/liveness, port: 9240 }
             periodSeconds: 10
-            failureThreshold: 3
+            timeoutSeconds: 3
+            failureThreshold: 5
           resources:
-            limits: { memory: "700Mi" }
-            requests: { cpu: "100m" }
+            # k3s_memory_mitigation_plan §9-7 — final 노드 limit 재분배(ES/Collector 신규분 확보).
+            # ES가 벡터를 들고 있고 search는 쿼리당 임베딩 1개(6KB)만 다뤄 축소 여유 있음.
+            limits: { memory: "650Mi" }
+            requests: { cpu: "100m", memory: "460Mi" }
 ---
 apiVersion: v1
 kind: Service

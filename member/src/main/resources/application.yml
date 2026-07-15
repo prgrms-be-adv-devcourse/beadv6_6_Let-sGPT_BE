@@ -54,3 +54,7 @@ management:
     health:
       probes:
         enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화
+  tracing:
+    export:
+      otlp:
+        enabled: false   # 로컬/compose 기본 off — Tempo 없으면 export 실패가 반복 로깅됨(k8s ConfigMap에서 true로 override)

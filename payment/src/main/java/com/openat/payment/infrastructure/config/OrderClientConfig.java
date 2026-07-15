@@ -15,8 +15,13 @@ import org.springframework.web.client.RestClient;
 @Profile("real")
 public class OrderClientConfig {
 
+    // WS-E(7/10 observability plan) — 정적 RestClient.builder()는 auto-configured 계측(전파 헤더 +
+    // span 기록)이 붙지 않는다. Boot가 만든 RestClient.Builder 빈을 주입받아 커스터마이즈해야 트레이스가
+    // 이어진다(research §4 실사 발견).
     @Bean
-    public RestClient orderRestClient(@Value("${services.order.url}") String orderBaseUrl,
+    public RestClient orderRestClient(
+            RestClient.Builder builder,
+            @Value("${services.order.url}") String orderBaseUrl,
             ObjectMapper objectMapper) {
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(2))
@@ -24,9 +29,6 @@ public class OrderClientConfig {
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofSeconds(2));
 
-        return RestClient.builder()
-                .baseUrl(orderBaseUrl)
-                .requestFactory(requestFactory)
-                .build();
+        return builder.baseUrl(orderBaseUrl).requestFactory(requestFactory).build();
     }
 }

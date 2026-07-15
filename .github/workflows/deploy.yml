@@ -12,11 +12,15 @@ name: CD
 # GitOps: main은 PR 머지 전용이라 봇이 직접 push 못 함 → 이미지 pin 커밋백은 전용
 # deploy/state 브랜치(비보호, 봇 전용)로 한다. 이 브랜치가 클러스터 desired-state의
 # 단일 출처이며 ArgoCD의 watch 대상이다(plan k3s_deploy_automation §4-2).
+# FE 리포는 자체 workflow_run 아티팩트가 없으므로 repository_dispatch(fe-image-built)로
+# 별도 트리거 — client_payload.sha가 곧 이번에 핀할 프론트 이미지 태그.
 on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
+  repository_dispatch:
+    types: [fe-image-built]
 
 permissions:
   contents: write   # deploy/state 브랜치에 이미지 pin 커밋백
@@ -24,19 +28,33 @@ permissions:
 
 env:
   IMG_BASE: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be
+  FE_IMG: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
   KUBECONFIG: /etc/rancher/k3s/k3s.yaml
 
 jobs:
   deploy:
-    if: github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'repository_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, ec2-deploy]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # deploy/state 머지 위해 전체 히스토리 필요
 
-      # CI가 main에서 계산한 "이번에 실제로 바뀐 도메인" 매트릭스.
+      # 이벤트별로 "main에 merge할 SHA"와 "FE 핀 대상 SHA"가 다른 곳에서 옴 — 여기서 통일.
+      - name: Resolve trigger context
+        id: ctx
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "fe_sha=${{ github.event.client_payload.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            echo "fe_sha=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # CI가 main에서 계산한 "이번에 실제로 바뀐 도메인" 매트릭스. FE dispatch에는 없음.
       - name: Download changed-services matrix from CI run
+        if: github.event_name == 'workflow_run'
         uses: actions/download-artifact@v4
         with:
           name: deploy-matrix
@@ -46,17 +64,25 @@ jobs:
       - name: Resolve services to deploy
         id: services
         run: |
-          SERVICES=$(jq -r '. | join(" ")' deploy-matrix.json)
-          echo "list=$SERVICES" >> "$GITHUB_OUTPUT"
-          if [ -z "$SERVICES" ]; then
-            echo "변경된 도메인이 없어 배포를 스킵합니다."
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            SERVICES=$(jq -r '. | join(" ")' deploy-matrix.json)
+            K8S_CHANGED=$(cat deploy-k8s.txt 2>/dev/null | tr -d '[:space:]' || echo false)
           else
-            echo "배포 대상: $SERVICES"
+            SERVICES=""
+            K8S_CHANGED=false
+          fi
+          echo "list=$SERVICES" >> "$GITHUB_OUTPUT"
+          echo "k8s_changed=$K8S_CHANGED" >> "$GITHUB_OUTPUT"
+          FE_SHA="${{ steps.ctx.outputs.fe_sha }}"
+          if [ -z "$SERVICES" ] && [ "$K8S_CHANGED" != "true" ] && [ -z "$FE_SHA" ]; then
+            echo "변경된 도메인/매니페스트/FE 이미지가 없어 배포를 스킵합니다."
+          else
+            echo "배포 대상 서비스: ${SERVICES:-(BE 이미지 변경 없음)} / 매니페스트(k8s/**) 변경: $K8S_CHANGED / FE SHA: ${FE_SHA:-(없음)}"
           fi
 
       # ENV_SECRETS(JSON 또는 KEY=VALUE) → .env. create-secrets.sh 입력.
       - name: Render .env from ENV_SECRETS
-        if: steps.services.outputs.list != ''
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != ''
         env:
           ENV_SECRETS: ${{ secrets.ENV_SECRETS }}
         run: |
@@ -80,7 +106,7 @@ jobs:
       # app-secrets + ghcr-pull(imagePullSecret) + default SA 부착 — 전부 멱등.
       # ghcr-pull을 매 배포 보장 → 노드 교체/신규 클러스터에서도 kubelet이 정석 pull(Q83-6).
       - name: Provision k8s secrets (idempotent)
-        if: steps.services.outputs.list != ''
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != ''
         env:
           GHCR_USER: ${{ github.actor }}
           GHCR_PAT: ${{ secrets.GHCR_PULL_PAT }}
@@ -88,7 +114,7 @@ jobs:
           GHCR_USER="$GHCR_USER" GHCR_PAT="$GHCR_PAT" ./k8s/bootstrap/create-secrets.sh .env
 
       - name: Ensure kustomize CLI
-        if: steps.services.outputs.list != ''
+        if: steps.services.outputs.list != '' || steps.ctx.outputs.fe_sha != ''
         run: |
           if ! command -v kustomize >/dev/null 2>&1; then
             mkdir -p "$RUNNER_TEMP/bin"
@@ -96,24 +122,42 @@ jobs:
             echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           fi
 
-      # deploy/state 브랜치에 변경 서비스만 SHA로 핀 → 누적(미변경 서비스는 기존 pin 유지).
-      - name: Bump image pins on deploy/state (GitOps source of truth)
+      # deploy/state = openat 앱의 desired-state 단일 출처. 두 관심사를 분리한다(Q100 갭 수정):
+      #  (1) main→deploy/state 구조 병합(merge)은 "항상" 수행 — 매니페스트(probe·sync-wave·configmap
+      #      등) 변경을 이미지 재빌드 유무와 무관하게 전파해야 GitOps가 반쪽으로 죽지 않는다.
+      #  (2) 이미지 SHA 핀 루프는 "실제 재빌드된 서비스가 있을 때만" — 매니페스트-only 변경이면 스킵.
+      # 이전 구조는 (1)이 (2)와 한 스텝에 묶여, 이미지 변경이 없으면 merge/push 자체가 스킵됐다.
+      - name: Sync deploy/state (merge main + pin changed images)
         id: pin
-        if: steps.services.outputs.list != ''
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != ''
         env:
-          SHA: ${{ github.event.workflow_run.head_sha }}
+          SHA: ${{ steps.ctx.outputs.sha }}
+          SVCS: ${{ steps.services.outputs.list }}
+          FE_SHA: ${{ steps.ctx.outputs.fe_sha }}
         run: |
           git config user.name  "deploy-bot"
           git config user.email "deploy-bot@users.noreply.github.com"
           git fetch origin deploy/state || true
           git checkout deploy/state 2>/dev/null || git checkout -b deploy/state
-          # main의 구조 변경(매니페스트 추가/삭제, probe 등)만 흡수, 이미지 pin 충돌은 deploy/state 것 유지.
+          # main의 구조 변경(매니페스트 추가/삭제, probe, sync-wave, configmap 등)을 흡수.
+          # 이미지 pin 충돌은 deploy/state 것 유지(-X ours). 매니페스트-only여도 이 merge로 전파된다.
           git merge -X ours --no-edit "$SHA"
-          for svc in ${{ steps.services.outputs.list }}; do
-            ( cd k8s && kustomize edit set image "$IMG_BASE/$svc=$IMG_BASE/$svc:$SHA" )
-          done
-          git add k8s/kustomization.yaml
-          git commit -m "chore(deploy): pin ${{ steps.services.outputs.list }} to $SHA [skip ci]" || echo "no change to commit"
+          # BE 이미지 SHA 핀은 재빌드된 서비스가 있을 때만(매니페스트-only 변경이면 SVCS가 비어 스킵).
+          if [ -n "$SVCS" ]; then
+            for svc in $SVCS; do
+              ( cd k8s && kustomize edit set image "$IMG_BASE/$svc=$IMG_BASE/$svc:$SHA" )
+            done
+            git add k8s/kustomization.yaml
+            git commit -m "chore(deploy): pin $SVCS to $SHA [skip ci]" || echo "no image change to commit"
+          fi
+          # FE repository_dispatch로 넘어온 SHA 핀 — FE 리포 CI 완료 시에만 값이 있음.
+          if [ -n "$FE_SHA" ]; then
+            ( cd k8s && kustomize edit set image "$FE_IMG=$FE_IMG:$FE_SHA" )
+            git add k8s/kustomization.yaml
+            git commit -m "chore(deploy): pin frontend to $FE_SHA [skip ci]" || echo "no FE image change to commit"
+          fi
+          # merge가 새 커밋을 만들었으면(매니페스트 전파) 또는 핀 커밋이 있으면 push. 없으면 no-op이라
+          # revision=현재 HEAD가 되고 아래 수렴확인이 즉시 통과한다.
           git push origin deploy/state
           echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
@@ -125,7 +169,7 @@ jobs:
       # ① hard refresh로 즉시 재조회를 강제하고 ② status.sync.revision이 이번에 push한
       # 커밋과 정확히 일치할 때만 수렴으로 인정한다.
       - name: Wait for ArgoCD convergence
-        if: steps.services.outputs.list != ''
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != ''
         env:
           TARGET_REV: ${{ steps.pin.outputs.revision }}
         run: |

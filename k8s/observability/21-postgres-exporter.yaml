@@ -1,0 +1,47 @@
+# WS-C(7/10 observability plan) — postgres는 openat 네임스페이스(large 노드)에 떠 있지만
+# exporter는 TCP로 붙으므로 배치 노드는 무관(medium 권장, ~30Mi). 자격증명은 openat의
+# app-secrets를 cross-namespace로 참조할 수 없어 observability 전용 Secret으로 복제
+# (k8s/bootstrap/create-secrets.sh 참고, 동일 ENV_SECRETS 소스).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: observability
+spec:
+  replicas: 1
+  # k3s_memory_mitigation_plan §9-7 구현기 — final 노드 여유 없을 때 기본 surge 전략 방지.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: postgres-exporter }
+  template:
+    metadata:
+      labels: { app: postgres-exporter }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
+        prometheus.io/path: "/metrics"
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      containers:
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+          ports: [{ containerPort: 9187 }]
+          envFrom:
+            - secretRef: { name: pg-exporter-secret }
+          resources:
+            # k3s_memory_mitigation_plan §9-7 — final limit 재분배, live 9Mi 대비 여유 충분.
+            limits: { memory: "48Mi" }
+            requests: { cpu: "20m", memory: "32Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: observability
+spec:
+  selector: { app: postgres-exporter }
+  ports: [{ port: 9187, targetPort: 9187 }]

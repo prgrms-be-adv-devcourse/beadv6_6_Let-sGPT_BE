@@ -15,14 +15,18 @@ import lombok.Getter;
 @Builder
 public class Wallet {
 
-    @Builder.Default
-    private UUID id = UuidV7Generator.generate();
+  @Builder.Default private UUID id = UuidV7Generator.generate();
 
-    private UUID memberId;
+  private UUID memberId;
 
-    private Long balance;
+  private Long balance;
 
-    private LocalDateTime createdAt;
+  private LocalDateTime createdAt;
 
-    private LocalDateTime updatedAt;
+  private LocalDateTime updatedAt;
+
+  // 신규 지갑 생성(잔액 0) — WalletRepository.findOrCreateByMemberId(7-12 plan WS-F §4.4)의 재료.
+  public static Wallet emptyOf(UUID memberId) {
+    return Wallet.builder().memberId(memberId).balance(0L).createdAt(LocalDateTime.now()).build();
+  }
 }

@@ -1,0 +1,14 @@
+# 관측 스택 전용 kustomization. k8s/kustomization.yaml(namespace: openat 전역 강제)과는
+# 완전히 분리된 별도 Application으로 관리한다(plan 결정-1 (a) — research §2).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+
+resources:
+  - 00-namespace.yaml
+  - 10-tempo.yaml
+  - 11-otel-collector.yaml
+  - 20-prometheus.yaml
+  - 21-postgres-exporter.yaml
+  - 30-grafana.yaml
+  - 31-grafana-dashboard-jvm.yaml

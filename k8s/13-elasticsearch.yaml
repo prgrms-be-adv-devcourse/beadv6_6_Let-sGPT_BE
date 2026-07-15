@@ -18,22 +18,30 @@ spec:
       nodeSelector: { tier: observability }
       tolerations:
         - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: elasticsearch
-          image: docker.elastic.co/elasticsearch/elasticsearch:9.2.5
+          # WS-G(7/10 observability plan) — nori 포함 커스텀 이미지(k8s/images/elasticsearch-nori/).
+          # 태그는 베이스 ES 버전과 반드시 동일(플러그인-ES 버전 정합 필수).
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/elasticsearch-nori:9.2.5
           env:
             - { name: discovery.type, value: single-node }
             - { name: xpack.security.enabled, value: "false" }
-            - { name: ES_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
+            - { name: xpack.ml.enabled, value: "false" }
+            - { name: ES_JAVA_OPTS, value: "-Xms768m -Xmx768m" }
           ports: [{ containerPort: 9200 }]
           readinessProbe:
             exec:
               command: ["/bin/sh", "-c", "curl -sf http://localhost:9200/_cluster/health"]
             periodSeconds: 10
+            timeoutSeconds: 5   # k3s_memory_mitigation_plan §4 — 압박 시 오탐 연쇄 실패 소음 제거
             failureThreshold: 12
           resources:
-            limits: { memory: "1000Mi" }
-            requests: { cpu: "100m" }
+            # k3s_memory_mitigation_plan §9-1(A안 확정: bbq_hnsw 이진양자화+1536차원 유지, float32 저장) —
+            # dense_vector kNN 오프힙 여유분 반영해 상향. final 노드 limit 총예산 재분배는 §9-7 참고.
+            limits: { memory: "1500Mi" }
+            requests: { cpu: "100m", memory: "1350Mi" }
           volumeMounts:
             - { name: es-data, mountPath: /usr/share/elasticsearch/data }
   volumeClaimTemplates:

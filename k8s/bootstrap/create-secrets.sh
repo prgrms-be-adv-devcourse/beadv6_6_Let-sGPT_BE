@@ -54,3 +54,24 @@ if [ -n "${GHCR_PAT:-}" ]; then
 else
   echo "SKIP: GHCR_PAT 미지정 — ghcr-pull 시크릿은 생성하지 않음 (앱 이미지 pull 불가 상태)"
 fi
+
+# WS-C(7/10 observability plan) — postgres_exporter용 Secret. openat의 app-secrets는
+# cross-namespace 참조가 안 되므로 observability 네임스페이스에 동일 값으로 복제.
+# DB_USER/DB_PASSWORD를 URI에 그대로 넣으면 '%' 등 특수문자가 있을 때 postgres_exporter의
+# DSN 파서가 잘못된 percent-encoding으로 오인해 파싱 실패(2026-07-12 실측 발견) — 반드시
+# URL 인코딩 후 삽입.
+DB_USER_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$DB_USER")
+DB_PASSWORD_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$DB_PASSWORD")
+"$KUBECTL" create namespace observability --dry-run=client -o yaml | "$KUBECTL" apply -f -
+"$KUBECTL" create secret generic pg-exporter-secret -n observability \
+  --from-literal=DATA_SOURCE_NAME="postgresql://${DB_USER_ENC}:${DB_PASSWORD_ENC}@postgres.openat.svc.cluster.local:5432/openat?sslmode=disable" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: pg-exporter-secret 적용 완료 (namespace=observability)"
+
+# WS-D — Grafana admin 자격증명. 미지정 시 랜덤 생성(하드코딩 금지 — 실패는 시끄럽게).
+GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-$(openssl rand -base64 18)}"
+"$KUBECTL" create secret generic grafana-admin -n observability \
+  --from-literal=admin-user="${GRAFANA_ADMIN_USER:-admin}" \
+  --from-literal=admin-password="$GRAFANA_ADMIN_PASSWORD" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: grafana-admin 적용 완료 (namespace=observability, admin-user=${GRAFANA_ADMIN_USER:-admin})"
