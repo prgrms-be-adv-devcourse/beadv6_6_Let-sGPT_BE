@@ -62,7 +62,9 @@ public interface OrderApiSpec {
     @ApiResponse(responseCode = "200", description = "요청 성공")
     ResponseEntity<OrderCancelResponse> cancelOrder(@CurrentUser UserContext userContext, UUID orderId);
 
-    @Operation(summary = "결제용 주문 조회", description = "결제 도메인이 PG 토큰 발급 전 주문 금액과 상태를 검증하는 내부 API")
+    @Operation(summary = "결제용 주문 조회",
+            description = "결제 도메인이 PG 토큰 발급 전 주문 금액과 상태를 검증하는 내부 API. "
+                    + "넘어온 memberId로 소유자 검증(불일치 시 거부)")
     @ApiResponse(responseCode = "200", description = "조회 성공")
-    ResponseEntity<InternalOrderValidationResponse> getOrderForPayment(UUID orderId);
+    ResponseEntity<InternalOrderValidationResponse> getOrderForPayment(UUID orderId, UUID memberId);
 }

@@ -55,7 +55,7 @@ public interface ProductApiSpec {
 
   // NOTE(auth): @CurrentUser UUID sellerId = 활성 스토어 sellerInfoId(판매자 토큰 스코프). 상품은 회원이 아니라
   //   스토어(SellerInfo)에 귀속되며 write(create/update/delete)·본인 목록(/me)의 소유·필터 기준으로 쓴다.
-  //   게이트웨이가 판매자 토큰의 스토어 스코프를 검증해 주입하는 전제(임시 주입: CurrentUserArgumentResolver 스텁).
+  //   게이트웨이가 scoped JWT를 검증한 뒤 X-Seller-Id로 주입하고 CurrentUserArgumentResolver가 이를 바인딩한다.
   //   상세: FE docs/auth.md.
   //
   // NOTE(sellerName): 판매자 표시명(ProductResponse.sellerName)은 member 스토어 이벤트를 소비한 로컬 투영

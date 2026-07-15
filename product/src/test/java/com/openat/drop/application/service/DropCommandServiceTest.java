@@ -186,7 +186,8 @@ class DropCommandServiceTest {
     given(dropRepository.findAllByProductId(productId)).willReturn(List.of(preOpen, closed));
 
     // when
-    dropCommandService.onProductDeleted(new ProductDeletedEvent(productId));
+    Instant deletedAt = Instant.parse("2026-07-15T00:00:00Z");
+    dropCommandService.onProductDeleted(new ProductDeletedEvent(productId, deletedAt));
 
     // then
     then(dropRepository).should().delete(preOpen);
@@ -204,7 +205,9 @@ class DropCommandServiceTest {
 
     // when & then
     assertThatThrownBy(
-            () -> dropCommandService.onProductDeleted(new ProductDeletedEvent(productId)))
+            () ->
+                dropCommandService.onProductDeleted(
+                    new ProductDeletedEvent(productId, Instant.parse("2026-07-15T00:00:00Z"))))
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", DropErrorCode.OPEN_EXISTS);
     then(dropRepository).should(never()).delete(any());

@@ -18,7 +18,7 @@
 | 날짜·시각 | ISO-8601 문자열 ↔ `Instant` (예: `2026-06-27T03:00:00Z`) |
 | 인증 헤더 | 보호 엔드포인트에 `Authorization: Bearer <accessToken>` (FE가 자동 주입) |
 | 멱등 헤더 | 쓰기(주문·결제·환불·충전)에 `Idempotency-Key` |
-| 판매자 토큰 | 상품/드롭 **쓰기**는 **스토어(`sellerInfoId`) 범위 판매자 토큰**(회원 토큰과 별도) — 발급: member 도메인 `POST /api/v1/auth/seller-token { sellerInfoId } → { tokenType, accessToken, expiresIn }`, 활성 스토어 전환 시 재발급. ((구) RFC8693 `/auth/token` 교환 폐기) 상세 FE `docs/auth.md` |
+| 판매자 토큰 | 상품/드롭 **쓰기**는 **스토어(`sellerInfoId`) 범위 판매자 토큰**(회원 토큰과 별도) — 발급: member 도메인 `POST /api/v1/seller/token { sellerInfoId } → { tokenType, accessToken, expiresIn }`, 활성 스토어 전환 시 재발급. 상세 FE `docs/auth.md` |
 | 에러 | FE는 `ApiError { status, code, message }`로 파싱 — BE `ErrorResponse { code, message }` + HTTP status와 매핑 |
 
 ---

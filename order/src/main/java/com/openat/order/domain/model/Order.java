@@ -32,7 +32,8 @@ import org.hibernate.annotations.UuidGenerator;
         indexes = {
             @Index(name = "idx_orders_member_id", columnList = "member_id"),
             @Index(name = "idx_orders_drop_id", columnList = "drop_id"),
-            @Index(name = "idx_orders_status", columnList = "status")
+            @Index(name = "idx_orders_status", columnList = "status"),
+            @Index(name = "idx_orders_saga_id", columnList = "saga_id")
         })
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Order {
@@ -62,7 +63,7 @@ public class Order {
     // TODO(order-schema): productName is no longer part of the product integration contract.
     // Keep the column populated for existing DB schemas where product_name is NOT NULL.
     @Column(name = "product_name", nullable = false)
-    private String productName = "";
+    private String productName;
 
     @Column(nullable = false)
     private int quantity;
@@ -92,6 +93,9 @@ public class Order {
 
     @Column(name = "fail_message")
     private String failMessage;
+
+    @Column(name = "saga_id", length = 64)
+    private String sagaId;
 
     @Version
     @Column(nullable = false)
@@ -147,8 +151,13 @@ public class Order {
         return memberId.equals(requesterId);
     }
 
-    public boolean isCompletedWith(UUID paymentId) {
-        return status == OrderStatus.COMPLETED && this.paymentId != null && this.paymentId.equals(paymentId);
+    public void assignSagaId(String sagaId) {
+        this.sagaId = sagaId;
+    }
+
+    public void recordFailure(OrderFailCode failCode, String failMessage) {
+        this.failCode = failCode;
+        this.failMessage = failMessage;
     }
 
     public boolean complete(UUID paymentId, Instant paidAt) {
@@ -161,17 +170,6 @@ public class Order {
         this.completedAt = paidAt;
         this.failCode = null;
         this.failMessage = null;
-        return true;
-    }
-
-    public boolean failPayment(String reason, Instant failedAt) {
-        if (status != OrderStatus.PAYMENT_PENDING) {
-            return false;
-        }
-        this.status = OrderStatus.FAILED;
-        this.failCode = OrderFailCode.PAYMENT_FAILED;
-        this.failMessage = reason;
-        this.cancelledAt = failedAt;
         return true;
     }
 
