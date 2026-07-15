@@ -4,13 +4,14 @@ import com.openat.search.product.application.vector.ProductEmbeddingGenerator;
 import com.openat.search.product.infrastructure.elasticsearch.ProductDocument;
 import com.openat.search.product.infrastructure.vector.AiProductEmbeddingGenerator;
 import com.openat.search.product.infrastructure.vector.NoOpProductEmbeddingGenerator;
-import java.util.Arrays;
-import java.util.Optional;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
+import java.util.Arrays;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -37,7 +38,12 @@ public class ProductEmbeddingService {
       return productDocument;
     }
 
-    String source = buildSourceText(productDocument);
+    String source = buildSourceText(productDocument); // 문자열 취합 (제목 + 상품설명 + 이미지 설명)
+
+    log.info(
+            "[product-es] Product source = {}",
+            source);
+
     if (source.isBlank()) {
       throw new IllegalStateException(
           "Product embedding source text is blank. productId=" + productDocument.id());
@@ -57,7 +63,7 @@ public class ProductEmbeddingService {
 
     validateEmbeddingDimensions(productDocument, embedding);
     log.info(
-        "[product-db-to-es] Product embedding generated. productId={}, dimensions={}",
+        "[product-kafka-to-es] Product embedding generated. productId={}, dimensions={}",
         productDocument.id(),
         embedding.length);
     return productDocument.withEmbedding(embedding);
@@ -68,7 +74,12 @@ public class ProductEmbeddingService {
   }
 
   private String buildSourceText(ProductDocument productDocument) {
-    return Arrays.stream(new String[] {productDocument.name(), productDocument.description()})
+    return Arrays.stream(
+            new String[] {
+              productDocument.name(),
+              productDocument.description(),
+              productDocument.imgDescription()
+            })
         .filter(value -> value != null && !value.isBlank())
         .collect(Collectors.joining(" "));
   }

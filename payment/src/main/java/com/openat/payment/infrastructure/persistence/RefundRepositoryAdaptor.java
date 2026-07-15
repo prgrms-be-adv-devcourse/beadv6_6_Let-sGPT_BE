@@ -1,5 +1,6 @@
 package com.openat.payment.infrastructure.persistence;
 
+import com.openat.payment.domain.model.PgReconStatus;
 import com.openat.payment.domain.model.Refund;
 import com.openat.payment.domain.repository.RefundRepository;
 import com.openat.payment.infrastructure.persistence.entity.RefundJpaEntity;
@@ -60,5 +61,29 @@ public class RefundRepositoryAdaptor implements RefundRepository {
     @Override
     public long countByMemberId(UUID memberId) {
         return refundJpaRepository.countByMemberId(memberId);
+    }
+
+    @Override
+    public List<Refund> findForPgReconciliation(LocalDateTime from, LocalDateTime to) {
+        return refundJpaRepository.findByStatusAndPgReconStatusNotAndCompletedAtBetween(
+                        Refund.Status.COMPLETE, PgReconStatus.MATCHED, from, to)
+                .stream().map(RefundJpaEntity::toDomain).toList();
+    }
+
+    @Override
+    public int markPgReconResult(UUID refundId, PgReconStatus pgReconStatus, LocalDateTime reconciledAt) {
+        return refundJpaRepository.markPgReconResult(refundId, pgReconStatus, reconciledAt);
+    }
+
+    @Override
+    public void markPgReconMatched(UUID refundId, LocalDateTime reconciledAt) {
+        refundJpaRepository.markPgReconMatched(refundId, reconciledAt);
+    }
+
+    @Override
+    public List<Refund> findMatchedCompletedBetween(LocalDateTime from, LocalDateTime to) {
+        return refundJpaRepository.findByStatusAndCompletedAtGreaterThanEqualAndCompletedAtLessThanAndPgReconStatus(
+                        Refund.Status.COMPLETE, from, to, PgReconStatus.MATCHED)
+                .stream().map(RefundJpaEntity::toDomain).toList();
     }
 }

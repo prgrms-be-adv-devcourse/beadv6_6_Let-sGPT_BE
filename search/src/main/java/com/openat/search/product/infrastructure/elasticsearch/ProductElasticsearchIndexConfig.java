@@ -1,6 +1,7 @@
 package com.openat.search.product.infrastructure.elasticsearch;
 
 import java.util.Map;
+import java.util.StringJoiner;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -37,6 +38,9 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
           "categoryName": {
             "type": "text"
           },
+          "sellerName": {
+            "type": "text"
+          },
           "price": {
             "type": "long"
           },
@@ -45,6 +49,9 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
           },
           "imageKeys": {
             "type": "keyword"
+          },
+          "imgDescription": {
+            "type": "text"
           },
           "embedding": {
             "type": "dense_vector",
@@ -65,6 +72,10 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
             "format": "date_time"
           },
           "updatedAt": {
+            "type": "date",
+            "format": "date_time"
+          },
+          "deletedAt": {
             "type": "date",
             "format": "date_time"
           }
@@ -94,6 +105,34 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
       }
       """;
 
+  private static final Map<String, String> ADDITIONAL_PRODUCT_FIELD_MAPPINGS =
+      Map.of(
+          "categoryId",
+              """
+              "categoryId": {
+                "type": "keyword"
+              }
+              """,
+          "sellerName",
+              """
+              "sellerName": {
+                "type": "text"
+              }
+              """,
+          "imgDescription",
+              """
+              "imgDescription": {
+                "type": "text"
+              }
+              """,
+          "deletedAt",
+              """
+              "deletedAt": {
+                "type": "date",
+                "format": "date_time"
+              }
+              """);
+
   private final ElasticsearchOperations elasticsearchOperations;
 
   @Override
@@ -106,6 +145,8 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
       return;
     }
 
+    putMissingProductFieldMappings(indexOperations);
+
     if (hasOptimizedEmbeddingMapping(indexOperations.getMapping())) {
       log.info(
           "[product-index] products index already has optimized embedding dense_vector mapping");
@@ -117,10 +158,7 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
   }
 
   private boolean hasOptimizedEmbeddingMapping(Map<String, Object> mapping) {
-    Object properties = mapping.get("properties");
-    if (!(properties instanceof Map<?, ?> propertiesMap)) {
-      return false;
-    }
+    Map<?, ?> propertiesMap = propertiesMap(mapping);
 
     Object embedding = propertiesMap.get("embedding");
     if (!(embedding instanceof Map<?, ?> embeddingMap)) {
@@ -149,5 +187,41 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
 
   private boolean numberEquals(Object value, int expected) {
     return value instanceof Number number && number.doubleValue() == expected;
+  }
+
+  private void putMissingProductFieldMappings(IndexOperations indexOperations) {
+    Map<?, ?> propertiesMap = propertiesMap(indexOperations.getMapping());
+    StringJoiner missingMappings = new StringJoiner(",\n");
+
+    ADDITIONAL_PRODUCT_FIELD_MAPPINGS.forEach(
+        (fieldName, fieldMapping) -> {
+          if (!propertiesMap.containsKey(fieldName)) {
+            missingMappings.add(fieldMapping);
+          }
+        });
+
+    if (missingMappings.length() == 0) {
+      return;
+    }
+
+    String mapping =
+        """
+        {
+          "properties": {
+        %s
+          }
+        }
+        """
+            .formatted(missingMappings);
+    indexOperations.putMapping(Document.parse(mapping));
+    log.info("[product-index] Added missing product field mappings to products index");
+  }
+
+  private Map<?, ?> propertiesMap(Map<String, Object> mapping) {
+    Object properties = mapping.get("properties");
+    if (properties instanceof Map<?, ?> propertiesMap) {
+      return propertiesMap;
+    }
+    return Map.of();
   }
 }

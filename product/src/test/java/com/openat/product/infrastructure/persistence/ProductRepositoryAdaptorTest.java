@@ -7,9 +7,12 @@ import com.openat.config.QueryDslConfig;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.domain.repository.ProductSearchCondition;
+import com.openat.product.domain.repository.ProductTombstone;
 import com.openat.product.fixture.ProductFixture;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -231,5 +234,102 @@ class ProductRepositoryAdaptorTest {
       assertThat(result.getContent()).hasSize(2);
       assertThat(result.getTotalPages()).isEqualTo(2);
     }
+  }
+
+  @Nested
+  @DisplayName("변경 피드(증분 동기화)")
+  class ChangeFeed {
+
+    @Test
+    @DisplayName("수정 시각이 기준 이후인 살아있는 상품만 반환하고 삭제 상품은 제외한다")
+    void searchChangedAliveSince_returnsChangedAlive_excludesDeleted() {
+      // given
+      Instant boundary = Instant.parse("2026-01-01T00:00:00Z");
+      UUID sellerId = UUID.randomUUID();
+      Product created =
+          productRepository.save(
+              Product.create().sellerId(sellerId).name("생성됨").price(1_000L).build());
+      Product reupdated =
+          productRepository.save(
+              Product.create().sellerId(sellerId).name("수정됨").price(1_000L).build());
+      Product old =
+          productRepository.save(
+              Product.create().sellerId(sellerId).name("옛날").price(1_000L).build());
+      Product deleted =
+          productRepository.save(
+              Product.create().sellerId(sellerId).name("삭제됨").price(1_000L).build());
+      entityManager.flush();
+      setChangeTimestamps(
+          created.getId(),
+          Instant.parse("2026-06-02T00:00:00Z"),
+          Instant.parse("2026-06-02T00:00:00Z"));
+      setChangeTimestamps(
+          reupdated.getId(),
+          Instant.parse("2020-01-01T00:00:00Z"),
+          Instant.parse("2026-06-03T00:00:00Z"));
+      setChangeTimestamps(
+          old.getId(),
+          Instant.parse("2020-01-01T00:00:00Z"),
+          Instant.parse("2020-01-01T00:00:00Z"));
+      productRepository.delete(deleted);
+      entityManager.flush();
+      entityManager.clear();
+
+      // when
+      List<Product> changed = productRepository.searchChangedAliveSince(boundary);
+
+      // then
+      assertThat(changed)
+          .extracting(Product::getId)
+          .containsExactlyInAnyOrder(created.getId(), reupdated.getId());
+    }
+
+    @Test
+    @DisplayName("삭제 시각이 기준 이후인 소프트삭제 상품의 id와 삭제 시각을 반환한다")
+    void searchTombstonesSince_returnsSoftDeletedRows_afterBoundary() {
+      // given
+      UUID sellerId = UUID.randomUUID();
+      productRepository.save(
+          Product.create().sellerId(sellerId).name("살아있음").price(1_000L).build());
+      Product deleted =
+          productRepository.save(
+              Product.create().sellerId(sellerId).name("삭제됨").price(1_000L).build());
+      entityManager.flush();
+      UUID deletedId = deleted.getId();
+      Instant deletedAt = Instant.parse("2026-06-01T00:00:00Z");
+      productRepository.delete(deleted);
+      entityManager.flush();
+      setDeletedAt(deletedId, deletedAt);
+      entityManager.clear();
+
+      // when
+      List<ProductTombstone> included =
+          productRepository.searchTombstonesSince(Instant.parse("2026-01-01T00:00:00Z"));
+      List<ProductTombstone> excluded =
+          productRepository.searchTombstonesSince(Instant.parse("2026-12-01T00:00:00Z"));
+
+      // then: 네이티브 조회가 소프트삭제 필터를 우회해 삭제 행만 정확히 반환한다
+      assertThat(included).extracting(ProductTombstone::id).containsExactly(deletedId);
+      assertThat(included.get(0).deletedAt()).isEqualTo(deletedAt);
+      assertThat(excluded).isEmpty();
+    }
+  }
+
+  private void setChangeTimestamps(UUID id, Instant createdAt, Instant updatedAt) {
+    entityManager
+        .createNativeQuery(
+            "UPDATE product.products SET created_at = :createdAt, updated_at = :updatedAt WHERE id = :id")
+        .setParameter("createdAt", createdAt)
+        .setParameter("updatedAt", updatedAt)
+        .setParameter("id", id)
+        .executeUpdate();
+  }
+
+  private void setDeletedAt(UUID id, Instant deletedAt) {
+    entityManager
+        .createNativeQuery("UPDATE product.products SET deleted_at = :deletedAt WHERE id = :id")
+        .setParameter("deletedAt", deletedAt)
+        .setParameter("id", id)
+        .executeUpdate();
   }
 }

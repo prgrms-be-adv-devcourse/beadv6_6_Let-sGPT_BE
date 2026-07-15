@@ -28,6 +28,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.springframework.boot:spring-boot-starter-security")
 
+    // 논블로킹으로 실행하기 위한 리액티브 Redis 클라이언트
+    implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
+
     implementation("org.springdoc:springdoc-openapi-starter-webflux-ui:3.0.3")
 
     // k8s readiness/liveness probe + Prometheus 메트릭 노출 (버전은 Boot BOM/micrometer-bom 관리)

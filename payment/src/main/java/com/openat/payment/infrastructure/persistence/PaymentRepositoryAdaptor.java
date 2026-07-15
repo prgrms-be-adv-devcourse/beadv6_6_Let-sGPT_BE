@@ -2,12 +2,14 @@ package com.openat.payment.infrastructure.persistence;
 
 import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.domain.model.Payment;
+import com.openat.payment.domain.model.PgReconStatus;
 import com.openat.payment.domain.repository.PaymentRepository;
 import com.openat.payment.infrastructure.persistence.entity.PaymentJpaEntity;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -59,8 +61,18 @@ public class PaymentRepositoryAdaptor implements PaymentRepository {
     }
 
     @Override
-    public void updatePgPaymentKey(UUID id, String pgPaymentKey) {
-        paymentJpaRepository.updatePgPaymentKey(id, pgPaymentKey, RequestHasher.hash(pgPaymentKey));
+    public Optional<Payment> tryReserveForConfirm(Payment pending) {
+        try {
+            // saveAndFlush 필수 — order_id 유니크 충돌을 이 지점에서 즉시 감지(지연 flush면 catch가 못 잡음).
+            return Optional.of(paymentJpaRepository.saveAndFlush(PaymentJpaEntity.fromDomain(pending)).toDomain());
+        } catch (DataIntegrityViolationException e) {
+            return Optional.empty(); // order_id 충돌 — 기존 행 존재, 호출측이 findByOrderId로 재조회
+        }
+    }
+
+    @Override
+    public Optional<Payment> findByOrderId(UUID orderId) {
+        return paymentJpaRepository.findByOrderId(orderId).map(PaymentJpaEntity::toDomain);
     }
 
     @Override
@@ -77,5 +89,29 @@ public class PaymentRepositoryAdaptor implements PaymentRepository {
     @Override
     public int tryDecreaseRefundedAmount(UUID paymentId, Long amount) {
         return paymentJpaRepository.tryDecreaseRefundedAmount(paymentId, amount);
+    }
+
+    @Override
+    public List<Payment> findForPgReconciliation(LocalDateTime from, LocalDateTime to) {
+        return paymentJpaRepository.findByStatusAndPgReconStatusNotAndApprovedAtBetween(
+                        Payment.Status.APPROVED, PgReconStatus.MATCHED, from, to)
+                .stream().map(PaymentJpaEntity::toDomain).toList();
+    }
+
+    @Override
+    public int markPgReconResult(UUID paymentId, PgReconStatus pgReconStatus, LocalDateTime reconciledAt) {
+        return paymentJpaRepository.markPgReconResult(paymentId, pgReconStatus, reconciledAt);
+    }
+
+    @Override
+    public List<Payment> findMatchedApprovedBetween(LocalDateTime from, LocalDateTime to) {
+        return paymentJpaRepository.findByStatusAndApprovedAtGreaterThanEqualAndApprovedAtLessThanAndPgReconStatus(
+                        Payment.Status.APPROVED, from, to, PgReconStatus.MATCHED)
+                .stream().map(PaymentJpaEntity::toDomain).toList();
+    }
+
+    @Override
+    public List<Payment> findAllByIds(List<UUID> ids) {
+        return paymentJpaRepository.findByIdIn(ids).stream().map(PaymentJpaEntity::toDomain).toList();
     }
 }

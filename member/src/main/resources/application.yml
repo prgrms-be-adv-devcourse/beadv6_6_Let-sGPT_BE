@@ -38,6 +38,12 @@ jwt:
   issuer: ${JWT_ISSUER:http://localhost:9100}
   scoped-token-expire-seconds: 120        # RFC 8693 scoped 토큰 단명(2분)
 
+# 찜 변경 이벤트(생성/삭제) — 아웃박스가 발행, order가 소비.
+member:
+  kafka:
+    topic:
+      wishlist-changed: wishlist.changed.events
+
 # k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
 management:
   endpoints:

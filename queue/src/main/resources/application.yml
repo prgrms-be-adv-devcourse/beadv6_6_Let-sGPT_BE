@@ -1,0 +1,61 @@
+server:
+  port: 9200
+
+springdotenv:
+  directory: ..
+
+spring:
+  profiles:
+    active: local
+  application:
+    name: queue-service
+  jpa:
+    properties:
+      hibernate:
+        default_schema: queue # 스키마 분리
+    hibernate:
+      ddl-auto: create-drop
+  kafka:
+    consumer:
+      group-id: queue-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+
+# k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화
+
+# 대기열 튜닝 파라미터 - 전부 외부 설정으로 노출(하드코딩 금지), 재배포 없이 env로 조정 가능.
+# 정적 hot-drops 목록 없음 - 모든 드롭에 균일 적용(WaitingQueueRepository.activeDropIds()로 동적 발견).
+queue:
+  admission:
+    batch-size: 50             # N - 이번 tick에 살펴볼 대기자 후보 상한(maxScan). 실제 입장 수는 재고가 결정.
+    interval-ms: 1000           # admit.lua 실행 주기(ms)
+    ttl-seconds: 180            # 입장권 세션 창(초)
+    sweep-interval-ms: 5000     # 미소진 입장권(TTL 경과) 회수 스위퍼 주기(ms)
+  waiting:
+    heartbeat-ttl-ms: 10000     # 마지막 폴링 이후 이 시간 지나면 자리 회수
+    sweep-interval-ms: 5000
+  polling:
+    interval-ms: 2000           # 클라이언트에 안내할 권장 폴링 주기(ms)
+  kafka:
+    topic:
+      # StockAdjustment(결제 확정/환불) 이벤트 구독 - order 팀과 확정된 실제 토픽명.
+      stock-adjustment: order.stock.adjusted.events
