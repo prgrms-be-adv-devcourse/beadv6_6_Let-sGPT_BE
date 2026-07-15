@@ -1,0 +1,4 @@
+# .github/workflows/ 변경은 GitHub Actions bypass(= deploy/state 브랜치 보호 우회 권한)와
+# 직결되므로 admin 승인 필수. 신규 workflow 추가/기존 workflow의 git push 대상 변경 모두
+# 여기 걸린다. (참고: personal_workplan/plan/7-15-deploystate_branch_protection_plan.md)
+/.github/workflows/ @learn-programmers @miny20023
