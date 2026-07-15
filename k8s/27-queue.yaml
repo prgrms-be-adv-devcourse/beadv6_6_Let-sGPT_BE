@@ -21,7 +21,7 @@ spec:
       labels: { app: queue }
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9200"
+        prometheus.io/port: "9150"
         prometheus.io/path: "/actuator/prometheus"
     spec:
       imagePullSecrets:
@@ -29,7 +29,7 @@ spec:
       containers:
         - name: queue
           image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue:latest
-          ports: [{ containerPort: 9200 }]
+          ports: [{ containerPort: 9150 }]
           envFrom:
             - configMapRef: { name: app-config }
             - secretRef: { name: app-secrets }
@@ -39,15 +39,15 @@ spec:
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
             - { name: SERVICES_PRODUCT_URL, value: "http://product:9110" }
           startupProbe:
-            httpGet: { path: /actuator/health/liveness, port: 9200 }
+            httpGet: { path: /actuator/health/liveness, port: 9150 }
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
-            httpGet: { path: /actuator/health/readiness, port: 9200 }
+            httpGet: { path: /actuator/health/readiness, port: 9150 }
             periodSeconds: 5
             failureThreshold: 3
           livenessProbe:
-            httpGet: { path: /actuator/health/liveness, port: 9200 }
+            httpGet: { path: /actuator/health/liveness, port: 9150 }
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 5
@@ -62,4 +62,4 @@ metadata:
   namespace: openat
 spec:
   selector: { app: queue }
-  ports: [{ port: 9200, targetPort: 9200 }]
+  ports: [{ port: 9150, targetPort: 9150 }]

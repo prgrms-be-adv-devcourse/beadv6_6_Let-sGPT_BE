@@ -1,5 +1,6 @@
 package com.openat.queue.infrastructure.persistence
 
+import com.openat.queue.domain.model.AdmittedEntry
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -125,6 +126,67 @@ class WaitingQueueRedisRepositoryTest {
     }
 
     @Test
+    @DisplayName("맨 앞사람 몫이 재고로 안 되면, 뒷사람 몫이 재고로 충분해도 새치기 입장시키지 않는다(엄격한 FIFO)")
+    fun admitBatch_frontCandidateBlocked_neverAdmitsSmallerCandidateBehind() {
+        val dropId = newDropId()
+        val front = "front-user"
+        val back = "back-user"
+        seedRemaining(dropId, 0) // 아무도 즉시 입장 못 하게 해서 둘 다 대기열에 줄서게 한다
+        repository.enqueueOrFastAdmit(dropId, front, 5, TTL_SECONDS, Instant.now())
+        repository.enqueueOrFastAdmit(dropId, back, 1, TTL_SECONDS, Instant.now())
+        seedRemaining(dropId, 3) // 앞사람(5개)은 부족하지만 뒷사람(1개)은 충분한 재고
+
+        val admitted = repository.admitBatch(dropId, MAX_SCAN, TTL_SECONDS)
+
+        assertThat(admitted).isEmpty()
+        assertThat(repository.admittedQuantityOf(dropId, back)).isNull()
+        assertThat(repository.admittedQuantityOf(dropId, front)).isNull()
+        assertThat(repository.ticketOf(dropId, front)).isNotNull()
+        assertThat(repository.ticketOf(dropId, back)).isNotNull()
+    }
+
+    @Test
+    @DisplayName("맨 앞사람이 대기열을 떠나면(포기) 다음 admitBatch에서 뒷사람이 정상 입장한다")
+    fun admitBatch_afterFrontLeaves_backGetsAdmittedOnNextTick() {
+        val dropId = newDropId()
+        val front = "front-user"
+        val back = "back-user"
+        seedRemaining(dropId, 0)
+        repository.enqueueOrFastAdmit(dropId, front, 5, TTL_SECONDS, Instant.now())
+        repository.enqueueOrFastAdmit(dropId, back, 1, TTL_SECONDS, Instant.now())
+        seedRemaining(dropId, 3)
+        assertThat(repository.admitBatch(dropId, MAX_SCAN, TTL_SECONDS)).isEmpty() // 여전히 막혀 있음 확인
+
+        repository.removeFromQueue(dropId, front) // "포기(GIVE_UP)" 시뮬레이션 - 차단 해제
+
+        val admitted = repository.admitBatch(dropId, MAX_SCAN, TTL_SECONDS)
+
+        assertThat(admitted).containsExactly(AdmittedEntry(back, 1))
+        assertThat(repository.admittedQuantityOf(dropId, back)).isEqualTo(1)
+    }
+
+    @Test
+    @DisplayName("맨 앞(rank 0)이 아닌 사용자는 PARTIAL(admitSingle)이 거부되고, 맨 앞 사용자만 허용된다")
+    fun admitSingle_onlyFrontRankCanPartial() {
+        val dropId = newDropId()
+        val front = "front-user"
+        val back = "back-user"
+        seedRemaining(dropId, 0)
+        repository.enqueueOrFastAdmit(dropId, front, 5, TTL_SECONDS, Instant.now())
+        repository.enqueueOrFastAdmit(dropId, back, 1, TTL_SECONDS, Instant.now())
+        seedRemaining(dropId, 3)
+
+        assertThat(repository.admitSingle(dropId, back, TTL_SECONDS)).isNull()
+        assertThat(repository.admittedQuantityOf(dropId, back)).isNull()
+
+        val granted = repository.admitSingle(dropId, front, TTL_SECONDS)
+
+        assertThat(granted).isNotNull
+        assertThat(granted!!.quantity).isEqualTo(3) // min(요청 5, 가용 3)
+        assertThat(repository.admittedQuantityOf(dropId, front)).isEqualTo(3)
+    }
+
+    @Test
     @DisplayName("완전히 유휴 상태가 되면 pruneIfIdle이 active-drops에서 제거한다")
     fun pruneIfIdle_removesOnlyWhenFullyIdle() {
         val dropId = newDropId()
@@ -155,6 +217,7 @@ class WaitingQueueRedisRepositoryTest {
 
     companion object {
         private const val TTL_SECONDS = 60L
+        private const val MAX_SCAN = 50
 
         @Container
         @JvmStatic
