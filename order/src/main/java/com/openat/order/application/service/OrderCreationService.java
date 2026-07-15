@@ -27,6 +27,7 @@ public class OrderCreationService {
     private final ProductIntegrationPort productIntegrationPort;
     private final PendingOrderCreator pendingOrderCreator;
     private final OrderFailureRecorder orderFailureRecorder;
+    private final OrderSagaRecorder orderSagaRecorder;
 
     public CreateOrderResult create(UUID memberId, CreateOrderCommand command) {
         validateCommand(command);
@@ -44,6 +45,7 @@ public class OrderCreationService {
         }
 
         decreaseStock(creation.order(), requestedAt);
+        orderSagaRecorder.recordStockDecreased(creation.order().getId());
         return CreateOrderResult.from(creation.order());
     }
 

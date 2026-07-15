@@ -5,7 +5,7 @@ import com.openat.order.application.dto.PaymentCompletedCommand;
 import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
-import com.openat.order.application.port.OrderCompletedEventPublishPort;
+import com.openat.order.application.port.OrderCompletedOutboxPort;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderStatus;
@@ -15,8 +15,6 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @RequiredArgsConstructor
@@ -27,7 +25,8 @@ public class OrderEventService {
 
     private final OrderRepository orderRepository;
     private final OrderHistoryRecorder orderHistoryRecorder;
-    private final OrderCompletedEventPublishPort orderCompletedEventPublishPort;
+    private final OrderCompletedOutboxPort orderCompletedOutboxPort;
+    private final OrderSagaRecorder orderSagaRecorder;
 
     @Transactional
     public void handlePaymentCompleted(PaymentCompletedCommand command) {
@@ -48,8 +47,8 @@ public class OrderEventService {
 
         orderHistoryRecorder.record(order, before, "ORDER_COMPLETED", "결제 성공 이벤트 처리",
                 eventSourceKey("payment-complete", command.orderId(), command.paymentId()));
-
-        publishOrderCompletedAfterCommit(order);
+        orderSagaRecorder.recordCompleted(order.getId());
+        orderCompletedOutboxPort.save(order);
     }
 
     @Transactional
@@ -141,12 +140,4 @@ public class OrderEventService {
                 .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
     }
 
-    private void publishOrderCompletedAfterCommit(Order order) {
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                orderCompletedEventPublishPort.publish(order);
-            }
-        });
-    }
 }

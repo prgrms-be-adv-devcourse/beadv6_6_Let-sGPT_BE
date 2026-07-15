@@ -12,7 +12,7 @@ import com.openat.order.application.dto.PaymentCompletedCommand;
 import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
-import com.openat.order.application.port.OrderCompletedEventPublishPort;
+import com.openat.order.application.port.OrderCompletedOutboxPort;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderFailCode;
@@ -41,7 +41,10 @@ class OrderEventServiceTest {
     private OrderHistoryRecorder orderHistoryRecorder;
 
     @Mock
-    private OrderCompletedEventPublishPort orderCompletedEventPublishPort;
+    private OrderCompletedOutboxPort orderCompletedOutboxPort;
+
+    @Mock
+    private OrderSagaRecorder orderSagaRecorder;
 
     @InjectMocks
     private OrderEventService orderEventService;
@@ -67,7 +70,8 @@ class OrderEventServiceTest {
         ArgumentCaptor<String> sourceEventKey = ArgumentCaptor.forClass(String.class);
         verify(orderHistoryRecorder).record(any(), any(), any(), any(), sourceEventKey.capture());
         assertThat(sourceEventKey.getValue()).hasSizeLessThanOrEqualTo(100);
-        verify(orderCompletedEventPublishPort).publish(order);
+        verify(orderSagaRecorder).recordCompleted(orderId);
+        verify(orderCompletedOutboxPort).save(order);
     }
 
     @Test
@@ -88,7 +92,8 @@ class OrderEventServiceTest {
 
         // then
         verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
-        verify(orderCompletedEventPublishPort, never()).publish(any());
+        verify(orderSagaRecorder, never()).recordCompleted(any());
+        verify(orderCompletedOutboxPort, never()).save(any());
     }
 
     @Test

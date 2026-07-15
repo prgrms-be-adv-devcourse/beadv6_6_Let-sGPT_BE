@@ -48,6 +48,9 @@ class OrderCreationServiceTest {
     @Mock
     private OrderFailureRecorder orderFailureRecorder;
 
+    @Mock
+    private OrderSagaRecorder orderSagaRecorder;
+
     @InjectMocks
     private OrderCreationService orderCreationService;
 
@@ -76,6 +79,7 @@ class OrderCreationServiceTest {
         assertThat(stockCommand.getValue().orderId()).isEqualTo(order.getId());
         assertThat(stockCommand.getValue().buyerId()).isEqualTo(memberId);
         assertThat(stockCommand.getValue().quantity()).isEqualTo(command.quantity());
+        verify(orderSagaRecorder).recordStockDecreased(order.getId());
     }
 
     @Test
@@ -205,6 +209,7 @@ class OrderCreationServiceTest {
         // then
         assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.SOLD_OUT);
         verify(orderFailureRecorder).recordCreateFailure(any(), any(), any(), any());
+        verify(orderSagaRecorder, never()).recordStockDecreased(any());
     }
 
     @Test
