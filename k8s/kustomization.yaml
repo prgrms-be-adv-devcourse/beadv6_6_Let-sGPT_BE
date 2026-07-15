@@ -20,6 +20,7 @@ resources:
   - 24-payment.yaml
   - 25-settlement.yaml
   - 26-search.yaml
+  - 27-queue.yaml
   - 30-frontend.yaml
   - 31-ingress.yaml
   - 32-https-redirect-middleware.yaml
@@ -42,6 +43,8 @@ images:
   - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
     newTag: latest
   - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/search
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
     newTag: latest
   # FE는 :latest 미발행(CI가 SHA로만 태깅) → 현행 SHA 핀 유지.
   - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend

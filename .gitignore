@@ -46,6 +46,7 @@ bin/
 
 .ai
 .claude
+.agents
 *.html
 *.css
 *.js
