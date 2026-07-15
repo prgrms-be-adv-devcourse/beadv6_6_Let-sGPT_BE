@@ -1,5 +1,5 @@
 server:
-  port: 9200
+  port: 9150   # 9200은 Elasticsearch 기본 포트와 겹쳐(local-elasticsearch, docker-compose.yml) 회피
 
 springdotenv:
   directory: ..
