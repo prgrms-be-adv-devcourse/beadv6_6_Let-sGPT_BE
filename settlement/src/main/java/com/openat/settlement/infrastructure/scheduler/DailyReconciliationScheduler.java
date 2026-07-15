@@ -13,31 +13,31 @@ import org.springframework.stereotype.Component;
 @Component
 public class DailyReconciliationScheduler {
 
-    private static final long LOCK_KEY = 917_150_200L;
+  private static final long LOCK_KEY = 917_150_200L;
 
-    private final DailyReconciliationService dailyReconciliationService;
-    private final PgAdvisoryLock advisoryLock;
+  private final DailyReconciliationService dailyReconciliationService;
+  private final PgAdvisoryLock advisoryLock;
 
-    public DailyReconciliationScheduler(DailyReconciliationService dailyReconciliationService,
-            PgAdvisoryLock advisoryLock) {
-        this.dailyReconciliationService = dailyReconciliationService;
-        this.advisoryLock = advisoryLock;
+  public DailyReconciliationScheduler(
+      DailyReconciliationService dailyReconciliationService, PgAdvisoryLock advisoryLock) {
+    this.dailyReconciliationService = dailyReconciliationService;
+    this.advisoryLock = advisoryLock;
+  }
+
+  @Scheduled(cron = "${settlement.reconciliation.daily-cron}")
+  public void run() {
+    if (!advisoryLock.tryLock(LOCK_KEY)) {
+      log.info("[DailyReconciliationScheduler] 다른 replica가 실행 중, 이번 주기는 건너뜀");
+      return;
     }
-
-    @Scheduled(cron = "${settlement.reconciliation.daily-cron:0 0 2 * * *}")
-    public void run() {
-        if (!advisoryLock.tryLock(LOCK_KEY)) {
-            log.info("[DailyReconciliationScheduler] 다른 replica가 실행 중, 이번 주기는 건너뜀");
-            return;
-        }
-        try {
-            LocalDate businessDate = LocalDate.now().minusDays(1);
-            DailyReconciliationSummary summary = dailyReconciliationService.reconcile(businessDate);
-            log.info("[DailyReconciliationScheduler] 정산 대사 완료: {}", summary);
-        } catch (Exception e) {
-            log.error("[DailyReconciliationScheduler] 정산 대사 배치 실패", e);
-        } finally {
-            advisoryLock.unlock(LOCK_KEY);
-        }
+    try {
+      LocalDate businessDate = LocalDate.now().minusDays(1);
+      DailyReconciliationSummary summary = dailyReconciliationService.reconcile(businessDate);
+      log.info("[DailyReconciliationScheduler] 정산 대사 완료: {}", summary);
+    } catch (Exception e) {
+      log.error("[DailyReconciliationScheduler] 정산 대사 배치 실패", e);
+    } finally {
+      advisoryLock.unlock(LOCK_KEY);
     }
+  }
 }

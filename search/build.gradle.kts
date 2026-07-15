@@ -2,7 +2,6 @@ plugins {
     java
     id("org.springframework.boot") version "4.1.0"
     id("io.spring.dependency-management") version "1.1.7"
-    id("com.diffplug.spotless") version "7.0.2"
 }
 
 group = "com.openat"
@@ -38,14 +37,6 @@ subprojects {
         annotationProcessor("org.projectlombok:lombok")
         testImplementation("org.springframework.boot:spring-boot-starter-test")
         testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    }
-}
-
-spotless {
-    java {
-        target("src/**/*.java")
-        googleJavaFormat("1.25.2")
-        removeUnusedImports()
     }
 }
 

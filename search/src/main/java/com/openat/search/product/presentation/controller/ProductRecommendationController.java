@@ -19,16 +19,16 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/searchs")
 @RequiredArgsConstructor
-@Tag(name = "Search Product", description = "Product search API")
+@Tag(name = "Search Product", description = "검색 상품 API")
 public class ProductRecommendationController {
 
   private final ProductRecommendationService productRecommendationService;
 
   @Operation(
-      summary = "Recommend products from weighted product embeddings",
+      summary = "가중 상품 임베딩 기반 상품 추천",
       description =
-          "Loads each product embedding, multiplies it by score, sums the vectors, and searches the products index. Products marked buy=T are excluded from the returned candidates.")
-  @ApiResponse(responseCode = "200", description = "Product recommendation succeeded")
+          "각 상품의 임베딩 벡터에 score 가중치를 곱해 합산한 뒤 상품 인덱스에서 유사한 상품을 검색합니다. buy=T로 표시된 상품은 추천 결과에서 제외됩니다.")
+  @ApiResponse(responseCode = "200", description = "상품 추천 성공")
   @ApiErrorResponses
   @PostMapping("/recommand")
   public ResponseEntity<List<ProductRecommendationResponse>> recommend(
