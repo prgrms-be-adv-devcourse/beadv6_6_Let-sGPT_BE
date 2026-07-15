@@ -1,0 +1,32 @@
+# resources: 단일 소유자 = main. deploy/state는 이 파일에 절대 쓰기 작업을 하지 않는다
+# (CD가 실행하는 어떤 명령도 base/를 건드리지 않음 — deploy.yml 전체 검색으로 확인 가능).
+# 그래서 main→deploy/state merge 시 이 파일은 deploy/state 쪽에서 한 번도 안 바뀐 채로
+# 유지되고, 항상 "한쪽만 바뀐" 상태라 git이 충돌 없이 자동 반영한다.
+# (이미지 태그 override는 ../overlay/kustomization.yaml 이 전담 — plan 7-15
+# deploystate_kustomize_merge_drift 참고.)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: openat
+
+resources:
+  - 00-namespace.yaml
+  - 01-configmap.yaml
+  - 10-postgres.yaml
+  - 11-kafka.yaml
+  - 12-redis.yaml
+  - 13-elasticsearch.yaml
+  - 20-apigateway.yaml
+  - 21-member.yaml
+  - 22-product.yaml
+  - 23-order.yaml
+  - 24-payment.yaml
+  - 25-settlement.yaml
+  - 26-search.yaml
+  - 27-queue.yaml
+  - 30-frontend.yaml
+  - 31-ingress.yaml
+  - 32-https-redirect-middleware.yaml
+  # ClusterIssuer(cert-manager)는 여기 없음 — kustomize의 namespace 트랜스포머가 CRD의 스코프를
+  # 모르고 cluster-scoped 리소스에도 namespace: openat을 강제로 찍어버리는 걸 kustomize build로
+  # 실사 확인(ClusterRole 등 built-in 종류는 안 찍히지만 CRD는 찍힘). k8s/bootstrap/40-cert-issuer.yaml로
+  # 분리해 1회성 kubectl apply -f로 적용(cert-manager 설치와 동일한 성격의 클러스터 인프라).

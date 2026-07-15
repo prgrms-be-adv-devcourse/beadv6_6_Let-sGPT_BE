@@ -1,5 +1,5 @@
 # WS-F(7/10 observability plan) — cert-manager ClusterIssuer(cluster-scoped 리소스).
-# k8s/kustomization.yaml(namespace: openat)에는 넣지 않는다 — kustomize의 namespace
+# k8s/base/kustomization.yaml(namespace: openat)에는 넣지 않는다 — kustomize의 namespace
 # 트랜스포머는 built-in Kind(ClusterRole 등)는 cluster-scoped로 인식해 건너뛰지만, CRD
 # (ClusterIssuer 등)는 스코프를 몰라서 namespace를 그대로 찍어버린다(구현 시 kustomize build로
 # 실사 확인 — API server가 cluster-scoped 리소스의 namespace 필드를 거부/무시할 수 있어 위험).

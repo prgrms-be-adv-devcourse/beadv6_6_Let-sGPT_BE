@@ -1,6 +1,6 @@
 # ArgoCD 자체 설치 kustomization. k8s/(앱 매니페스트) kustomization 과 완전히 분리된 디렉토리 —
-# openat Application(source.path=k8s)이 이 디렉토리를 sync 대상으로 삼지 않도록
-# k8s/kustomization.yaml 의 resources 에는 절대 넣지 않는다.
+# openat Application(source.path=k8s/overlay)이 이 디렉토리를 sync 대상으로 삼지 않도록
+# k8s/base/kustomization.yaml 의 resources 에는 절대 넣지 않는다.
 #
 # 설치본은 원격 install.yaml URL 이 아니라 직접 관리하는 로컬 정적 파일(argocd-install.yaml)이다.
 # helm 안 씀 — 설정 변경은 이 파일을 직접 수정한다(파일 상단 배너의 변경사항 체크리스트 참고).
