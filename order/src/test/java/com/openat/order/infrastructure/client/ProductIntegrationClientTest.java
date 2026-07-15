@@ -14,24 +14,18 @@ import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.model.OrderFailCode;
 import com.openat.order.infrastructure.client.ProductPortDtos.OrderSnapshotResponse;
 import com.openat.order.infrastructure.client.ProductPortDtos.StockChangeRequest;
-import feign.FeignException;
-import feign.Request;
-import feign.Response;
-import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.ResourceAccessException;
 
 @ExtendWith(MockitoExtension.class)
 class ProductIntegrationClientTest {
@@ -39,37 +33,11 @@ class ProductIntegrationClientTest {
     @Mock
     private ProductInternalApiClient productInternalApiClient;
 
-    @InjectMocks
     private ProductIntegrationClient productIntegrationClient;
 
-    @Test
-    @DisplayName("상품 주문 기준정보 내부 API 경로는 order-snapshot을 사용한다")
-    void fetchOrderSnapshot_mappingPath() throws Exception {
-        Method method = ProductInternalApiClient.class.getMethod("fetchOrderSnapshot", UUID.class);
-
-        GetMapping getMapping = method.getAnnotation(GetMapping.class);
-
-        assertThat(getMapping.value()).containsExactly("/internal/drops/{dropId}/order-snapshot");
-    }
-
-    @Test
-    @DisplayName("상품 재고 차감 내부 API 경로는 stock-deductions를 사용한다")
-    void decreaseStock_mappingPath() throws Exception {
-        Method method = ProductInternalApiClient.class.getMethod("decreaseStock", UUID.class, StockChangeRequest.class);
-
-        PostMapping postMapping = method.getAnnotation(PostMapping.class);
-
-        assertThat(postMapping.value()).containsExactly("/internal/drops/{dropId}/stock-deductions");
-    }
-
-    @Test
-    @DisplayName("상품 재고 롤백 내부 API 경로는 stock-rollbacks를 사용한다")
-    void restoreStock_mappingPath() throws Exception {
-        Method method = ProductInternalApiClient.class.getMethod("restoreStock", UUID.class, StockChangeRequest.class);
-
-        PostMapping postMapping = method.getAnnotation(PostMapping.class);
-
-        assertThat(postMapping.value()).containsExactly("/internal/drops/{dropId}/stock-rollbacks");
+    @BeforeEach
+    void setUp() {
+        productIntegrationClient = new ProductIntegrationClient(productInternalApiClient);
     }
 
     @Test
@@ -130,9 +98,10 @@ class ProductIntegrationClientTest {
     })
     @DisplayName("상품 재고 차감 비즈니스 에러는 주문 실패 코드로 변환한다")
     void decreaseStock_mapsProductBusinessError(String productError, OrderFailCode expectedFailCode) {
-        FeignException exception = feignException(409, """
-                {"error":"%s","message":"상품 재고 처리 실패"}
-                """.formatted(productError));
+        ProductApiException exception = new ProductApiException(
+                HttpStatus.CONFLICT,
+                new ProductErrorResponse(null, productError, "상품 재고 처리 실패"),
+                "product error");
         doThrow(exception).when(productInternalApiClient).decreaseStock(any(), any());
 
         assertThatThrownBy(() -> productIntegrationClient.decreaseStock(
@@ -143,20 +112,30 @@ class ProductIntegrationClientTest {
                         assertThat(ex.getFailCode()).isEqualTo(expectedFailCode));
     }
 
-    private FeignException feignException(int status, String body) {
-        Request request = Request.create(
-                Request.HttpMethod.POST,
-                "/internal/drops/test/stock-deductions",
-                Map.of(),
-                null,
-                StandardCharsets.UTF_8
-        );
-        Response response = Response.builder()
-                .status(status)
-                .reason("error")
-                .request(request)
-                .body(body, StandardCharsets.UTF_8)
-                .build();
-        return FeignException.errorStatus("product", response);
+    @Test
+    @DisplayName("상품 API 연결 실패는 상품 연동 실패 코드로 변환한다")
+    void fetchOrderSnapshot_mapsConnectionFailure() {
+        doThrow(new ResourceAccessException("connection refused"))
+                .when(productInternalApiClient)
+                .fetchOrderSnapshot(any());
+
+        assertThatThrownBy(() -> productIntegrationClient.fetchOrderSnapshot(UUID.randomUUID()))
+                .isInstanceOfSatisfying(ProductPortException.class, exception ->
+                        assertThat(exception.getFailCode()).isEqualTo(OrderFailCode.PRODUCT_INTEGRATION_FAILED));
+    }
+
+    @Test
+    @DisplayName("재고 롤백 API 연결 실패는 재고 롤백 실패 코드로 변환한다")
+    void restoreStock_mapsConnectionFailure() {
+        doThrow(new ResourceAccessException("connection refused"))
+                .when(productInternalApiClient)
+                .restoreStock(any(), any());
+
+        assertThatThrownBy(() -> productIntegrationClient.restoreStock(
+                        UUID.randomUUID(),
+                        new StockRestoreCommand(UUID.randomUUID(), UUID.randomUUID(), 1)
+                ))
+                .isInstanceOfSatisfying(ProductPortException.class, exception ->
+                        assertThat(exception.getFailCode()).isEqualTo(OrderFailCode.STOCK_ROLLBACK_FAILED));
     }
 }

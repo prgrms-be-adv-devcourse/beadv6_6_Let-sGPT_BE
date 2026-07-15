@@ -9,6 +9,8 @@ build/
 .gitattributes
 personal_workplan/
 docs/_local/
+CLAUDE.md
+AGENTS.md
 
 ### IntelliJ IDEA ###
 .idea

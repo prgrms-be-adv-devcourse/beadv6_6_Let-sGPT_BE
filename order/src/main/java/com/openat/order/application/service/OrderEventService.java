@@ -8,9 +8,7 @@ import com.openat.order.application.dto.RefundFailedCommand;
 import com.openat.order.application.port.OrderCompletedEventPublishPort;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
-import com.openat.order.domain.model.OrderHistory;
 import com.openat.order.domain.model.OrderStatus;
-import com.openat.order.domain.repository.OrderHistoryRepository;
 import com.openat.order.domain.repository.OrderRepository;
 import java.time.Instant;
 import java.util.UUID;
@@ -28,7 +26,7 @@ public class OrderEventService {
     private static final int SOURCE_EVENT_KEY_MAX_LENGTH = 100;
 
     private final OrderRepository orderRepository;
-    private final OrderHistoryRepository orderHistoryRepository;
+    private final OrderHistoryRecorder orderHistoryRecorder;
     private final OrderCompletedEventPublishPort orderCompletedEventPublishPort;
 
     @Transactional
@@ -39,13 +37,7 @@ public class OrderEventService {
             return;
         }
 
-        if (order.getStatus() != OrderStatus.PAYMENT_PENDING) {
-            throw new BusinessException(
-                    OrderErrorCode.INVALID_STATUS,
-                    "결제 성공 이벤트 처리 가능한 상태가 아닙니다: orderId=%s, status=%s"
-                            .formatted(command.orderId(), order.getStatus())
-            );
-        }
+        requireStatus(order, "결제 성공", OrderStatus.PAYMENT_PENDING);
 
         validateAmount(order, command.amount());
 
@@ -54,16 +46,8 @@ public class OrderEventService {
             throw new BusinessException(OrderErrorCode.INVALID_STATUS);
         }
 
-        orderHistoryRepository.save(
-                OrderHistory.record()
-                        .orderId(order.getId())
-                        .previousStatus(before)
-                        .newStatus(order.getStatus())
-                        .reasonCode("ORDER_COMPLETED")
-                        .reasonMessage("결제 성공 이벤트 처리")
-                        .sourceEventKey(eventSourceKey("payment-complete", command.orderId(), command.paymentId()))
-                        .build()
-        );
+        orderHistoryRecorder.record(order, before, "ORDER_COMPLETED", "결제 성공 이벤트 처리",
+                eventSourceKey("payment-complete", command.orderId(), command.paymentId()));
 
         publishOrderCompletedAfterCommit(order);
     }
@@ -78,16 +62,8 @@ public class OrderEventService {
 
         OrderStatus before = order.getStatus();
 
-        orderHistoryRepository.save(
-                OrderHistory.record()
-                        .orderId(order.getId())
-                        .previousStatus(before)
-                        .newStatus(order.getStatus())
-                        .reasonCode("PAYMENT_ATTEMPT_FAILED")
-                        .reasonMessage(command.reason())
-                        .sourceEventKey(eventSourceKey("payment-failed", command.orderId(), command.paymentId()))
-                        .build()
-        );
+        orderHistoryRecorder.record(order, before, "PAYMENT_ATTEMPT_FAILED", command.reason(),
+                eventSourceKey("payment-failed", command.orderId(), command.paymentId()));
     }
 
     @Transactional
@@ -98,13 +74,7 @@ public class OrderEventService {
             return;
         }
 
-        if (order.getStatus() != OrderStatus.CANCEL_REQUESTED && order.getStatus() != OrderStatus.REFUND_PENDING) {
-            throw new BusinessException(
-                    OrderErrorCode.INVALID_STATUS,
-                    "환불 완료 이벤트 처리 가능한 상태가 아닙니다: orderId=%s, status=%s"
-                            .formatted(command.orderId(), order.getStatus())
-            );
-        }
+        requireStatus(order, "환불 완료", OrderStatus.CANCEL_REQUESTED, OrderStatus.REFUND_PENDING);
 
         validateAmount(order, command.amount());
 
@@ -113,16 +83,8 @@ public class OrderEventService {
             throw new BusinessException(OrderErrorCode.INVALID_STATUS);
         }
 
-        orderHistoryRepository.save(
-                OrderHistory.record()
-                        .orderId(order.getId())
-                        .previousStatus(before)
-                        .newStatus(order.getStatus())
-                        .reasonCode("ORDER_REFUNDED")
-                        .reasonMessage("환불 완료 이벤트 처리")
-                        .sourceEventKey(eventSourceKey("refund-completed", command.orderId(), command.refundId()))
-                        .build()
-        );
+        orderHistoryRecorder.record(order, before, "ORDER_REFUNDED", "환불 완료 이벤트 처리",
+                eventSourceKey("refund-completed", command.orderId(), command.refundId()));
     }
 
     @Transactional
@@ -133,29 +95,15 @@ public class OrderEventService {
             return;
         }
 
-        if (order.getStatus() != OrderStatus.CANCEL_REQUESTED && order.getStatus() != OrderStatus.REFUND_PENDING) {
-            throw new BusinessException(
-                    OrderErrorCode.INVALID_STATUS,
-                    "환불 실패 이벤트 처리 가능한 상태가 아닙니다: orderId=%s, status=%s"
-                            .formatted(command.orderId(), order.getStatus())
-            );
-        }
+        requireStatus(order, "환불 실패", OrderStatus.CANCEL_REQUESTED, OrderStatus.REFUND_PENDING);
 
         OrderStatus before = order.getStatus();
         if (!order.failRefund(command.reason())) {
             throw new BusinessException(OrderErrorCode.INVALID_STATUS);
         }
 
-        orderHistoryRepository.save(
-                OrderHistory.record()
-                        .orderId(order.getId())
-                        .previousStatus(before)
-                        .newStatus(order.getStatus())
-                        .reasonCode("REFUND_FAILED")
-                        .reasonMessage(command.reason())
-                        .sourceEventKey(eventSourceKey("refund-failed", command.orderId(), command.refundId()))
-                        .build()
-        );
+        orderHistoryRecorder.record(order, before, "REFUND_FAILED", command.reason(),
+                eventSourceKey("refund-failed", command.orderId(), command.refundId()));
     }
 
     private void validateAmount(Order order, long eventAmount) {
@@ -166,6 +114,18 @@ public class OrderEventService {
                             .formatted(order.getId(), order.getTotalPrice(), eventAmount)
             );
         }
+    }
+
+    private void requireStatus(Order order, String eventName, OrderStatus... allowedStatuses) {
+        for (OrderStatus allowedStatus : allowedStatuses) {
+            if (order.getStatus() == allowedStatus) {
+                return;
+            }
+        }
+        throw new BusinessException(
+                OrderErrorCode.INVALID_STATUS,
+                "%s 이벤트 처리 가능한 상태가 아닙니다: orderId=%s, status=%s"
+                        .formatted(eventName, order.getId(), order.getStatus()));
     }
 
     private String eventSourceKey(String type, UUID orderId, UUID correlationId) {
