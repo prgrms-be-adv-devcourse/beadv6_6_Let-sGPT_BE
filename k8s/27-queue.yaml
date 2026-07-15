@@ -1,0 +1,65 @@
+# 대기열(queue) — MVC/Tomcat(WAS) 스택. GW(apigateway)는 WebFlux 유지, queue는 MVC 폴링
+# 방식으로 시작(k3s_memory_mitigation_plan §7-1 사전설계 그대로: Serial GC·JPA 없음 전제,
+# request256Mi/limit300Mi). WAS 스레드 상한은 다른 MVC 서비스(member/product/settlement)와
+# 동일하게 SERVER_TOMCAT_THREADS_MAX=50으로 제한 — 운영 중 모니터링 후 WebFlux 전환 여지 있음.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue
+  namespace: openat
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: queue }
+  template:
+    metadata:
+      labels: { app: queue }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9200"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: queue
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue:latest
+          ports: [{ containerPort: 9200 }]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: app-secrets }
+          env:
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:+UseSerialGC -XX:MaxRAMPercentage=55.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+            - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
+            - { name: SERVICES_PRODUCT_URL, value: "http://product:9110" }
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9200 }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 9200 }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9200 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+          resources:
+            limits: { memory: "300Mi" }
+            requests: { cpu: "100m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: queue
+  namespace: openat
+spec:
+  selector: { app: queue }
+  ports: [{ port: 9200, targetPort: 9200 }]
