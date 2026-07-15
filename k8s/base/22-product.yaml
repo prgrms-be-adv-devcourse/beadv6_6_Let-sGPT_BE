@@ -35,7 +35,9 @@ spec:
             - secretRef: { name: app-secrets }
           env:
             # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 핫패스(G1 유지, limit 비례 65%).
-            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
+            # Q113: 128m→256m 1차 상향(OutOfMemoryError: Metaspace 실측 대응) → Q116에서 서브리밋
+            # 자체를 없애는 쪽으로 최종 결론, MaxMetaspaceSize 캡 완전 제거(pod limit 하나로 통제).
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
             - { name: SPRING_JPA_OPEN_IN_VIEW, value: "false" }

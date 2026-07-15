@@ -1,6 +1,37 @@
 # OTel Collector 게이트웨이(단일 인스턴스, final 노드 고정) — 7-13-otel_collector_gateway_plan.md
 # 앱 7종(apigateway/member/product/order/payment/settlement/search)이 Tempo에 직접 push하던 구조를
 # 이 Collector 경유로 전환. 배치(batch)+공통 리소스 속성(resource) 처리 후 Tempo로 전달.
+# WS-F(7-14-stateless_helm_migration_plan.md §8) — 메트릭도 이 Collector 경유로 재배선.
+# prometheus 파드가 직접 하던 kubernetes_sd 스크레이프를 여기서 대신 수행(RBAC 이관) →
+# prometheusremotewrite exporter로 Prometheus(/api/v1/write)에 push.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  namespace: observability
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-collector
+rules:
+  - apiGroups: [""]
+    resources: [nodes, services, endpoints, pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: otel-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: observability
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,6 +46,31 @@ data:
             endpoint: "0.0.0.0:4317"
           http:
             endpoint: "0.0.0.0:4318"
+      prometheus:
+        config:
+          global:
+            scrape_interval: 15s
+          scrape_configs:
+            - job_name: kubernetes-pods
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: "true"
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  target_label: __metrics_path__
+                  regex: (.+)
+                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  regex: ([^:]+)(?::\d+)?;(\d+)
+                  replacement: $1:$2
+                  target_label: __address__
+                - source_labels: [__meta_kubernetes_namespace]
+                  target_label: namespace
+                - source_labels: [__meta_kubernetes_pod_label_app]
+                  target_label: app
     processors:
       memory_limiter:
         check_interval: 1s
@@ -32,6 +88,10 @@ data:
         endpoint: "tempo.observability.svc.cluster.local:4317"
         tls:
           insecure: true
+      prometheusremotewrite:
+        endpoint: "http://prometheus.observability.svc.cluster.local:9090/api/v1/write"
+        tls:
+          insecure: true
     extensions:
       health_check:
         endpoint: "0.0.0.0:13133"
@@ -42,6 +102,10 @@ data:
           receivers: [otlp]
           processors: [memory_limiter, batch, resource]
           exporters: [otlp/tempo]
+        metrics:
+          receivers: [prometheus]
+          processors: [memory_limiter, batch, resource]
+          exporters: [prometheusremotewrite]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -60,6 +124,7 @@ spec:
     metadata:
       labels: { app: otel-collector }
     spec:
+      serviceAccountName: otel-collector
       nodeSelector: { tier: observability }
       tolerations:
         - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
@@ -76,6 +141,9 @@ spec:
             failureThreshold: 12
           resources:
             # k3s_memory_mitigation_plan §9-7 final 재분배표 기준.
+            # WS-F(7-14-stateless_helm_migration_plan.md §8.2) — 메트릭 스크레이프 부하 추가로
+            # 재산정 필요하나, final 노드 limit 합계가 이미 물리 4096Mi 대비 ~99%(§9-9)라
+            # 배포 후 실측(메모리 사용량·재시작 카운트) 없이 선제 상향은 보류. 실측 후 조정 대상.
             limits: { memory: "224Mi", cpu: "200m" }
             requests: { cpu: "50m", memory: "80Mi" }
           volumeMounts:

@@ -3,11 +3,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: member
+  name: order
   namespace: openat
   annotations:
     # k3s_node_coldboot_contention_plan §2-C — 순차 롤아웃(wave 낮은 순)
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "4"
 spec:
   replicas: 1
   # 단일 워커 노드: 롤링 시 옛+새 파드 2배 메모리로 Insufficient memory Pending(Q80 #7) 방지.
@@ -15,54 +15,55 @@ spec:
     type: RollingUpdate
     rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
   selector:
-    matchLabels: { app: member }
+    matchLabels: { app: order }
   template:
     metadata:
-      labels: { app: member }
+      labels: { app: order }
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9100"
+        prometheus.io/port: "9120"
         prometheus.io/path: "/actuator/prometheus"
     spec:
       imagePullSecrets:
         - name: ghcr-pull
       containers:
-        - name: member
-          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member:latest
-          ports: [{ containerPort: 9100 }]
+        - name: order
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order:latest
+          ports: [{ containerPort: 9120 }]
           envFrom:
             - configMapRef: { name: app-config }
             - secretRef: { name: app-secrets }
           env:
-            # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 저트래픽군(SerialGC, limit 비례 60%).
-            - { name: JAVA_TOOL_OPTIONS, value: "-XX:+UseSerialGC -XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
+            # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 핫패스(G1 유지, limit 비례 65%).
+            # MaxMetaspaceSize 캡 제거(qna.md Q116) — 서브리밋 안 걸고 pod limit 하나로 통제.
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
             - { name: SPRING_JPA_OPEN_IN_VIEW, value: "false" }
-            - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: "2" }
+            - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: "3" }
           # 기동 완료까지 최대 300초 유예(2vCPU에서 6개 JVM 동시 부팅 + kubelet/kube 예약 감안, 실측 최악 251s) — 이후 liveness로 전환. k3s_node_coldboot_contention_plan §2-B/§2-A 동시 적용 전제
           startupProbe:
-            httpGet: { path: /actuator/health/liveness, port: 9100 }
+            httpGet: { path: /actuator/health/liveness, port: 9120 }
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
-            httpGet: { path: /actuator/health/readiness, port: 9100 }
+            httpGet: { path: /actuator/health/readiness, port: 9120 }
             periodSeconds: 5
             failureThreshold: 3
           livenessProbe:
-            httpGet: { path: /actuator/health/liveness, port: 9100 }
+            httpGet: { path: /actuator/health/liveness, port: 9120 }
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 5
           resources:
-            limits: { memory: "600Mi" }
-            requests: { cpu: "100m", memory: "400Mi" }
+            limits: { memory: "700Mi" }
+            requests: { cpu: "100m", memory: "520Mi" }
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: member
+  name: order
   namespace: openat
 spec:
-  selector: { app: member }
-  ports: [{ port: 9100, targetPort: 9100 }]
+  selector: { app: order }
+  ports: [{ port: 9120, targetPort: 9120 }]
