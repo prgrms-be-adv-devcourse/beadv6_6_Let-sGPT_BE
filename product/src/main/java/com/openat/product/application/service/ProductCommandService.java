@@ -7,9 +7,12 @@ import com.openat.product.application.dto.ProductCreateCommand;
 import com.openat.product.application.dto.ProductUpdateCommand;
 import com.openat.product.application.usecase.ProductCommandUseCase;
 import com.openat.product.domain.error.ProductErrorCode;
+import com.openat.product.domain.event.ProductCreatedEvent;
 import com.openat.product.domain.event.ProductDeletedEvent;
+import com.openat.product.domain.event.ProductUpdatedEvent;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
+import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -41,7 +44,9 @@ public class ProductCommandService implements ProductCommandUseCase {
             .imageKeys(command.imageKeys())
             .build();
 
-    return productRepository.save(newProduct).getId();
+    Product product = productRepository.save(newProduct);
+    eventPublisher.publishEvent(new ProductCreatedEvent(product));
+    return product.getId();
   }
 
   @Override
@@ -56,13 +61,14 @@ public class ProductCommandService implements ProductCommandUseCase {
         command.price(),
         command.thumbnailKey(),
         command.imageKeys());
+    eventPublisher.publishEvent(new ProductUpdatedEvent(product));
   }
 
   @Override
   public void delete(UUID id, UUID sellerId) {
     Product product = getOwnedProduct(id, sellerId);
     productRepository.delete(product);
-    eventPublisher.publishEvent(new ProductDeletedEvent(id));
+    eventPublisher.publishEvent(new ProductDeletedEvent(id, Instant.now()));
   }
 
   private Category toCategory(UUID categoryId) {

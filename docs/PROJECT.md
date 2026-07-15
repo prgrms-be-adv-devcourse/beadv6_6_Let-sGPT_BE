@@ -199,8 +199,9 @@
 | `payment.failed.events` | 결제 | 주문 | orderId, reason |
 | `refund.completed.events` | 결제 | 주문, 정산 | refundId, orderId, amount |
 | `refund.failed.events` | 결제 | 주문 | orderId, reason |
-| `product.created.events` | 상품 | 검색·AI(파이널) | productId, name, category, price |
-| `product.updated.events` | 상품 | 검색·AI(파이널) | productId, name, category, price |
+| `product.created.events` | 상품 | 검색·AI(파이널) | id, name, description, categoryId, categoryName, sellerName, price, thumbnailKey, createdAt, updatedAt |
+| `product.updated.events` | 상품 | 검색·AI(파이널) | id, name, description, categoryId, categoryName, sellerName, price, thumbnailKey, createdAt, updatedAt |
+| `product.deleted.events` | 상품 | 검색·AI(파이널) | id, deletedAt |
 
 ---
 
