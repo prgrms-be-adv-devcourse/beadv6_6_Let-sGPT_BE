@@ -74,51 +74,30 @@ jobs:
           REDIS_PORT: ${{ fromJson(vars.CI_VARS).REDIS_PORT }}
         run: ./gradlew :${{ matrix.service }}:build -x spotlessCheck    # 빌드는 포맷으로 안 깨지게(비차단)
 
-  # ArgoCD 설치 매니페스트 렌더 산출물(k8s/argocd/argocd-install.yaml)을 값(helm/values.yaml)에서
-  # 자동 생성해 같은 피처브랜치에 커밋백한다(k3s_memory_mitigation_plan §9-12 C안 / §9-13 교정).
-  # 머지 전(피처브랜치)에 산출물을 확정해 두므로 main 은 항상 values↔산출물이 일치한 상태로 착지 —
-  # main push 에 커밋백할 때 생기는 루프/브랜치보호 문제를 회피한다. 커밋에 [skip ci] 를 달아
-  # 재렌더(무변경) 실행을 건너뛴다(방금 렌더한 결과라 재렌더 diff 는 어차피 없음).
-  render-argocd:
+  # ArgoCD 설치 매니페스트(k8s/argocd/argocd-install.yaml)는 직접 관리 파일(helm 안 씀, 7-14
+  # argocd_helm_removal_plan 근거) — 렌더/커밋백 없음. 대신 kustomize build 가 에러 없이 되는지만
+  # 검증해 문법 오류를 머지 전에 잡는다("실패는 시끄럽게" 원칙, PR #89류 사고 조기 발견 목적).
+  validate-argocd:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write   # 렌더 산출물을 피처브랜치에 커밋백
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # helm/values.yaml 또는 커밋된 산출물이 바뀐 push 에서만 렌더/커밋(그 외엔 잡 스킵).
+      # k8s/argocd/ 아래 아무 파일이나 바뀐 push 에서만 검증(그 외엔 잡 스킵).
       - uses: dorny/paths-filter@v3
         id: argofilter
         with:
           filters: |
-            argocd: ['k8s/argocd/helm/**', 'k8s/argocd/argocd-install.yaml']
+            argocd: ['k8s/argocd/**']
 
-      - name: Install helm
-        if: steps.argofilter.outputs.argocd == 'true'
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.16.4    # 렌더 산출물 바이트 동일성 위해 버전 핀(로컬 렌더와 동일)
-
-      - name: Install pyyaml
-        if: steps.argofilter.outputs.argocd == 'true'
-        run: pip install pyyaml==6.0.3
-
-      - name: Render argocd-install.yaml from values
-        if: steps.argofilter.outputs.argocd == 'true'
-        run: bash k8s/argocd/helm/render.sh
-
-      - name: Commit back if changed
+      - name: Ensure kustomize CLI
         if: steps.argofilter.outputs.argocd == 'true'
         run: |
-          if git diff --quiet -- k8s/argocd/argocd-install.yaml; then
-            echo "산출물 최신 — 커밋 없음"
-          else
-            git config user.name "deploy-bot"
-            git config user.email "deploy-bot@users.noreply.github.com"
-            git add k8s/argocd/argocd-install.yaml
-            git commit -m "chore(argocd): render argocd-install.yaml from values.yaml [skip ci]"
-            git push origin HEAD:${{ github.ref_name }}
+          if ! command -v kustomize >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/bin"
+            ( cd "$RUNNER_TEMP/bin" && curl -sfL https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash )
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           fi
+
+      - name: kustomize build dry-run
+        if: steps.argofilter.outputs.argocd == 'true'
+        run: kustomize build k8s/argocd/ > /dev/null
