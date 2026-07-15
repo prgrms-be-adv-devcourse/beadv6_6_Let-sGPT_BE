@@ -1,0 +1,28 @@
+# deploy/state 전용 오버레이. main엔 최초 부트스트랩 시드로만 존재하고, 이후 main에서
+# 이 파일을 고치는 PR은 없어야 한다 — 이미지 pin은 deploy/state에서 CD가 전담
+# (kustomize edit set image). 근거: research/plan 7-15 deploystate_kustomize_merge_drift.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../base
+
+images:
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/search
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
+    newTag: "1951fa78ce805c1e1b3a6bd49f15e503e78df55d"

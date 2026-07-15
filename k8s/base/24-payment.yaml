@@ -35,7 +35,8 @@ spec:
             - secretRef: { name: app-secrets }
           env:
             # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 금전 경로(G1 유지, limit 비례 65%).
-            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
+            # MaxMetaspaceSize 캡 제거(Q114) — 별도 서브리밋 안 걸고 pod limit(700Mi) 하나로 통제, 남는 헤드룸은 메타스페이스가 자유롭게 사용.
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
             - { name: SPRING_JPA_OPEN_IN_VIEW, value: "false" }

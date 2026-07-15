@@ -145,15 +145,15 @@ jobs:
           # BE 이미지 SHA 핀은 재빌드된 서비스가 있을 때만(매니페스트-only 변경이면 SVCS가 비어 스킵).
           if [ -n "$SVCS" ]; then
             for svc in $SVCS; do
-              ( cd k8s && kustomize edit set image "$IMG_BASE/$svc=$IMG_BASE/$svc:$SHA" )
+              ( cd k8s/overlay && kustomize edit set image "$IMG_BASE/$svc=$IMG_BASE/$svc:$SHA" )
             done
-            git add k8s/kustomization.yaml
+            git add k8s/overlay/kustomization.yaml
             git commit -m "chore(deploy): pin $SVCS to $SHA [skip ci]" || echo "no image change to commit"
           fi
           # FE repository_dispatch로 넘어온 SHA 핀 — FE 리포 CI 완료 시에만 값이 있음.
           if [ -n "$FE_SHA" ]; then
-            ( cd k8s && kustomize edit set image "$FE_IMG=$FE_IMG:$FE_SHA" )
-            git add k8s/kustomization.yaml
+            ( cd k8s/overlay && kustomize edit set image "$FE_IMG=$FE_IMG:$FE_SHA" )
+            git add k8s/overlay/kustomization.yaml
             git commit -m "chore(deploy): pin frontend to $FE_SHA [skip ci]" || echo "no FE image change to commit"
           fi
           # merge가 새 커밋을 만들었으면(매니페스트 전파) 또는 핀 커밋이 있으면 push. 없으면 no-op이라

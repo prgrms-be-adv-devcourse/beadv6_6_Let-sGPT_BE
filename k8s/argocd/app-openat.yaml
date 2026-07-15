@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: https://github.com/prgrms-be-adv-devcourse/beadv6_6_Let-sGPT_BE
     targetRevision: deploy/state
-    path: k8s
+    path: k8s/overlay
   destination:
     server: https://kubernetes.default.svc
     namespace: openat
