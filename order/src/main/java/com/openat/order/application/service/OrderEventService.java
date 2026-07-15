@@ -6,6 +6,8 @@ import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
 import com.openat.order.application.port.OrderCompletedOutboxPort;
+import com.openat.order.application.event.StockAdjustment;
+import com.openat.order.application.event.StockAdjustmentReason;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderStatus;
@@ -15,6 +17,7 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.context.ApplicationEventPublisher;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +30,7 @@ public class OrderEventService {
     private final OrderHistoryRecorder orderHistoryRecorder;
     private final OrderCompletedOutboxPort orderCompletedOutboxPort;
     private final OrderSagaRecorder orderSagaRecorder;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Transactional
     public void handlePaymentCompleted(PaymentCompletedCommand command) {
@@ -49,6 +53,7 @@ public class OrderEventService {
                 eventSourceKey("payment-complete", command.orderId(), command.paymentId()));
         orderSagaRecorder.recordCompleted(order.getId());
         orderCompletedOutboxPort.save(order);
+        publishStockAdjustment(order, StockAdjustmentReason.COMPLETED);
     }
 
     @Transactional
@@ -84,6 +89,7 @@ public class OrderEventService {
 
         orderHistoryRecorder.record(order, before, "ORDER_REFUNDED", "환불 완료 이벤트 처리",
                 eventSourceKey("refund-completed", command.orderId(), command.refundId()));
+        publishStockAdjustment(order, StockAdjustmentReason.REFUNDED);
     }
 
     @Transactional
@@ -138,6 +144,14 @@ public class OrderEventService {
     private Order getOrder(UUID orderId) {
         return orderRepository.findById(orderId)
                 .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
+    }
+
+    private void publishStockAdjustment(Order order, StockAdjustmentReason reason) {
+        applicationEventPublisher.publishEvent(new StockAdjustment(
+                UUID.randomUUID(),
+                order.getDropId(),
+                order.getQuantity(),
+                reason));
     }
 
 }
