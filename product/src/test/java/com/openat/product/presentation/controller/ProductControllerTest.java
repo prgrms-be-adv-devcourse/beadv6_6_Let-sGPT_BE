@@ -16,9 +16,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openat.common.auth.UserHeaders;
 import com.openat.common.exception.BusinessException;
 import com.openat.common.exception.GlobalExceptionHandler;
 import com.openat.config.WebConfig;
+import com.openat.product.application.dto.ProductCreateCommand;
 import com.openat.product.application.dto.ProductInfo;
 import com.openat.product.application.usecase.ProductCommandUseCase;
 import com.openat.product.application.usecase.ProductQueryUseCase;
@@ -50,7 +52,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @DisplayName("상품 컨트롤러")
 class ProductControllerTest {
 
-  private static final String SELLER_ID_HEADER = "X-Seller-Id";
+  private static final String SELLER_ID_HEADER = UserHeaders.SELLER_ID;
+  private static final String MEMBER_ID_HEADER = UserHeaders.USER_ID;
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private ProductCommandUseCase productCommandUseCase;
@@ -62,8 +65,8 @@ class ProductControllerTest {
   class Create {
 
     @Test
-    @DisplayName("정상 요청이면 201과 Location 헤더를 반환한다")
-    void create_validRequest_returns201WithLocation() throws Exception {
+    @DisplayName("정상 요청이면 판매자 식별자를 바인딩하고 201과 Location 헤더를 반환한다")
+    void create_validRequest_bindsSellerIdAndReturns201WithLocation() throws Exception {
       // given
       UUID sellerId = UUID.randomUUID();
       UUID createdId = UUID.randomUUID();
@@ -78,6 +81,11 @@ class ProductControllerTest {
                   .content(objectMapper.writeValueAsString(validRequest())))
           .andExpect(status().isCreated())
           .andExpect(header().string("Location", endsWith("/api/v1/products/" + createdId)));
+
+      ArgumentCaptor<ProductCreateCommand> commandCaptor =
+          ArgumentCaptor.forClass(ProductCreateCommand.class);
+      then(productCommandUseCase).should().create(commandCaptor.capture());
+      assertThat(commandCaptor.getValue().sellerId()).isEqualTo(sellerId);
     }
 
     @Test
@@ -90,6 +98,25 @@ class ProductControllerTest {
       mockMvc
           .perform(
               post("/api/v1/products")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(request)))
+          .andExpect(status().isUnauthorized())
+          .andExpect(jsonPath("$.error").value("UNAUTHENTICATED"));
+      then(productCommandUseCase).should(never()).create(any());
+    }
+
+    @Test
+    @DisplayName("회원 식별 헤더만 있으면 401 UNAUTHENTICATED를 반환한다")
+    void create_onlyMemberHeader_returns401() throws Exception {
+      // given
+      UUID memberId = UUID.randomUUID();
+      ProductCreateRequest request = validRequest();
+
+      // when & then
+      mockMvc
+          .perform(
+              post("/api/v1/products")
+                  .header(MEMBER_ID_HEADER, memberId)
                   .contentType(MediaType.APPLICATION_JSON)
                   .content(objectMapper.writeValueAsString(request)))
           .andExpect(status().isUnauthorized())

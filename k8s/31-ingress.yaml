@@ -1,0 +1,37 @@
+# Ingress는 L7 라우팅만 담당 — 세부 인증/필터는 그대로 apigateway 몫(Q53-7 확정).
+# WS-F(7/10 observability plan) — cert-manager ClusterIssuer(k8s/40-cert-issuer.yaml)로
+# Let's Encrypt 발급 + HTTP→HTTPS 강제 리다이렉트(32-https-redirect-middleware.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: openat-ingress
+  namespace: openat
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: openat-redirect-https@kubernetescrd
+spec:
+  tls:
+    - hosts: [openat.duckdns.org]
+      secretName: openat-tls
+  rules:
+    - host: openat.duckdns.org
+      http:
+        paths:
+          # FE가 쓰는 API 경로 전부 apigateway로 (게이트웨이 라우트: /api/v1/**, /auth/jwks,
+          # 통합 스웨거는 게이트웨이 자신이 호스팅)
+          - path: /api
+            pathType: Prefix
+            backend: { service: { name: apigateway, port: { number: 8000 } } }
+          - path: /auth
+            pathType: Prefix
+            backend: { service: { name: apigateway, port: { number: 8000 } } }
+          - path: /swagger-ui
+            pathType: Prefix
+            backend: { service: { name: apigateway, port: { number: 8000 } } }
+          - path: /v3/api-docs
+            pathType: Prefix
+            backend: { service: { name: apigateway, port: { number: 8000 } } }
+          # 그 외 전부 FE 정적 서빙
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: frontend, port: { number: 80 } } }

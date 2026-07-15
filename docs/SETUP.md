@@ -49,19 +49,18 @@ docker compose up -d postgres kafka redis
 5개 모듈을 한 번에 컨테이너로 띄워서 통합 테스트할 때 사용. 직접 빌드하지 않고
 GHCR에 올라온 이미지를 받아서 실행한다.
 
+> ⚠️ **2026-07-10 레거시**: 아래 docker-compose 풀스택 실행은 k3s+ArgoCD 전환으로 더 이상 쓰지 않는다.
+> `docker-compose.full.yml`/`docker-compose.dev.yml`은 `legacy/`로 이동했다(참고용). 현재 통합/배포는 k3s(`k8s/`)로 한다.
+>
 > 예전에는 별도의 `dev` 프로필(`application-dev.yml`)로 분리돼 있었지만,
 > "GHCR 이미지를 받아 docker compose로 5개 모듈을 한 번에 띄운다"는 실행 방식 자체가
-> 로컬(`docker-compose.full.yml`)과 EC2 배포(`docker-compose.dev.yml`)에서 동일해서
+> 로컬(`legacy/docker-compose.full.yml`)과 EC2 배포(`legacy/docker-compose.dev.yml`)에서 동일해서
 > `compose` 프로필 하나로 합쳤다. 차이는 값의 출처뿐: 로컬은 `.env`, EC2 배포는 GitHub Secrets.
 
 ```bash
-# 1) 내가 수정한 코드를 dev 브랜치에 push
-#    -> ci.yml이 5개 모듈을 빌드해 ghcr.io/.../{module}:latest 로 푸시함
-# 2) 최초 1회: GHCR 로그인 (private 패키지인 경우)
+# (레거시) 최신 이미지 받아서 전체 기동
 docker login ghcr.io -u <github-id>   # PAT(read:packages) 필요
-
-# 3) 최신 이미지 받아서 전체 기동
-docker compose -f docker-compose.full.yml up
+docker compose -f legacy/docker-compose.full.yml up
 ```
 
 - 모든 서비스가 `image: ghcr.io/${GITHUB_REPOSITORY}/{module}:latest` + `pull_policy: always`로
@@ -119,7 +118,7 @@ ngrok http 9130
   별도 채널로 공유받아 채우고(테스트 키 한정 — 라이브 키는 이 방식으로 공유하지 않음), 깃에는
   올리지 않는다(`.env`는 gitignore 대상).
 - `payment` 모듈은 `application-local.yml`/`application-compose.yml`의 `pg.client-key`/`pg.secret-key`로
-  매핑되어 있고, `docker-compose.full.yml`/`docker-compose.dev.yml`의 `payment` 서비스
+  매핑되어 있고, `legacy/docker-compose.full.yml`/`legacy/docker-compose.dev.yml`(레거시)의 `payment` 서비스
   `environment:`에도 `PG_CLIENT_KEY`/`PG_SECRET_KEY`가 전달되도록 되어 있다.
 - `PAYMENT_FIELD_ENCRYPTION_KEY`는 `pgPaymentKey`/`pgRefundKey` 등 DB에 저장되는 PG 민감정보 컬럼을
   암호화(AES-GCM)하는 우리 쪽 자체 키다(토스가 준 키가 아님 — `PG_CLIENT_KEY`/`PG_SECRET_KEY`와는

@@ -26,7 +26,7 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: 'broker,controller'
       KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
-      KAFKA_LISTENERS: 'INTERNAL://kafka:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://kafka:9093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093'
       KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9092,EXTERNAL://localhost:29092'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
@@ -39,6 +39,21 @@ services:
       resources:
         limits:
           memory: 700M
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.5
+    container_name: local-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    deploy:
+      resources:
+        limits:
+          memory: 1000M
+    restart: always
 
   redis:
     image: redis:7-alpine
@@ -62,6 +77,21 @@ services:
       - "8081:8081"
     depends_on:
       - redis
+    restart: always
+
+  # Kafka 토픽/컨슈머 그룹/메시지를 브라우저에서 확인하기 위한 웹 UI(redis-commander와 같은 취지).
+  # 같은 compose 네트워크 안이라 내부 리스너(kafka:9092)로 접속 — 브로커의 EXTERNAL 리스너(29092,
+  # 호스트에서 bootRun하는 서비스용)와는 별개.
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: local-kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "8090:8080"
+    depends_on:
+      - kafka
     restart: always
 
 volumes:

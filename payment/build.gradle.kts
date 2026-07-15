@@ -4,6 +4,8 @@ dependencies {
     //kafka
     implementation("org.springframework.kafka:spring-kafka")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+    // Prometheus 메트릭 노출 (버전은 micrometer-bom 관리)
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
     testImplementation("org.springframework.kafka:spring-kafka-test")
     //flyway (payment 모듈 단독 마이그레이션 — 6개 엔티티의 테이블 생성)
     // Spring Boot 4.x는 Flyway 자동설정이 별도 모듈로 분리되어, DB 드라이버(flyway-database-postgresql)만으론 부트 시점에 실행되지 않음
@@ -13,6 +15,10 @@ dependencies {
     implementation("com.github.f4b6a3:uuid-creator:5.3.3")
     // Spring Boot 4.x는 Kafka 자동설정(@KafkaListener 등록 등)도 별도 모듈로 분리됨(flyway와 같은 이유)
     implementation("org.springframework.boot:spring-boot-kafka")
+    // Spring Boot 4.x는 RestClient 자동설정(RestClient.Builder 빈, 트레이스 계측 포함)도 별도 모듈로
+    // 분리됨(flyway/kafka와 같은 이유) — 없으면 OrderClientConfig/TossClientConfig의
+    // RestClient.Builder 주입이 실패해 real 프로필 기동이 깨짐(7-15 research)
+    implementation("org.springframework.boot:spring-boot-restclient")
 }
 
 tasks.withType<Test> {

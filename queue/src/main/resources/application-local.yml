@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/openat   # 로컬 도커 DB
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  kafka:
+    bootstrap-servers: localhost:29092   # 호스트에서 직접 뜨는 모듈은 EXTERNAL 리스너로 접속(SETUP.md 참고)
+
+# Phase B: 총재고(GET /drops/{dropId}) 1회 조회용 - order 모듈의 Feign 관례와 동일한 값.
+services:
+  product:
+    url: http://localhost:9110

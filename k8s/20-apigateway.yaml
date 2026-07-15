@@ -1,0 +1,67 @@
+# ★ S2: startup/readiness/liveness probe (actuator probes — replica>1 롤링 무유실의 전제)
+# ★ S5: prometheus.io/* 어노테이션 (7/10 Prometheus 구축 시 재배포 없이 scrape 대상 편입)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apigateway
+  namespace: openat
+  annotations:
+    # k3s_node_coldboot_contention_plan §2-C: 7서비스 동시배포(트리거 A) 방지 — ArgoCD가
+    # wave 순서(낮은 값 먼저, 이전 wave 헬스 확인 후 다음 진행)로만 apply하게 강제.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  replicas: 1
+  # 단일 워커 노드: 롤링 시 옛+새 파드 2배 메모리로 Insufficient memory Pending(Q80 #7) 방지.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: apigateway }
+  template:
+    metadata:
+      labels: { app: apigateway }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: apigateway
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway:latest
+          ports: [{ containerPort: 8000 }]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: app-secrets }
+          env:
+            # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 고정 Xmx 제거, limit 비례 힙(WebFlux
+            # 오프힙 감안 비율 최저 50%) + InitialRAMPercentage(콜드부트 GC 빈발 절충) + metaspace/codecache 캡.
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=50.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+          # 기동 완료까지 최대 300초 유예(2vCPU에서 6개 JVM 동시 부팅 + kubelet/kube 예약 감안, 실측 최악 251s) — 이후 liveness로 전환. k3s_node_coldboot_contention_plan §2-B/§2-A 동시 적용 전제
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8000 }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 8000 }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8000 }
+            periodSeconds: 10
+            timeoutSeconds: 3    # k3s_memory_mitigation_plan §4(WS-M3) — GC pause/CPU 기아 오탐 흡수
+            failureThreshold: 5  # 3→5, kill 유예 30s→50s
+          resources:
+            limits: { memory: "256Mi" }
+            requests: { cpu: "100m", memory: "192Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apigateway
+  namespace: openat
+spec:
+  selector: { app: apigateway }
+  ports: [{ port: 8000, targetPort: 8000 }]

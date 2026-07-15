@@ -1,0 +1,99 @@
+# WS-D(7/10 observability plan) — Grafana. 시연/본인용이라 Ingress 미노출(port-forward 원칙,
+# 외부 노출 최소화 — 7/11 보안작업과 함께 재론). admin 비밀번호는 하드코딩 금지(create-secrets.sh
+# 참고) — "실패는 시끄럽게" 원칙상 Secret 미존재 시 파드가 뜨지 않는 편이 낫다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: observability
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: "http://prometheus:9090"
+        isDefault: true
+      - name: Tempo
+        type: tempo
+        access: proxy
+        url: "http://tempo:3200"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  namespace: observability
+data:
+  providers.yaml: |
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: ""
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  replicas: 1
+  # k3s_memory_mitigation_plan §9-7 구현기 — 기본 25% surge 전략은 final 노드에
+  # 여유가 없을 때 신규 파드 스케줄링 자체가 막혀 롤아웃이 Pending으로 정지함(실사고).
+  # 앱 7종과 동일하게 maxSurge:0으로 구파드 먼저 내리고 새 파드를 띄우게 강제.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: grafana }
+  template:
+    metadata:
+      labels: { app: grafana }
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.6.16
+          ports: [{ containerPort: 3000 }]
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom: { secretKeyRef: { name: grafana-admin, key: admin-user } }
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: grafana-admin, key: admin-password } }
+          readinessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            # k3s_memory_mitigation_plan §9-7 — final limit 재분배. live 143Mi 대비 여유 축소(victim #1 유지).
+            limits: { memory: "176Mi" }
+            requests: { cpu: "30m", memory: "128Mi" }  # k3s_memory_mitigation_plan §7-2 — 의도적 usage>request(eviction victim #1)
+          volumeMounts:
+            - { name: datasources, mountPath: /etc/grafana/provisioning/datasources }
+            - { name: dashboard-providers, mountPath: /etc/grafana/provisioning/dashboards }
+            - { name: dashboard-jvm, mountPath: /var/lib/grafana/dashboards }
+      volumes:
+        - name: datasources
+          configMap: { name: grafana-datasources }
+        - name: dashboard-providers
+          configMap: { name: grafana-dashboard-providers }
+        - name: dashboard-jvm
+          configMap: { name: grafana-dashboard-jvm }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  selector: { app: grafana }
+  ports: [{ port: 3000, targetPort: 3000 }]

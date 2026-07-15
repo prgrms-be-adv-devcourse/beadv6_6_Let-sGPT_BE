@@ -1,5 +1,6 @@
 package com.openat.payment.infrastructure.persistence.entity;
 
+import com.openat.payment.domain.model.PgReconStatus;
 import com.openat.payment.domain.model.Refund;
 import com.openat.payment.infrastructure.persistence.converter.EncryptedStringConverter;
 import jakarta.persistence.Column;
@@ -62,9 +63,17 @@ public class RefundJpaEntity {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
+    // PG 대사(WS-0) — 정산 대사 일별 API는 이 값이 MATCHED인 행만 노출한다.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "pg_recon_status", nullable = false, length = 20)
+    private PgReconStatus pgReconStatus;
+
+    @Column(name = "pg_reconciled_at")
+    private LocalDateTime pgReconciledAt;
+
     private RefundJpaEntity(UUID id, UUID paymentId, Long amount, Refund.Status status, String reason,
             String pgRefundKey, String idempotencyKey, String requestHash, LocalDateTime completedAt,
-            LocalDateTime createdAt) {
+            LocalDateTime createdAt, PgReconStatus pgReconStatus, LocalDateTime pgReconciledAt) {
         this.id = id;
         this.paymentId = paymentId;
         this.amount = amount;
@@ -75,13 +84,15 @@ public class RefundJpaEntity {
         this.requestHash = requestHash;
         this.completedAt = completedAt;
         this.createdAt = createdAt;
+        this.pgReconStatus = pgReconStatus;
+        this.pgReconciledAt = pgReconciledAt;
     }
 
     public static RefundJpaEntity fromDomain(Refund refund) {
         return new RefundJpaEntity(
                 refund.getId(), refund.getPaymentId(), refund.getAmount(), refund.getStatus(), refund.getReason(),
                 refund.getPgRefundKey(), refund.getIdempotencyKey(), refund.getRequestHash(),
-                refund.getCompletedAt(), refund.getCreatedAt());
+                refund.getCompletedAt(), refund.getCreatedAt(), refund.getPgReconStatus(), refund.getPgReconciledAt());
     }
 
     public Refund toDomain() {
@@ -96,6 +107,8 @@ public class RefundJpaEntity {
                 .requestHash(requestHash)
                 .completedAt(completedAt)
                 .createdAt(createdAt)
+                .pgReconStatus(pgReconStatus)
+                .pgReconciledAt(pgReconciledAt)
                 .build();
     }
 }

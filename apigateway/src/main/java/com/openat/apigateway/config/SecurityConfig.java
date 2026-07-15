@@ -5,7 +5,6 @@ import com.openat.common.error.CommonErrorCode;
 import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -22,6 +21,7 @@ import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.security.web.server.ServerAuthenticationEntryPoint;
 import org.springframework.security.web.server.authorization.AuthorizationContext;
 import org.springframework.security.web.server.authorization.ServerAccessDeniedHandler;
+import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatchers;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
@@ -38,6 +38,26 @@ public class SecurityConfig {
     }
 
     /**
+     * Public search requests must bypass resource-server authentication completely.
+     *
+     * <p>{@code permitAll()} skips authorization only. An expired Bearer token saved by Swagger
+     * can otherwise be rejected with 401 before the authorization rule is evaluated.</p>
+     */
+    @Bean
+    @Order(0)
+    public SecurityWebFilterChain publicSearchSecurityWebFilterChain(
+            ServerHttpSecurity http,
+            CorsConfigurationSource corsConfigurationSource
+    ) {
+        http
+                .securityMatcher(ServerWebExchangeMatchers.pathMatchers("/api/v1/searchs/**"))
+                .cors(cors -> cors.configurationSource(corsConfigurationSource))
+                .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .authorizeExchange(exchange -> exchange.anyExchange().permitAll());
+        return http.build();
+    }
+
+    /**
      * Spring Boot가 {@code spring.security.oauth2.resourceserver.jwt.*} 설정만 보고
      * "reactiveJwtSecurityFilterChain"이라는 기본 체인을 추가로 자동 등록하는데, 이 체인은
      * CORS/permitAll 목록 등 우리가 정의한 규칙을 전혀 모른 채 그냥 "인증됐는지"만 본다.
@@ -48,7 +68,7 @@ public class SecurityConfig {
      * (라우트 존재 여부 체크는 더 이상 이 체인에 끼워넣지 않는다 — {@link RouteExistenceFilter} 참고.)
      */
     @Bean
-    @Order(Ordered.HIGHEST_PRECEDENCE)
+    @Order(1)
     public SecurityWebFilterChain securityWebFilterChain(
             ServerHttpSecurity http,
             CorsConfigurationSource corsConfigurationSource
@@ -79,6 +99,10 @@ public class SecurityConfig {
 
                         // member 공개 기능 (JWKS)
                         .pathMatchers("/auth/jwks").permitAll()
+
+                        // k8s readiness/liveness probe + Prometheus scrape — 클러스터 내부 전용
+                        // (Ingress는 /와 /api만 라우팅하므로 외부에 노출되지 않는 경로)
+                        .pathMatchers("/actuator/health/**", "/actuator/prometheus").permitAll()
 
                         // payment 웹훅 — Toss PG가 JWT 없이 직접 호출 (apigateway/docs/SECURITY_CONFIG_GUIDE.md 패턴)
                         // payment 라우트가 Path=/payment/**+StripPrefix=1(product/order/settlement와 동일 컨벤션,
@@ -163,10 +187,10 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOriginPatterns(List.of("http://localhost:*", "https://localhost:*"));
+        configuration.setAllowedOriginPatterns(List.of("*"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
-        configuration.setAllowCredentials(true);
+        configuration.setAllowCredentials(false);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

@@ -1,0 +1,62 @@
+name: Security Scan (Snyk)
+
+# PR마다 돌리지 않는다(과함) — 주 2회 정기 스캔 + 수동 실행. 전 항목 비차단(경고만) 시작.
+# 4종 전수: Open Source(의존성)·Code(SAST)·IaC(terraform/k8s 미스컨픽)·Container(이미지 base/OS).
+# 선행: 리포 시크릿 SNYK_TOKEN(무료). 없으면 auth 실패하지만 job은 녹색 유지.
+on:
+  schedule:
+    - cron: "0 0 * * 1"   # 매주 월 00:00 UTC = 09:00 KST
+    - cron: "0 0 * * 4"   # 매주 목 00:00 UTC = 09:00 KST
+  workflow_dispatch:
+
+jobs:
+  snyk:
+    runs-on: ubuntu-latest
+    continue-on-error: true      # 비차단: 취약점 발견돼도 워크플로 실패로 안 만든다
+    permissions:
+      contents: read
+      packages: read             # Container 스캔용 GHCR pull
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - uses: snyk/actions/setup@master
+
+      - name: Snyk Open Source (의존성 취약점 · SCA)
+        continue-on-error: true
+        run: snyk test --all-projects --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Snyk Code (SAST · 코드 정적분석)
+        continue-on-error: true
+        run: snyk code test --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Snyk IaC (terraform · k8s 미스컨픽)
+        continue-on-error: true
+        run: snyk iac test terraform/ k8s/ --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: GHCR 로그인 (Container 스캔용)
+        continue-on-error: true
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Snyk Container (빌드 이미지 base/OS 취약점)
+        continue-on-error: true
+        run: |
+          REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          for svc in apigateway member product order payment settlement search; do
+            echo "::group::snyk container test $svc"
+            snyk container test "$REPO/$svc:latest" --severity-threshold=high || true
+            echo "::endgroup::"
+          done
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}

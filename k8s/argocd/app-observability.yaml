@@ -1,0 +1,20 @@
+# 관측 스택(Prometheus/Grafana/Tempo/postgres_exporter) 전용 Application CR.
+# targetRevision=main — 이미지 SHA 핀이 필요 없는 정적 인프라 애드온이라 openat(deploy/state
+# 추적) Application과 분리해 main을 직추적한다(plan 결정-1 (a) — research §2).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/prgrms-be-adv-devcourse/beadv6_6_Let-sGPT_BE
+    targetRevision: main
+    path: k8s/observability
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=false]

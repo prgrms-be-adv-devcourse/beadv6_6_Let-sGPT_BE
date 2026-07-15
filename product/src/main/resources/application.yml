@@ -47,6 +47,26 @@ product:
   image:
     local-dir: ${PRODUCT_IMAGE_DIR:${user.home}/.openat/product-images} # 부팅 서버 로컬 저장 (TODO final: AWS S3 전환)
   kafka:
-    topic: # member 발행 스토어 이벤트 소비(SellerStore 표시명 투영). 발행 측 토픽명은 member 와 합의 필요.
+    topic:
+      product-created: product.created.events
+      product-updated: product.updated.events
+      product-deleted: product.deleted.events
+      # member 발행 스토어 이벤트 소비(SellerStore 표시명 투영). 발행 측 토픽명은 member 와 합의 필요.
       seller-registered: seller_registered_events
       seller-updated: seller_updated_events
+
+
+# k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화
+  tracing:
+    export:
+      otlp:
+        enabled: false   # 로컬/compose 기본 off — Tempo 없으면 export 실패가 반복 로깅됨(k8s ConfigMap에서 true로 override)

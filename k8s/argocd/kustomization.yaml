@@ -1,0 +1,22 @@
+# ArgoCD 자체 설치 kustomization. k8s/(앱 매니페스트) kustomization 과 완전히 분리된 디렉토리 —
+# openat Application(source.path=k8s)이 이 디렉토리를 sync 대상으로 삼지 않도록
+# k8s/kustomization.yaml 의 resources 에는 절대 넣지 않는다.
+#
+# 설치본은 원격 install.yaml URL 이 아니라 helm 렌더 산출물(argocd-install.yaml, 로컬 정적 파일)이다.
+# 설정 변경은 helm/values.yaml 에서 하고 `bash helm/render.sh`(또는 CI argocd-render.yml)로 재생성한다.
+# 이전의 원격 URL + delete-extras.yaml + patch-resources.yaml 손패치 구조는 폐기(k3s_memory_mitigation_plan §9-12, C안).
+# → repo-server 가 sync 마다 원격 대용량 매니페스트를 fetch/렌더하던 부하(§9-11 OOM 근원)를 제거,
+#   observability/openat 와 동일하게 로컬 정적 파일만 읽는다.
+#
+# 최초 설치만 수동: kubectl apply -k k8s/argocd/ --server-side --force-conflicts (서버 노드, kubeconfig 필요 —
+# 닭-달걀, qna.md Q92-3). 그 이후부턴 app-argocd.yaml(self-management Application)이 이 디렉토리를 auto-sync.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+
+resources:
+  - 00-namespace.yaml
+  - argocd-install.yaml       # helm 렌더 산출물(argo-cd chart 10.1.2 / ArgoCD v3.4.4) — 직접 수정 금지
+  - app-openat.yaml
+  - app-observability.yaml
+  - app-argocd.yaml

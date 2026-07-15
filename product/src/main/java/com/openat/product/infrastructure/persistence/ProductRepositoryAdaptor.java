@@ -4,9 +4,13 @@ import com.openat.product.domain.model.Product;
 import com.openat.product.domain.model.QProduct;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.domain.repository.ProductSearchCondition;
+import com.openat.product.domain.repository.ProductTombstone;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.jpa.impl.JPAQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -66,7 +70,41 @@ public class ProductRepositoryAdaptor implements ProductRepository {
   }
 
   @Override
+  public List<Product> searchChangedAliveSince(Instant changedAfter) {
+    QProduct product = QProduct.product;
+    return queryFactory
+        .selectFrom(product)
+        .leftJoin(product.category)
+        .fetchJoin()
+        .where(product.updatedAt.gt(changedAfter))
+        .fetch();
+  }
+
+  @Override
+  public List<ProductTombstone> searchTombstonesSince(Instant changedAfter) {
+    return productJpaRepository.searchTombstonesSince(changedAfter).stream()
+        .map(row -> new ProductTombstone(toUuid(row[0]), toInstant(row[1])))
+        .toList();
+  }
+
+  @Override
   public void delete(Product product) {
     productJpaRepository.delete(product);
+  }
+
+  private static UUID toUuid(Object value) {
+    if (value instanceof UUID uuid) {
+      return uuid;
+    }
+    return UUID.fromString(value.toString());
+  }
+
+  private static Instant toInstant(Object value) {
+    return switch (value) {
+      case Instant instant -> instant;
+      case OffsetDateTime offsetDateTime -> offsetDateTime.toInstant();
+      case Timestamp timestamp -> timestamp.toInstant();
+      default -> throw new IllegalStateException("지원하지 않는 삭제 시각 타입: " + value.getClass().getName());
+    };
   }
 }

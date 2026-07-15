@@ -202,13 +202,15 @@ docker compose up -d postgres kafka redis
 
 > 최초로 띄울 때 `db/init/01-schemas.sql`이 `openat` DB에 서비스별 스키마 5개를 자동으로 만든다.
 
-### 2) 전체 스택 통합 — `compose` 프로필
+### 2) 전체 스택 통합 — `compose` 프로필 (⚠️ 레거시, k3s로 대체됨)
 
-GHCR에 올라온 이미지를 받아 5개 모듈을 한 번에 띄운다.
+> 2026-07-10: k3s+ArgoCD 전환으로 이 docker-compose 풀스택 경로는 **더 이상 쓰지 않는다.**
+> 파일은 `legacy/`로 이동했다(참고용). 현재 배포/통합은 k3s(`k8s/`) + CD(`deploy.yml`)로 한다.
 
 ```bash
+# (레거시) GHCR 이미지를 받아 한 번에 띄우던 방식
 docker login ghcr.io -u <github-id>          # 최초 1회 (PAT: read:packages)
-docker compose -f docker-compose.full.yml up
+docker compose -f legacy/docker-compose.full.yml up
 ```
 
 ### API 문서

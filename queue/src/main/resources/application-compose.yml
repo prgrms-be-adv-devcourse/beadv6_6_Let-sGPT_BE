@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}
+    username: ${DB_USER}                       # GitHub Secrets → 환경변수
+    password: ${DB_PASSWORD}
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKER}
+
+# Phase B: 총재고(GET /drops/{dropId}) 1회 조회용 - order 모듈의 Feign 관례와 동일한 값.
+services:
+  product:
+    url: http://product:9110

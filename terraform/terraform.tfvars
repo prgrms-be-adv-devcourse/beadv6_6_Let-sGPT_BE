@@ -18,10 +18,10 @@ ec2_instances = {
     instance_type    = "t3.large"
     root_volume_size = 50
   }
-  # final = {
-  #   instance_type    = "t3.medium"
-  #   root_volume_size = 50
-  # }
+  final = {
+    instance_type    = "t3.medium"
+    root_volume_size = 50
+  }
 }
 
 deployer_user = "deployer"

@@ -1,0 +1,60 @@
+# final 노드(t3.medium, tier=observability) 전용 배치 — Q74 결론(c4_model_diagrams.md §2~3).
+# semi(hotpath) 노드는 이미 메모리 여유가 없어 여기 배치하면 안 됨.
+# 이미지/JVM 옵션은 legacy/docker-compose.dev.yml(레거시)의 elasticsearch 서비스와 동일하게 맞춤.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: openat
+spec:
+  serviceName: elasticsearch
+  replicas: 1
+  selector:
+    matchLabels: { app: elasticsearch }
+  template:
+    metadata:
+      labels: { app: elasticsearch }
+    spec:
+      nodeSelector: { tier: observability }
+      tolerations:
+        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: elasticsearch
+          # WS-G(7/10 observability plan) — nori 포함 커스텀 이미지(k8s/images/elasticsearch-nori/).
+          # 태그는 베이스 ES 버전과 반드시 동일(플러그인-ES 버전 정합 필수).
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/elasticsearch-nori:9.2.5
+          env:
+            - { name: discovery.type, value: single-node }
+            - { name: xpack.security.enabled, value: "false" }
+            - { name: xpack.ml.enabled, value: "false" }
+            - { name: ES_JAVA_OPTS, value: "-Xms768m -Xmx768m" }
+          ports: [{ containerPort: 9200 }]
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "curl -sf http://localhost:9200/_cluster/health"]
+            periodSeconds: 10
+            timeoutSeconds: 5   # k3s_memory_mitigation_plan §4 — 압박 시 오탐 연쇄 실패 소음 제거
+            failureThreshold: 12
+          resources:
+            # k3s_memory_mitigation_plan §9-1(A안 확정: bbq_hnsw 이진양자화+1536차원 유지, float32 저장) —
+            # dense_vector kNN 오프힙 여유분 반영해 상향. final 노드 limit 총예산 재분배는 §9-7 참고.
+            limits: { memory: "1500Mi" }
+            requests: { cpu: "100m", memory: "1350Mi" }
+          volumeMounts:
+            - { name: es-data, mountPath: /usr/share/elasticsearch/data }
+  volumeClaimTemplates:
+    - metadata: { name: es-data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: openat
+spec:
+  selector: { app: elasticsearch }
+  ports: [{ port: 9200, targetPort: 9200 }]

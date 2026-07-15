@@ -38,7 +38,8 @@ data "aws_iam_policy_document" "ec2_s3_access" {
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["${var.s3_app_prefix}*"]
+      # app/ = 유저 데이터, ops/ = 운영 산출물(k3s 매니페스트 등). 둘 다 least-privilege 유지.
+      values = ["${var.s3_app_prefix}*", "${var.s3_ops_prefix}*"]
     }
   }
 
@@ -50,7 +51,10 @@ data "aws_iam_policy_document" "ec2_s3_access" {
       "s3:PutObject",
       "s3:DeleteObject",
     ]
-    resources = ["${aws_s3_bucket.this.arn}/${var.s3_app_prefix}*"]
+    resources = [
+      "${aws_s3_bucket.this.arn}/${var.s3_app_prefix}*",
+      "${aws_s3_bucket.this.arn}/${var.s3_ops_prefix}*",
+    ]
   }
 }
 
@@ -75,6 +79,7 @@ resource "aws_iam_instance_profile" "ec2" {
   role = aws_iam_role.ec2.name
 }
 
-# GitHub Actions OIDC(provider/role/policy)는 deploy.yml이 self-hosted runner 방식으로
-# 전환되면서 더 이상 GitHub Actions가 직접 AWS API를 호출하지 않게 되어 제거함
-# (plan.md §O). runner는 이미 EC2 위에서 실행되므로 AWS 인증 자체가 불필요.
+# deploy.yml용 GitHub Actions OIDC는 self-hosted runner(EC2 인스턴스 프로파일) 전환으로 제거했다
+# (plan.md §O — 배포 러너는 EC2 위라 AWS 인증 불필요).
+# 단, terraform-plan CI는 GitHub-hosted라 인스턴스 프로파일이 없어 OIDC가 필요 → 별도로
+# `github-oidc.tf`에 **읽기 전용(plan)** 스코프의 OIDC provider+Role을 재도입했다(배포와 무관).

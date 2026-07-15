@@ -37,3 +37,24 @@ jwt:
   refresh-token-expire-seconds: 1209600   # 14일
   issuer: ${JWT_ISSUER:http://localhost:9100}
   scoped-token-expire-seconds: 120        # RFC 8693 scoped 토큰 단명(2분)
+
+# 찜 변경 이벤트(생성/삭제) — 아웃박스가 발행, order가 소비.
+member:
+  kafka:
+    topic:
+      wishlist-changed: wishlist.changed.events
+
+# k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화
+  tracing:
+    export:
+      otlp:
+        enabled: false   # 로컬/compose 기본 off — Tempo 없으면 export 실패가 반복 로깅됨(k8s ConfigMap에서 true로 override)

@@ -1,0 +1,51 @@
+# 이미지 desired-state 단일 출처(Q81-3). 각 *.yaml은 무수정 — image 필드는 풀 경로 그대로 두고,
+# 여기 images: 트랜스포머가 name 매칭으로 태그만 override 한다("투명성 우선" 유지).
+# CD(deploy.yml)가 변경된 서비스의 newTag만 커밋 SHA로 갱신 후 deploy/state 브랜치에 커밋백.
+# main의 이 파일 newTag(latest)는 최초 apply용 placeholder — 실제 배포는 deploy/state의 SHA pin.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: openat
+
+resources:
+  - 00-namespace.yaml
+  - 01-configmap.yaml
+  - 10-postgres.yaml
+  - 11-kafka.yaml
+  - 12-redis.yaml
+  - 13-elasticsearch.yaml
+  - 20-apigateway.yaml
+  - 21-member.yaml
+  - 22-product.yaml
+  - 23-order.yaml
+  - 24-payment.yaml
+  - 25-settlement.yaml
+  - 26-search.yaml
+  - 27-queue.yaml
+  - 30-frontend.yaml
+  - 31-ingress.yaml
+  - 32-https-redirect-middleware.yaml
+  # ClusterIssuer(cert-manager)는 여기 없음 — kustomize의 namespace 트랜스포머가 CRD의 스코프를
+  # 모르고 cluster-scoped 리소스에도 namespace: openat을 강제로 찍어버리는 걸 kustomize build로
+  # 실사 확인(ClusterRole 등 built-in 종류는 안 찍히지만 CRD는 찍힘). k8s/bootstrap/40-cert-issuer.yaml로
+  # 분리해 1회성 kubectl apply -f로 적용(cert-manager 설치와 동일한 성격의 클러스터 인프라).
+
+images:
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/search
+    newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
+    newTag: latest
+  # FE는 :latest 미발행(CI가 SHA로만 태깅) → 현행 SHA 핀 유지.
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
+    newTag: "1951fa78ce805c1e1b3a6bd49f15e503e78df55d"

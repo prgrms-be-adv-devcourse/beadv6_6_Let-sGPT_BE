@@ -1,19 +1,10 @@
-plugins {
-    id("com.diffplug.spotless") version "7.0.2"
-}
-
-spotless {
-    java {
-        target("src/**/*.java")
-        googleJavaFormat("1.25.2")
-        removeUnusedImports()
-    }
-}
-
 dependencies {
     implementation(project(":common"))
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
+    // k8s readiness/liveness probe + Prometheus 메트릭 노출 (버전은 Boot BOM/micrometer-bom 관리)
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
     // querydsl (openfeign fork - hibernate 7 / jakarta)
     implementation("io.github.openfeign.querydsl:querydsl-jpa:7.0")
     annotationProcessor("io.github.openfeign.querydsl:querydsl-apt:7.0:jakarta")

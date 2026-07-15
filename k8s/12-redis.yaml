@@ -1,0 +1,36 @@
+# 영속성 불필요(리프레시 토큰은 TTL 있음) → PVC 없는 Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: openat
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: redis }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # k3s_memory_mitigation_plan.md §5(WS-M4) — maxmemory 미설정 시 커지면 유예 없이
+          # OOMKill. noeviction(기본 정책) 유지 = 가득 차면 쓰기 에러로 시끄럽게 실패.
+          args: ["redis-server", "--maxmemory", "200mb"]
+          ports: [{ containerPort: 6379 }]
+          readinessProbe:
+            tcpSocket: { port: 6379 }
+            periodSeconds: 5
+          resources:
+            limits: { memory: "256Mi" }
+            requests: { cpu: "50m", memory: "128Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: openat
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379, targetPort: 6379 }]

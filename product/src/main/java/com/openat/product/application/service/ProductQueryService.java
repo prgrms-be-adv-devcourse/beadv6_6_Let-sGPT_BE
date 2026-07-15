@@ -1,13 +1,18 @@
 package com.openat.product.application.service;
 
 import com.openat.common.exception.BusinessException;
+import com.openat.product.application.dto.ProductChangeInfo;
 import com.openat.product.application.dto.ProductInfo;
 import com.openat.product.application.usecase.ProductQueryUseCase;
 import com.openat.product.domain.error.ProductErrorCode;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.domain.repository.ProductSearchCondition;
+import com.openat.product.domain.repository.ProductTombstone;
 import com.openat.seller.application.usecase.SellerStoreQueryUseCase;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -15,6 +20,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -52,6 +58,30 @@ public class ProductQueryService implements ProductQueryUseCase {
             productPage.getContent().stream().map(Product::getSellerId).toList());
     return productPage.map(
         product -> ProductInfo.from(product, storeNames.get(product.getSellerId())));
+  }
+
+  @Override
+  @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+  public List<ProductChangeInfo> searchChanges(Instant changedAfter) {
+    List<Product> changedProducts = productRepository.searchChangedAliveSince(changedAfter);
+    List<ProductTombstone> tombstones = productRepository.searchTombstonesSince(changedAfter);
+
+    Map<UUID, String> storeNames =
+        sellerStoreQueryUseCase.findStoreNames(
+            changedProducts.stream().map(Product::getSellerId).toList());
+
+    List<ProductChangeInfo> changes = new ArrayList<>();
+    for (Product product : changedProducts) {
+      String sellerName = storeNames.get(product.getSellerId());
+      changes.add(ProductChangeInfo.upsert(product, sellerName, changedAfter));
+    }
+    for (ProductTombstone tombstone : tombstones) {
+      changes.add(ProductChangeInfo.deletion(tombstone));
+    }
+
+    changes.sort(
+        Comparator.comparing(ProductChangeInfo::changedAt).thenComparing(ProductChangeInfo::id));
+    return changes;
   }
 
   private Product getProductOrThrow(UUID id) {

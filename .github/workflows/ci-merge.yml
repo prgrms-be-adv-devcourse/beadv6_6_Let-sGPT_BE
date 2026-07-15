@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      k8s_changed: ${{ steps.k8sfilter.outputs.k8s }}
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +28,19 @@ jobs:
             payment: ['**/payment/**']
             product: ['**/product/**']
             settlement: ['**/settlement/**']
+            search: ['**/search/**']
+            queue: ['**/queue/**']
+
+      # 매니페스트(k8s/**) 변경은 "빌드 매트릭스"와 분리해 감지한다 — 이건 빌드 대상이 아니라
+      # deploy/state(GitOps desired-state) 전파 트리거이기 때문. 위 filter에 같이 넣으면
+      # changes 목록에 'k8s'가 섞여 매트릭스가 그걸 서비스로 오인해 빌드하려다 깨진다(Q100 갭 수정,
+      # plan 7-11-gitops_manifest_propagation §2). deploy.yml이 이 플래그로 매니페스트-only
+      # 변경도 deploy/state에 merge+push 하도록 판단한다.
+      - uses: dorny/paths-filter@v3
+        id: k8sfilter
+        with:
+          filters: |
+            k8s: ['k8s/**']
 
       # common(또는 루트 빌드 설정)이 바뀌면 전 모듈에 영향이 가므로 5개 다 빌드,
       # 그 외에는 실제로 변경된 모듈 폴더만 매트릭스에 세팅. dev/main 동일 로직 —
@@ -36,21 +50,27 @@ jobs:
         id: set-matrix
         run: |
           if [ "${{ steps.filter.outputs.common }}" = "true" ]; then
-            echo 'matrix=["apigateway","member","order","payment","product","settlement"]' >> "$GITHUB_OUTPUT"
+            echo 'matrix=["apigateway","member","order","payment","product","settlement","search","queue"]' >> "$GITHUB_OUTPUT"
           else
             echo 'matrix=${{ steps.filter.outputs.changes }}' >> "$GITHUB_OUTPUT"
           fi
 
-      # main의 매트릭스만 CD(deploy.yml)에 전달 — dev는 배포 대상이 아니라 불필요.
-      - name: Export matrix artifact for CD (main only)
+      # main의 매트릭스 + 매니페스트 변경 플래그를 CD(deploy.yml)에 전달 — dev는 배포 대상 아니라 불필요.
+      # deploy-k8s.txt: k8s/** 변경 여부(true/false). 매트릭스가 []여도 이 값이 true면 deploy.yml이
+      # deploy/state에 매니페스트 merge+push를 수행한다(Q100 갭 수정).
+      - name: Export deploy metadata for CD (main only)
         if: github.ref_name == 'main'
-        run: echo '${{ steps.set-matrix.outputs.matrix }}' > deploy-matrix.json
+        run: |
+          echo '${{ steps.set-matrix.outputs.matrix }}' > deploy-matrix.json
+          echo '${{ steps.k8sfilter.outputs.k8s }}' > deploy-k8s.txt
 
       - uses: actions/upload-artifact@v4
         if: github.ref_name == 'main'
         with:
           name: deploy-matrix
-          path: deploy-matrix.json
+          path: |
+            deploy-matrix.json
+            deploy-k8s.txt
           retention-days: 1
 
   build-and-push:
@@ -68,6 +88,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # Spotless ratchetFrom(origin/dev) 비교용 전체 히스토리
 
       - uses: actions/setup-java@v4
         with:
@@ -75,11 +97,18 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
+      # 포맷 검사(비차단). 팀 컨벤션 합의 후 continue-on-error 제거 → 차단 전환.
+      - name: Spotless (${{ matrix.service }}, non-blocking)
+        continue-on-error: true
+        run: |
+          git fetch --no-tags origin dev:refs/remotes/origin/dev || true
+          ./gradlew :${{ matrix.service }}:spotlessCheck
+
       # member/order/payment/product/settlement는 루트 멀티모듈 빌드의 서브프로젝트라
       # 각자 gradlew가 없으므로 루트 wrapper로 해당 서브프로젝트만 빌드.
       # 아직 테스트 코드가 없어 실제 DB/Kafka/Redis 연결은 일어나지 않는다 - 여기서는
       # compose 프로필의 ${...} placeholder가 풀리지 않아 빌드가 깨지는 것만 방지하면 된다.
-      # 실제 인프라 연동 검증은 docker-compose.full.yml(2번, Local Full Stack)에서 수행.
+      # 실제 인프라 연동 검증은 k3s(k8s/) 배포 후 스모크(scripts/smoke-drop-order.sh)에서 수행.
       - name: Build ${{ matrix.service }}
         env:
           SPRING_PROFILES_ACTIVE: compose
@@ -91,7 +120,7 @@ jobs:
           KAFKA_BROKER: ${{ fromJson(vars.CI_VARS).KAFKA_BROKER }}
           REDIS_HOST: ${{ fromJson(vars.CI_VARS).REDIS_HOST }}
           REDIS_PORT: ${{ fromJson(vars.CI_VARS).REDIS_PORT }}
-        run: ./gradlew :${{ matrix.service }}:build
+        run: ./gradlew :${{ matrix.service }}:build -x spotlessCheck    # 빌드는 포맷으로 안 깨지게(비차단)
 
       - uses: docker/setup-buildx-action@v3
 

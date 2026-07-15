@@ -1,0 +1,68 @@
+# ★ S2: startup/readiness/liveness probe (actuator probes — replica>1 롤링 무유실의 전제)
+# ★ S5: prometheus.io/* 어노테이션 (7/10 Prometheus 구축 시 재배포 없이 scrape 대상 편입)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product
+  namespace: openat
+  annotations:
+    # k3s_node_coldboot_contention_plan §2-C — 순차 롤아웃(wave 낮은 순)
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  replicas: 1
+  # 단일 워커 노드: 롤링 시 옛+새 파드 2배 메모리로 Insufficient memory Pending(Q80 #7) 방지.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: product }
+  template:
+    metadata:
+      labels: { app: product }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9110"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: product
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product:latest
+          ports: [{ containerPort: 9110 }]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: app-secrets }
+          env:
+            # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 핫패스(G1 유지, limit 비례 65%).
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+            - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
+            - { name: SPRING_JPA_OPEN_IN_VIEW, value: "false" }
+            - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: "3" }
+          # 기동 완료까지 최대 300초 유예(2vCPU에서 6개 JVM 동시 부팅 + kubelet/kube 예약 감안, 실측 최악 251s) — 이후 liveness로 전환. k3s_node_coldboot_contention_plan §2-B/§2-A 동시 적용 전제
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9110 }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 9110 }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9110 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+          resources:
+            limits: { memory: "700Mi" }
+            requests: { cpu: "100m", memory: "520Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product
+  namespace: openat
+spec:
+  selector: { app: product }
+  ports: [{ port: 9110, targetPort: 9110 }]

@@ -35,3 +35,18 @@ springdoc:
     # 스웨거 UI 내부에서 API를 호출할 때 프리픽스로 /payment를 무조건 붙여서 쏘도록 강제
     #config-url: /payment/v3/api-docs/swagger-config
     #disable-swagger-default-url: true
+
+# k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화
+  tracing:
+    export:
+      otlp:
+        enabled: false   # 로컬/compose 기본 off — Tempo 없으면 export 실패가 반복 로깅됨(k8s ConfigMap에서 true로 override)
