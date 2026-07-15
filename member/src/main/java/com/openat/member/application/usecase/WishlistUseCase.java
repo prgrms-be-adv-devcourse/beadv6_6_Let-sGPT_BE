@@ -10,8 +10,9 @@ public interface WishlistUseCase {
     /**
      * 찜 추가. 이미 찜한 상품이면 아무 일도 하지 않는다(멱등).
      *
-     * @return 이번 호출로 실제 새로 추가됐으면 true, 이미 찜한 상품이라 no-op이었으면 false
-     *         (컨트롤러가 201/200을 구분하는 데 사용)
+     * @return 이번 호출로 실제 새로 추가됐으면 true, 이미 찜한 상품이라 no-op이었으면 false.
+     *         컨트롤러는 항상 200으로 응답하므로 이 반환값을 쓰지 않지만, 실제 상태 변화 여부를
+     *         드러내는 정보라 테스트·향후 호출자를 위해 남겨둔다.
      */
     boolean add(UUID memberId, UUID productId);
 
