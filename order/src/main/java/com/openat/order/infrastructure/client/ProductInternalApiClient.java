@@ -1,23 +1,75 @@
 package com.openat.order.infrastructure.client;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openat.order.infrastructure.client.ProductPortDtos.OrderSnapshotResponse;
 import com.openat.order.infrastructure.client.ProductPortDtos.StockChangeRequest;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
-import org.springframework.cloud.openfeign.FeignClient;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
-@FeignClient(name = "product-service", url = "${services.product.url}")
-public interface ProductInternalApiClient {
+@Component
+public class ProductInternalApiClient {
 
-    @GetMapping("/internal/drops/{dropId}/order-snapshot")
-    OrderSnapshotResponse fetchOrderSnapshot(@PathVariable UUID dropId);
+    private final RestClient productRestClient;
+    private final ObjectMapper objectMapper;
 
-    @PostMapping("/internal/drops/{dropId}/stock-deductions")
-    void decreaseStock(@PathVariable UUID dropId, @RequestBody StockChangeRequest request);
+    public ProductInternalApiClient(
+            @Qualifier("productRestClient") RestClient productRestClient,
+            ObjectMapper objectMapper
+    ) {
+        this.productRestClient = productRestClient;
+        this.objectMapper = objectMapper;
+    }
 
-    @PostMapping("/internal/drops/{dropId}/stock-rollbacks")
-    void restoreStock(@PathVariable UUID dropId, @RequestBody StockChangeRequest request);
+    public OrderSnapshotResponse fetchOrderSnapshot(UUID dropId) {
+        OrderSnapshotResponse response = productRestClient.get()
+                .uri("/internal/drops/{dropId}/order-snapshot", dropId)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::throwProductApiException)
+                .body(OrderSnapshotResponse.class);
+        if (response == null) {
+            throw new RestClientException(
+                    "Product order snapshot response body is empty: dropId=" + dropId);
+        }
+        return response;
+    }
+
+    public void decreaseStock(UUID dropId, StockChangeRequest request) {
+        postStockChange("/internal/drops/{dropId}/stock-deductions", dropId, request);
+    }
+
+    public void restoreStock(UUID dropId, StockChangeRequest request) {
+        postStockChange("/internal/drops/{dropId}/stock-rollbacks", dropId, request);
+    }
+
+    private void postStockChange(String path, UUID dropId, StockChangeRequest request) {
+        productRestClient.post()
+                .uri(path, dropId)
+                .body(request)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::throwProductApiException)
+                .toBodilessEntity();
+    }
+
+    private void throwProductApiException(
+            org.springframework.http.HttpRequest request,
+            org.springframework.http.client.ClientHttpResponse response
+    ) throws IOException {
+        String responseBody = new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8);
+        ProductErrorResponse errorResponse = parseErrorResponse(responseBody);
+        throw new ProductApiException(response.getStatusCode(), errorResponse, responseBody);
+    }
+
+    private ProductErrorResponse parseErrorResponse(String responseBody) {
+        try {
+            return objectMapper.readValue(responseBody, ProductErrorResponse.class);
+        } catch (Exception ignored) {
+            return new ProductErrorResponse(null, null, null);
+        }
+    }
 }

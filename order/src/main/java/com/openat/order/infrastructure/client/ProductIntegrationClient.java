@@ -1,6 +1,5 @@
 package com.openat.order.infrastructure.client;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openat.order.application.dto.OrderSnapshotInfo;
 import com.openat.order.application.dto.StockDecreaseCommand;
 import com.openat.order.application.dto.StockRestoreCommand;
@@ -10,17 +9,16 @@ import com.openat.order.domain.model.OrderFailCode;
 import com.openat.order.infrastructure.client.ProductPortDtos.OperationType;
 import com.openat.order.infrastructure.client.ProductPortDtos.OrderSnapshotResponse;
 import com.openat.order.infrastructure.client.ProductPortDtos.StockChangeRequest;
-import feign.FeignException;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClientException;
 
 @Component
 @RequiredArgsConstructor
 public class ProductIntegrationClient implements ProductIntegrationPort {
 
     private final ProductInternalApiClient productInternalApiClient;
-    private final ObjectMapper objectMapper;
 
     @Override
     public OrderSnapshotInfo fetchOrderSnapshot(UUID dropId) {
@@ -31,8 +29,8 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
                     response.sellerId(),
                     response.unitPrice()
             );
-        } catch (FeignException e) {
-            throw toProductPortException(OperationType.FETCH_ORDER_SNAPSHOT, e);
+        } catch (RestClientException exception) {
+            throw toProductPortException(OperationType.FETCH_ORDER_SNAPSHOT, exception);
         }
     }
 
@@ -43,8 +41,8 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
                     dropId,
                     new StockChangeRequest(command.orderId(), command.buyerId(), command.quantity())
             );
-        } catch (FeignException e) {
-            throw toProductPortException(OperationType.DECREASE_STOCK, e);
+        } catch (RestClientException exception) {
+            throw toProductPortException(OperationType.DECREASE_STOCK, exception);
         }
     }
 
@@ -55,42 +53,40 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
                     dropId,
                     new StockChangeRequest(command.orderId(), command.buyerId(), command.quantity())
             );
-        } catch (FeignException e) {
-            throw toProductPortException(OperationType.RESTORE_STOCK, e);
+        } catch (RestClientException exception) {
+            throw toProductPortException(OperationType.RESTORE_STOCK, exception);
         }
     }
 
-    private ProductPortException toProductPortException(OperationType operationType, FeignException e) {
-        ProductErrorResponse errorResponse = readErrorResponse(e);
-        String failCode = errorResponse.failCode();
-        String message = errorResponse.message() != null ? errorResponse.message() : e.getMessage();
-        return new ProductPortException(toOrderFailCode(operationType, failCode), message, e);
-    }
-
-    private ProductErrorResponse readErrorResponse(FeignException e) {
-        try {
-            return objectMapper.readValue(e.contentUTF8(), ProductErrorResponse.class);
-        } catch (Exception ignored) {
-            return new ProductErrorResponse(null, null, e.getMessage());
+    private ProductPortException toProductPortException(
+            OperationType operationType,
+            RestClientException exception
+    ) {
+        if (exception instanceof ProductApiException productApiException) {
+            ProductErrorResponse errorResponse = productApiException.getErrorResponse();
+            String message = errorResponse.message() != null ? errorResponse.message() : exception.getMessage();
+            return new ProductPortException(
+                    toOrderFailCode(operationType, errorResponse.failCode()), message, exception);
         }
+        return new ProductPortException(fallbackFailCode(operationType), exception.getMessage(), exception);
     }
 
     private OrderFailCode toOrderFailCode(OperationType operationType, String failCode) {
-        if ("DROP_SOLD_OUT".equals(failCode) || "SOLD_OUT".equals(failCode)) {
-            return OrderFailCode.SOLD_OUT;
+        if (failCode == null) {
+            return fallbackFailCode(operationType);
         }
-        if ("DROP_NOT_OPEN".equals(failCode) || "NOT_OPEN".equals(failCode)) {
-            return OrderFailCode.DROP_NOT_OPEN;
-        }
-        if ("DROP_CLOSED".equals(failCode) || "CLOSED".equals(failCode)) {
-            return OrderFailCode.DROP_CLOSED;
-        }
-        if ("DROP_LIMIT_EXCEEDED".equals(failCode) || "LIMIT_EXCEEDED".equals(failCode)) {
-            return OrderFailCode.LIMIT_EXCEEDED;
-        }
-        if (operationType == OperationType.RESTORE_STOCK) {
-            return OrderFailCode.STOCK_ROLLBACK_FAILED;
-        }
-        return OrderFailCode.PRODUCT_INTEGRATION_FAILED;
+        return switch (failCode) {
+            case "DROP_SOLD_OUT", "SOLD_OUT" -> OrderFailCode.SOLD_OUT;
+            case "DROP_NOT_OPEN", "NOT_OPEN" -> OrderFailCode.DROP_NOT_OPEN;
+            case "DROP_CLOSED", "CLOSED" -> OrderFailCode.DROP_CLOSED;
+            case "DROP_LIMIT_EXCEEDED", "LIMIT_EXCEEDED" -> OrderFailCode.LIMIT_EXCEEDED;
+            default -> fallbackFailCode(operationType);
+        };
+    }
+
+    private OrderFailCode fallbackFailCode(OperationType operationType) {
+        return operationType == OperationType.RESTORE_STOCK
+                ? OrderFailCode.STOCK_ROLLBACK_FAILED
+                : OrderFailCode.PRODUCT_INTEGRATION_FAILED;
     }
 }
