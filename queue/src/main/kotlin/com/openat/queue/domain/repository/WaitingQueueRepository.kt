@@ -43,10 +43,13 @@ interface WaitingQueueRepository {
     fun sweepExpired(dropId: String, now: Instant, heartbeatTtlMs: Long): Long
 
     /**
-     * 대기열 맨 앞에서부터 [maxScan]명까지 살펴보며, product의 실재고(remaining)에서
-     * 현재 미소진 입장권 수량(outstanding)을 뺀 만큼만 원자적으로 입장 처리한다
-     * (ZSET pop + 입장권 발급 + outstanding 갱신, 재고 인지형 admit.lua 단일 실행).
-     * 요청 수량이 그 시점 가용량보다 큰 사람은 건너뛰고 대기 유지(Phase B에서 대화형 결정으로 개선 예정).
+     * 대기열 맨 앞(지금 차례인 사람)부터 순서대로, product의 실재고(remaining)에서 현재
+     * 미소진 입장권 수량(outstanding)을 뺀 만큼만 원자적으로 입장 처리한다(ZSET pop +
+     * 입장권 발급 + outstanding 갱신, 재고 인지형 admit.lua 단일 실행). **엄격한 FIFO**:
+     * 요청 수량이 그 시점 가용량보다 큰 사람을 만나면 그 자리에서 즉시 멈춘다 - 뒷사람에게
+     * 순서를 넘기지 않는다("먼저 온 사람이 자리를 지킨다"). [maxScan]은 정상 스캔 범위가
+     * 아니라, 이미 입장권을 보유한 비정상 유령 항목이 연달아 있을 때만 관여하는 방어용
+     * 상한이다(admit.lua 헤더 주석 참고).
      * 멀티 파드가 동시에 호출해도 중복 입장이 발생하지 않는다.
      * @return 이번 tick에서 입장 처리된 (userId, quantity) 목록
      */
@@ -74,11 +77,11 @@ interface WaitingQueueRepository {
      * 결정). 재확인 결과 가용량이 0 이하면 아무 것도 하지 않고 null을 반환한다(폴링 시점에
      * 보여준 grantableNow는 참고값일 뿐, 실제 발급량은 이 호출 시점에 다시 계산됨).
      *
-     * [maxScan]으로 admit.lua의 스캔 범위(맨 앞 maxScan명) 밖의 사용자는 원자적으로 거부한다 -
+     * 엄격한 FIFO 정책상 지금 맨 앞(rank 0)이 아닌 사용자는 원자적으로 거부한다(null) -
      * 그렇지 않으면 대기열 뒤쪽 사용자가 자기 순서를 건너뛰고 가용 재고를 가로챌 수 있다.
-     * @return 실제로 발급된 (userId, quantity) - 발급 불가(범위 밖 포함)면 null
+     * @return 실제로 발급된 (userId, quantity) - 발급 불가(맨 앞이 아니거나 재고 부족)면 null
      */
-    fun admitSingle(dropId: String, userId: String, maxScan: Int, ttlSeconds: Long): AdmittedEntry?
+    fun admitSingle(dropId: String, userId: String, ttlSeconds: Long): AdmittedEntry?
 
     /** 대기열/하트비트/수량/결정상태 전부에서 이 사용자를 제거한다("포기" 선택). */
     fun removeFromQueue(dropId: String, userId: String)
