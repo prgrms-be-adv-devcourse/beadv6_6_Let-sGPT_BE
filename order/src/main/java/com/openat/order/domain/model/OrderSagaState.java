@@ -17,8 +17,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
-// [파이널] 주문 생성 사가의 단계를 추적한다. currentStep이 단일 SoT이며 별도 status 컬럼은 두지 않는다
-// (설계문서 `주문_파이널_설계.md` §2.1 S4 확정 — 전체 주문 상태의 SoT는 Order.status).
+// [파이널] 주문 생성 사가의 단계를 추적한다. currentStep이 단일 SoT이며 별도 status 컬럼은 두지 않는다.
 @Entity
 @Getter
 @Table(
@@ -45,7 +44,7 @@ public class OrderSagaState {
     private OrderSagaStep currentStep;
 
     // [파이널] COMPENSATING에 최초 진입한 시각. 재시도 실패로 updatedAt이 계속 갱신돼도
-    // 이 값은 건드리지 않아, §10 체류 경보(예: 10분 초과)가 정확한 경과 시간을 계산할 수 있게 한다.
+    // 이 값은 건드리지 않아, 체류 경보(예: 10분 초과)가 정확한 경과 시간을 계산할 수 있게 한다.
     @Column(name = "compensating_since")
     private Instant compensatingSince;
 
