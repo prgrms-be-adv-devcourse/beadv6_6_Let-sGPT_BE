@@ -5,11 +5,19 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: http://member:9100/auth/jwks
+  data:
+    redis:
+      host: redis
+      port: 6379
   cloud:
     gateway:
       server:
         webflux:
           routes:
+            - id: queue-api
+              uri: http://queue:9200
+              predicates:
+                - Path=/api/v1/queues/**
             - id: member-docs
               uri: http://member:9100
               predicates:
@@ -44,6 +52,8 @@ spring:
               uri: http://order:9120
               predicates:
                 - Path=/api/v1/orders/**
+              filters:
+                - AdmissionCheck
             - id: order
               uri: http://order:9120
               predicates:
@@ -88,5 +98,6 @@ openapi:
       order-service: http://order:9120/api-docs
       payment-service: http://payment:9130/api-docs
       settlement-service: http://settlement:9140/api-docs
+      queue-service: http://queue:9200/api-docs
     prefixes:
       payment-service: /payment
