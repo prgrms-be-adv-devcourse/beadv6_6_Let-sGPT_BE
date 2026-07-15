@@ -4,8 +4,8 @@ name: Terraform Plan
 # 결과를 PR 코멘트로 붙인다(사람이 diff 확인 후 머지). apply는 여기서 안 함(읽기 전용, 안전).
 # tfplan은 이 잡 안에서만 잠깐 존재하고 커밋하지 않는다(형상관리는 .tf=git, state=S3).
 #
-# ── 현재 상태: 비활성(dormant) ──
-# 실행은 vars.TF_CI_ENABLED == 'true' 일 때만. 켜기 전 선행 조건(키리스 인증, Q93):
+# ── 현재 상태: 활성(2026-07-10 TF_CI_ENABLED=true, AWS_TF_ROLE_ARN 등록 완료) ──
+# 선행 조건(키리스 인증, Q93 — 이미 충족됨):
 #   1) AWS IAM에 GitHub OIDC provider 생성(token.actions.githubusercontent.com)
 #      + terraform이 읽을 수 있는 Role(plan은 describe/get/list 읽기 권한이면 충분).
 #   2) 리포 변수: TF_CI_ENABLED=true, AWS_TF_ROLE_ARN=<그 Role ARN>.
@@ -45,7 +45,20 @@ jobs:
 
       - name: Terraform Plan
         id: plan
-        run: terraform plan -input=false -no-color -lock-timeout=120s 2>&1 | tee plan.txt
+        # 퍼블릭 리포라 이 스텝의 stdout(Actions 로그)과 plan.txt(→ PR 코멘트)가
+        # 둘 다 공개된다. AWS 계정 ID/공인 IP/리소스 ID는 .tf 소스만으로는 알 수 없는
+        # 런타임 전용 정보라 sed로 마스킹한 뒤 tee한다(원본을 파일에 남기지 않음).
+        run: |
+          terraform plan -input=false -no-color -lock-timeout=120s 2>&1 | sed -E \
+            -e 's/[0-9]{12}/############/g' \
+            -e 's/([0-9]{1,3}\.){3}[0-9]{1,3}/#.#.#.#/g' \
+            -e 's/i-[0-9a-f]{8,17}/i-############/g' \
+            -e 's/subnet-[0-9a-f]{8,17}/subnet-############/g' \
+            -e 's/vpc-[0-9a-f]{8,17}/vpc-############/g' \
+            -e 's/sg-[0-9a-f]{8,17}/sg-############/g' \
+            -e 's/eipalloc-[0-9a-f]{8,17}/eipalloc-############/g' \
+            -e 's/ami-[0-9a-f]{8,17}/ami-############/g' \
+            | tee plan.txt
         continue-on-error: true
 
       - name: Post plan as PR comment
