@@ -15,6 +15,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
     properties = {
       "spring.profiles.active=test",
       "spring.jpa.properties.hibernate.hbm2ddl.create_namespaces=true",
+      "spring.kafka.bootstrap-servers=localhost:9092",
       "spring.kafka.listener.auto-startup=false",
       "product.image.local-dir=${java.io.tmpdir}/openat-test-images"
     })

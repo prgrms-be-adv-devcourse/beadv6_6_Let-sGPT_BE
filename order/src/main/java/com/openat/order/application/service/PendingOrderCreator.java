@@ -18,6 +18,7 @@ public class PendingOrderCreator {
 
     private final OrderRepository orderRepository;
     private final OrderHistoryRepository orderHistoryRepository;
+    private final OrderSagaRecorder orderSagaRecorder;
 
     @Transactional
     public Order create(UUID memberId, CreateOrderCommand command, OrderSnapshotInfo snapshot, Instant now) {
@@ -36,6 +37,7 @@ public class PendingOrderCreator {
                 .build();
 
         Order savedOrder = orderRepository.saveAndFlush(order);
+        orderSagaRecorder.recordOrderCreated(savedOrder);
         orderHistoryRepository.save(
                 OrderHistory.record()
                         .orderId(savedOrder.getId())

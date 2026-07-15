@@ -12,13 +12,13 @@ import com.openat.order.application.dto.PaymentCompletedCommand;
 import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
-import com.openat.order.application.port.OrderCompletedEventPublishPort;
+import com.openat.order.application.port.OrderCompletedOutboxPort;
+import com.openat.order.application.event.StockAdjustment;
+import com.openat.order.application.event.StockAdjustmentReason;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderFailCode;
-import com.openat.order.domain.model.OrderHistory;
 import com.openat.order.domain.model.OrderStatus;
-import com.openat.order.domain.repository.OrderHistoryRepository;
 import com.openat.order.domain.repository.OrderRepository;
 import java.time.Instant;
 import java.util.Optional;
@@ -32,6 +32,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.context.ApplicationEventPublisher;
 
 @ExtendWith(MockitoExtension.class)
 class OrderEventServiceTest {
@@ -40,10 +41,16 @@ class OrderEventServiceTest {
     private OrderRepository orderRepository;
 
     @Mock
-    private OrderHistoryRepository orderHistoryRepository;
+    private OrderHistoryRecorder orderHistoryRecorder;
 
     @Mock
-    private OrderCompletedEventPublishPort orderCompletedEventPublishPort;
+    private OrderCompletedOutboxPort orderCompletedOutboxPort;
+
+    @Mock
+    private OrderSagaRecorder orderSagaRecorder;
+
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
 
     @InjectMocks
     private OrderEventService orderEventService;
@@ -66,10 +73,17 @@ class OrderEventServiceTest {
         // then
         assertThat(order.getStatus()).isEqualTo(OrderStatus.COMPLETED);
         assertThat(order.getPaymentId()).isEqualTo(paymentId);
-        ArgumentCaptor<OrderHistory> history = ArgumentCaptor.forClass(OrderHistory.class);
-        verify(orderHistoryRepository).save(history.capture());
-        assertThat(history.getValue().getSourceEventKey()).hasSizeLessThanOrEqualTo(100);
-        verify(orderCompletedEventPublishPort).publish(order);
+        ArgumentCaptor<String> sourceEventKey = ArgumentCaptor.forClass(String.class);
+        verify(orderHistoryRecorder).record(any(), any(), any(), any(), sourceEventKey.capture());
+        assertThat(sourceEventKey.getValue()).hasSizeLessThanOrEqualTo(100);
+        verify(orderSagaRecorder).recordCompleted(orderId);
+        verify(orderCompletedOutboxPort).save(order);
+        ArgumentCaptor<StockAdjustment> adjustment = ArgumentCaptor.forClass(StockAdjustment.class);
+        verify(applicationEventPublisher).publishEvent(adjustment.capture());
+        assertThat(adjustment.getValue().eventId()).isNotNull();
+        assertThat(adjustment.getValue().dropId()).isEqualTo(order.getDropId());
+        assertThat(adjustment.getValue().count()).isEqualTo(order.getQuantity());
+        assertThat(adjustment.getValue().reason()).isEqualTo(StockAdjustmentReason.COMPLETED);
     }
 
     @Test
@@ -89,8 +103,10 @@ class OrderEventServiceTest {
         orderEventService.handlePaymentCompleted(command);
 
         // then
-        verify(orderHistoryRepository, never()).save(any(OrderHistory.class));
-        verify(orderCompletedEventPublishPort, never()).publish(any());
+        verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
+        verify(orderSagaRecorder, never()).recordCompleted(any());
+        verify(orderCompletedOutboxPort, never()).save(any());
+        verify(applicationEventPublisher, never()).publishEvent(any());
     }
 
     @Test
@@ -110,11 +126,13 @@ class OrderEventServiceTest {
         // then
         assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
         assertThat(order.getFailCode()).isNull();
-        ArgumentCaptor<OrderHistory> history = ArgumentCaptor.forClass(OrderHistory.class);
-        verify(orderHistoryRepository).save(history.capture());
-        assertThat(history.getValue().getPreviousStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
-        assertThat(history.getValue().getNewStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
-        assertThat(history.getValue().getReasonCode()).isEqualTo("PAYMENT_ATTEMPT_FAILED");
+        ArgumentCaptor<Order> recordedOrder = ArgumentCaptor.forClass(Order.class);
+        ArgumentCaptor<OrderStatus> previousStatus = ArgumentCaptor.forClass(OrderStatus.class);
+        ArgumentCaptor<String> reasonCode = ArgumentCaptor.forClass(String.class);
+        verify(orderHistoryRecorder).record(recordedOrder.capture(), previousStatus.capture(), reasonCode.capture(), any(), any());
+        assertThat(previousStatus.getValue()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(recordedOrder.getValue().getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(reasonCode.getValue()).isEqualTo("PAYMENT_ATTEMPT_FAILED");
     }
 
     @Test
@@ -135,7 +153,13 @@ class OrderEventServiceTest {
 
         // then
         assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
-        verify(orderHistoryRepository).save(any(OrderHistory.class));
+        verify(orderHistoryRecorder).record(any(), any(), any(), any(), any());
+        ArgumentCaptor<StockAdjustment> adjustment = ArgumentCaptor.forClass(StockAdjustment.class);
+        verify(applicationEventPublisher).publishEvent(adjustment.capture());
+        assertThat(adjustment.getValue().eventId()).isNotNull();
+        assertThat(adjustment.getValue().dropId()).isEqualTo(order.getDropId());
+        assertThat(adjustment.getValue().count()).isEqualTo(order.getQuantity());
+        assertThat(adjustment.getValue().reason()).isEqualTo(StockAdjustmentReason.REFUNDED);
     }
 
     @Test
@@ -159,7 +183,7 @@ class OrderEventServiceTest {
         // then
         assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUND_FAILED);
         assertThat(order.getFailCode()).isEqualTo(OrderFailCode.PG_ERROR);
-        verify(orderHistoryRepository).save(any(OrderHistory.class));
+        verify(orderHistoryRecorder).record(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -180,7 +204,7 @@ class OrderEventServiceTest {
         // then
         assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
         assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
-        verify(orderHistoryRepository, never()).save(any(OrderHistory.class));
+        verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -205,7 +229,7 @@ class OrderEventServiceTest {
         // then
         assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
         assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
-        verify(orderHistoryRepository, never()).save(any(OrderHistory.class));
+        verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -225,7 +249,7 @@ class OrderEventServiceTest {
 
         // then
         assertThat(order.getStatus()).isEqualTo(OrderStatus.COMPLETED);
-        verify(orderHistoryRepository, never()).save(any(OrderHistory.class));
+        verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -248,7 +272,7 @@ class OrderEventServiceTest {
         orderEventService.handleRefundFailed(command);
 
         // then
-        verify(orderHistoryRepository, never()).save(any(OrderHistory.class));
+        verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
     }
 
     @Test

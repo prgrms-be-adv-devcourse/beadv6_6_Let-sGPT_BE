@@ -11,23 +11,23 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class OpenApiConfig {
 
-  // TODO: 게이트웨이/JWT 인증 연동 시 APIKEY 헤더 스킴 -> HTTP bearer(JWT)로 교체
-  private static final String USER_ID_HEADER_SCHEME = "userIdHeader";
+  private static final String BEARER_SCHEME_NAME = "bearerAuth";
 
   @Bean
   public OpenAPI productOpenApi() {
     return new OpenAPI()
         .info(new Info().title("Product API").description("상품 도메인 API 문서").version("v1"))
-        .addSecurityItem(new SecurityRequirement().addList(USER_ID_HEADER_SCHEME))
+        .addSecurityItem(new SecurityRequirement().addList(BEARER_SCHEME_NAME))
         .components(
             new Components()
                 .addSecuritySchemes(
-                    USER_ID_HEADER_SCHEME,
+                    BEARER_SCHEME_NAME,
                     new SecurityScheme()
-                        .type(SecurityScheme.Type.APIKEY)
-                        .in(SecurityScheme.In.HEADER)
-                        .name("X-Seller-Id")
+                        .name(BEARER_SCHEME_NAME)
+                        .type(SecurityScheme.Type.HTTP)
+                        .scheme("bearer")
+                        .bearerFormat("JWT")
                         .description(
-                            "게이트웨이가 판매자 토큰 검증 후 전달하는 활성 스토어 식별자 sellerInfoId (실연동 전 테스트용)")));
+                            "member에서 발급받은 활성 스토어 범위 판매자 JWT. 게이트웨이가 검증 후 X-Seller-Id를 주입한다.")));
   }
 }

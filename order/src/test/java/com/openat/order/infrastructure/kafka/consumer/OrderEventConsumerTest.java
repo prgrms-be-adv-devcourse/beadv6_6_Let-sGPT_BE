@@ -2,6 +2,8 @@ package com.openat.order.infrastructure.kafka.consumer;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,6 +12,8 @@ import com.openat.order.application.dto.PaymentFailedCommand;
 import com.openat.order.application.dto.RefundFailedCommand;
 import com.openat.order.application.dto.RefundCompletedCommand;
 import com.openat.order.application.service.OrderEventService;
+import com.openat.order.application.service.InboxEventFailureRecorder;
+import com.openat.order.application.service.InboxEventProcessor;
 import java.util.UUID;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,11 +29,22 @@ class OrderEventConsumerTest {
     @Mock
     private OrderEventService orderEventService;
 
+    @Mock
+    private InboxEventProcessor inboxEventProcessor;
+
+    @Mock
+    private InboxEventFailureRecorder inboxEventFailureRecorder;
+
     private OrderEventConsumer orderEventConsumer;
 
     @BeforeEach
     void setUp() {
-        orderEventConsumer = new OrderEventConsumer(new ObjectMapper(), orderEventService);
+        lenient().doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(3).run();
+            return null;
+        }).when(inboxEventProcessor).process(any(), any(), any(), any());
+        orderEventConsumer = new OrderEventConsumer(
+                new ObjectMapper(), orderEventService, inboxEventProcessor, inboxEventFailureRecorder);
     }
 
     @Test
@@ -49,6 +64,11 @@ class OrderEventConsumerTest {
         verify(orderEventService).handlePaymentCompleted(
                 new PaymentCompletedCommand(orderId, paymentId, 10_000L)
         );
+        verify(inboxEventProcessor).process(
+                org.mockito.ArgumentMatchers.eq("payment.completed:" + paymentId + ":" + orderId),
+                org.mockito.ArgumentMatchers.eq("payment.completed"),
+                org.mockito.ArgumentMatchers.eq(payload),
+                any());
     }
 
     @Test
@@ -117,6 +137,13 @@ class OrderEventConsumerTest {
         assertThrows(RuntimeException.class,
                 () -> orderEventConsumer.onPaymentCompleted(record("payment.completed.events", "invalid-json")));
         verify(orderEventService, org.mockito.Mockito.never()).handlePaymentCompleted(any());
+        verify(inboxEventFailureRecorder).record(
+                org.mockito.ArgumentMatchers.eq("kafka:payment.completed.events:0:0"),
+                org.mockito.ArgumentMatchers.eq("payment.completed"),
+                org.mockito.ArgumentMatchers.eq("invalid-json"),
+                org.mockito.ArgumentMatchers.isNull(),
+                any(),
+                org.mockito.ArgumentMatchers.eq(false));
     }
 
     private ConsumerRecord<String, String> record(String topic, String payload) {
