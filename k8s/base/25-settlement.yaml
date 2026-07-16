@@ -59,7 +59,7 @@ spec:
             failureThreshold: 5
           resources:
             limits: { memory: "600Mi" }
-            requests: { cpu: "100m", memory: "320Mi" }
+            requests: { cpu: "100m", memory: "400Mi" }   # gate2 A-5: 실사용 374>req320 스케줄러 정합
 ---
 apiVersion: v1
 kind: Service
