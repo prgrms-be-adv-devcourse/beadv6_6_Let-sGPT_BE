@@ -78,4 +78,21 @@ public record ProductDocument(
         updatedAt,
         deletedAt);
   }
+
+  public ProductDocument withDeletedAt(Instant deletedAt) {
+    return new ProductDocument(
+        id,
+        name,
+        description,
+        categoryId,
+        categoryName,
+        sellerName,
+        price,
+        thumbnailKey,
+        imgDescription,
+        embedding,
+        createdAt,
+        updatedAt,
+        deletedAt);
+  }
 }
