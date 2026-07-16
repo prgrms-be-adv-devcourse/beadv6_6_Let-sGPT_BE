@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/openat   # 로컬 도커 DB
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
