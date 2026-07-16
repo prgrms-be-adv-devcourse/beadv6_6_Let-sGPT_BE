@@ -64,8 +64,8 @@ spec:
             # request=limit로 묵시 설정해 final 노드(실측 헤드룸 ~425Mi)에서 스케줄링
             # 자체가 실패(Insufficient memory). request를 limit보다 낮게 명시 분리해
             # 상시 예약은 작게, 버스트 여유만 600Mi까지 허용.
-            limits: { memory: "600Mi" }
-            requests: { cpu: "50m", memory: "200Mi" }
+            limits: { memory: "768Mi" }   # gate2 A-2: steady 594/600=99% OOM 방어 헤드룸
+            requests: { cpu: "50m", memory: "256Mi" }   # gate2 A-2: steady 594/600=99% OOM 방어 헤드룸
           volumeMounts:
             - { name: tempo-config, mountPath: /etc/tempo }
             - { name: tempo-data, mountPath: /var/tempo }
