@@ -102,19 +102,19 @@ spring:
   kafka:
     bootstrap-servers: localhost:29092
 
-openai:
-  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
-  api-key: ${OPENAI_API_KEY:${OPEN_API_KEY:}}
-  chat:
-    enabled: true
-    model: gpt-5.4-mini
-  embedding:
-    enabled: true
-    model: text-embedding-3-small
-  image-analysis:
-    model: gpt-5.4-nano
-  image:
-    model: gpt-image-1-mini
+#openai:
+#  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+#  api-key: ${OPENAI_API_KEY:${OPEN_API_KEY:}}
+#  chat:
+#    enabled: true
+#    model: gpt-5.4-mini
+#  embedding:
+#    enabled: true
+#    model: text-embedding-3-small
+#  image-analysis:
+#    model: gpt-5.4-nano
+#  image:
+#    model: gpt-image-1-mini
 
 ---
 spring:
@@ -136,5 +136,5 @@ openai:
   base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
   api-key: ${OPENAI_API_KEY:${OPEN_API_KEY:}}
   embedding:
-    enabled: ${OPENAI_EMBEDDING_ENABLED:false}
+    enabled: ${OPENAI_EMBEDDING_ENABLED:true}
 
