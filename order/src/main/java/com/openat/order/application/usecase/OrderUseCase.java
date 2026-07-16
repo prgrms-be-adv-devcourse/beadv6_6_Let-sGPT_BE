@@ -6,7 +6,9 @@ import com.openat.order.application.dto.OrderCancelInfo;
 import com.openat.order.application.dto.OrderDetailInfo;
 import com.openat.order.application.dto.OrderSummaryInfo;
 import com.openat.order.application.dto.PaymentValidationInfo;
+import com.openat.order.application.dto.PurchaseSignalInfo;
 import com.openat.order.domain.model.OrderStatus;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -21,4 +23,6 @@ public interface OrderUseCase {
     OrderCancelInfo cancelOrder(UUID memberId, UUID orderId);
 
     PaymentValidationInfo getPaymentValidationInfo(UUID memberId, UUID orderId);
+
+    List<PurchaseSignalInfo> getPurchaseSignals(UUID memberId, int limit);
 }
