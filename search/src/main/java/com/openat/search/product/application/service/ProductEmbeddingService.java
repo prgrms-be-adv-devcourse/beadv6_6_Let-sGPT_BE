@@ -2,7 +2,7 @@ package com.openat.search.product.application.service;
 
 import com.openat.search.product.application.vector.ProductEmbeddingGenerator;
 import com.openat.search.product.infrastructure.elasticsearch.ProductDocument;
-import com.openat.search.product.infrastructure.vector.AiProductEmbeddingGenerator;
+import com.openat.search.product.infrastructure.vector.InferenceServerProductEmbeddingGenerator;
 import com.openat.search.product.infrastructure.vector.NoOpProductEmbeddingGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +20,7 @@ public class ProductEmbeddingService {
 
   private static final int OPENAI_SMALL_EMBEDDING_DIMENSIONS = 1536;
 
-  private final AiProductEmbeddingGenerator aiProductEmbeddingGenerator;
+  private final InferenceServerProductEmbeddingGenerator inferenceServerProductEmbeddingGenerator;
   private final NoOpProductEmbeddingGenerator noOpProductEmbeddingGenerator;
 
   @Value("${openai.embedding.enabled:false}")
@@ -70,7 +70,7 @@ public class ProductEmbeddingService {
   }
 
   private ProductEmbeddingGenerator currentGenerator() {
-    return embeddingEnabled ? aiProductEmbeddingGenerator : noOpProductEmbeddingGenerator;
+    return embeddingEnabled ? inferenceServerProductEmbeddingGenerator : noOpProductEmbeddingGenerator;
   }
 
   private String buildSourceText(ProductDocument productDocument) {

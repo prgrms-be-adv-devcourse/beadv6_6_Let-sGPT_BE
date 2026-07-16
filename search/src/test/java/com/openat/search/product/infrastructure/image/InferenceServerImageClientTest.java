@@ -55,6 +55,7 @@ class InferenceServerImageClientTest {
                 {
                   "id": "resp_test",
                   "object": "response",
+                  "status": "completed",
                   "output": [
                     {
                       "type": "message",
@@ -78,7 +79,9 @@ class InferenceServerImageClientTest {
   void rejectsResponseWithoutOutputText() {
     server
         .expect(requestTo(BASE_URL + "/responses"))
-        .andRespond(withSuccess("{\"output\":[]}", MediaType.APPLICATION_JSON));
+        .andRespond(
+            withSuccess(
+                "{\"status\":\"completed\",\"output\":[]}", MediaType.APPLICATION_JSON));
 
     MockMultipartFile image =
         new MockMultipartFile("image", "product.png", "image/png", new byte[] {1});
@@ -86,6 +89,35 @@ class InferenceServerImageClientTest {
     assertThatThrownBy(() -> client.analyzeImage(image, null))
         .isInstanceOf(ResponseStatusException.class)
         .hasMessageContaining("returned no text");
+    server.verify();
+  }
+
+  @Test
+  void rejectsIncompleteResponseEvenWhenItContainsOutputText() {
+    server
+        .expect(requestTo(BASE_URL + "/responses"))
+        .andRespond(
+            withSuccess(
+                """
+                {
+                  "status": "incomplete",
+                  "output": [
+                    {
+                      "content": [
+                        {"type": "output_text", "text": "잘린 이미지 설명"}
+                      ]
+                    }
+                  ]
+                }
+                """,
+                MediaType.APPLICATION_JSON));
+
+    MockMultipartFile image =
+        new MockMultipartFile("image", "product.png", "image/png", new byte[] {1});
+
+    assertThatThrownBy(() -> client.analyzeImage(image, null))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("did not complete");
     server.verify();
   }
 }

@@ -103,7 +103,7 @@ spring:
     bootstrap-servers: localhost:29092
 
 openai:
-  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+  base-url: ${OPENAI_BASE_URL:https://api.inferway.xyz/v1}
   api-key: ${OPENAI_API_KEY:${OPEN_API_KEY:}}
   chat:
     enabled: true
@@ -133,7 +133,7 @@ spring:
 # 배포 환경은 환경변수로만 제어한다. embedding.enabled 기본값은 false라
 # OPENAI_EMBEDDING_ENABLED=true를 설정해야 상품 임베딩·벡터 검색이 켜진다.
 openai:
-  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+  base-url: ${OPENAI_BASE_URL:https://api.inferway.xyz/v1}
   api-key: ${OPENAI_API_KEY:${OPEN_API_KEY:}}
   embedding:
     enabled: ${OPENAI_EMBEDDING_ENABLED:false}

@@ -20,7 +20,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Component
 public class InferenceServerImageClient {
 
-  private static final String DEFAULT_BASE_URL = "https://api.openai.com/v1";
+  private static final String DEFAULT_BASE_URL = "https://api.inferway.xyz/v1";
+  private static final String COMPLETED_STATUS = "completed";
 
   private static final String IMAGE_SEARCH_RULE =
       """
@@ -44,7 +45,7 @@ public class InferenceServerImageClient {
 
   public InferenceServerImageClient(
       RestClient restClient,
-      @Value("${openai.base-url:https://api.openai.com/v1}") String baseUrl,
+      @Value("${openai.base-url:https://api.inferway.xyz/v1}") String baseUrl,
       @Value("${openai.api-key:}") String apiKey,
       @Value("${openai.image-analysis.model:gpt-5.4-nano}") String imageAnalysisModel) {
     this.restClient = restClient;
@@ -80,6 +81,11 @@ public class InferenceServerImageClient {
                                         "type", "input_image", "image_url", toDataUrl(image)))))))
             .retrieve()
             .body(AnalysisResponse.class);
+
+    if (response == null || !COMPLETED_STATUS.equals(response.status())) {
+      throw new ResponseStatusException(
+          INTERNAL_SERVER_ERROR, "Inference server image analysis did not complete");
+    }
 
     String answer = extractText(response);
     if (answer.isBlank()) {
@@ -144,7 +150,8 @@ public class InferenceServerImageClient {
   }
 
   @JsonIgnoreProperties(ignoreUnknown = true)
-  private record AnalysisResponse(List<OutputItem> output) {}
+  private record AnalysisResponse(
+      @JsonProperty("status") String status, @JsonProperty("output") List<OutputItem> output) {}
 
   @JsonIgnoreProperties(ignoreUnknown = true)
   private record OutputItem(List<OutputContent> content) {}

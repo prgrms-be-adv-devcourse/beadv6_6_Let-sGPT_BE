@@ -1,6 +1,6 @@
 package com.openat.search.product.application.service;
 
-import com.openat.search.product.infrastructure.image.OpenAiImageClient;
+import com.openat.search.product.infrastructure.image.InferenceServerImageClient;
 import com.openat.search.product.presentation.dto.AiImageAnalyzeResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -27,7 +27,7 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class AiImageService {
 
-  private final OpenAiImageClient openAiImageClient;
+  private final InferenceServerImageClient inferenceServerImageClient;
   private final RestClient restClient;
   // local
   private final String imgUrlHost = "http://localhost:8000/api/v1/products/images/";
@@ -40,7 +40,7 @@ public class AiImageService {
     }
 
     String usedPrompt = normalizeAnalyzePrompt(prompt);
-    String answer = openAiImageClient.analyzeImage(image, usedPrompt);
+    String answer = inferenceServerImageClient.analyzeImage(image, usedPrompt);
     return new AiImageAnalyzeResponse(usedPrompt, answer);
   }
 

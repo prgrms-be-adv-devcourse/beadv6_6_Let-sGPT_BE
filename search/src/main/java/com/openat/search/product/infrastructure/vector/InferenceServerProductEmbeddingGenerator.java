@@ -18,7 +18,7 @@ import org.springframework.web.server.ResponseStatusException;
 @Component
 public class InferenceServerProductEmbeddingGenerator implements ProductEmbeddingGenerator {
 
-  private static final String DEFAULT_BASE_URL = "https://api.openai.com/v1";
+  private static final String DEFAULT_BASE_URL = "https://api.inferway.xyz/v1";
   private static final int EXPECTED_DIMENSIONS = 1536;
 
   private final RestClient restClient;
@@ -28,7 +28,7 @@ public class InferenceServerProductEmbeddingGenerator implements ProductEmbeddin
 
   public InferenceServerProductEmbeddingGenerator(
       RestClient restClient,
-      @Value("${openai.base-url:https://api.openai.com/v1}") String baseUrl,
+      @Value("${openai.base-url:https://api.inferway.xyz/v1}") String baseUrl,
       @Value("${openai.api-key:}") String apiKey,
       @Value("${openai.embedding.model:text-embedding-3-small}") String model) {
     this.restClient = restClient;
