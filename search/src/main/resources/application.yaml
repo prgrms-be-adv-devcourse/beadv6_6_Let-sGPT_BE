@@ -102,18 +102,19 @@ spring:
   kafka:
     bootstrap-servers: localhost:29092
 
-openai:
-  api-key: ${OPENAI_API_KEY:${OPEN_API_KEY:}}
-  chat:
-    enabled: true
-    model: gpt-5.4-mini
-  embedding:
-    enabled: true
-    model: text-embedding-3-small
-  image-analysis:
-    model: gpt-5.4-nano
-  image:
-    model: gpt-image-1-mini
+#openai:
+#  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+#  api-key: ${OPENAI_API_KEY:${OPEN_API_KEY:}}
+#  chat:
+#    enabled: true
+#    model: gpt-5.4-mini
+#  embedding:
+#    enabled: true
+#    model: text-embedding-3-small
+#  image-analysis:
+#    model: gpt-5.4-nano
+#  image:
+#    model: gpt-image-1-mini
 
 ---
 spring:
@@ -128,4 +129,12 @@ spring:
     bootstrap-servers: ${KAFKA_BROKER}
   elasticsearch:
     uris: ${ELASTICSEARCH_URIS}
+
+# 배포 환경은 환경변수로만 제어한다. embedding.enabled 기본값은 false라
+# OPENAI_EMBEDDING_ENABLED=true를 설정해야 상품 임베딩·벡터 검색이 켜진다.
+openai:
+  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+  api-key: ${OPENAI_API_KEY:${OPEN_API_KEY:}}
+  embedding:
+    enabled: ${OPENAI_EMBEDDING_ENABLED:true}
 
