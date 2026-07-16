@@ -8,6 +8,7 @@ import com.openat.order.domain.model.OrderStatus;
 import com.openat.order.presentation.dto.CreateOrderRequest;
 import com.openat.order.presentation.dto.CreateOrderResponse;
 import com.openat.order.presentation.dto.InternalOrderValidationResponse;
+import com.openat.order.presentation.dto.InternalPurchaseSignalResponse;
 import com.openat.order.presentation.dto.OrderCancelResponse;
 import com.openat.order.presentation.dto.OrderResponse;
 import com.openat.order.presentation.dto.OrderSummaryResponse;
@@ -19,6 +20,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
+import java.util.List;
 import java.util.UUID;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Pageable;
@@ -67,4 +70,10 @@ public interface OrderApiSpec {
                     + "넘어온 memberId로 소유자 검증(불일치 시 거부)")
     @ApiResponse(responseCode = "200", description = "조회 성공")
     ResponseEntity<InternalOrderValidationResponse> getOrderForPayment(UUID orderId, UUID memberId);
+
+    @Operation(summary = "구매 신호 조회", description = "회원의 결제 완료 주문을 상품별로 집계하는 내부 API")
+    @ApiResponse(responseCode = "200", description = "조회 성공")
+    ResponseEntity<List<InternalPurchaseSignalResponse>> getPurchaseSignals(
+            UUID memberId,
+            @Min(1) int limit);
 }
