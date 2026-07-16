@@ -1,20 +1,21 @@
 package com.openat.search.product.infrastructure.image;
 
-import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
-
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import java.io.IOException;
-import java.net.URI;
-import java.util.Base64;
-import java.util.List;
-import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.io.IOException;
+import java.net.URI;
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
+
+import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 
 /** OpenAI Responses API 규격으로 자체 추론 서버의 이미지 분석을 호출한다. */
 @Component
@@ -109,7 +110,7 @@ public class InferenceServerImageClient {
 
   private String buildImageSearchRequest(String prompt) {
     if (prompt == null || prompt.isBlank()) {
-      return "너는 직업이 MD 야. 내가 벡터 검색으로 사용하기 위해 최적화된 이미지 설명 해줘.";
+      return "너는 고도의 기술을 가진 상품 MD 직업을 가졌어. 검색에 최적화된 이미지 설명 해줘.(다양하게 검색어가 나오게 많이 표현해줘)";
     }
     return "추가 검색 조건: " + prompt.trim();
   }
