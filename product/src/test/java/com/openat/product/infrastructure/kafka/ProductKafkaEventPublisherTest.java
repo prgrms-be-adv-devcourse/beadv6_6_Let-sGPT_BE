@@ -108,6 +108,30 @@ class ProductKafkaEventPublisherTest {
     }
 
     @Test
+    @DisplayName("판매자 식별자를 생성 토픽 payload에 포함해 발행한다")
+    void onProductCreated_validEvent_publishesSellerId() throws Exception {
+      // given
+      UUID sellerId = UUID.randomUUID();
+      Product product = categorizedProduct(sellerId, UUID.randomUUID());
+      given(sellerStoreQueryUseCase.findStoreNames(List.of(sellerId)))
+          .willReturn(Map.of(sellerId, "오픈앳 스토어"));
+      given(kafkaTemplate.send(eq(CREATED_TOPIC), anyString(), anyString()))
+          .willReturn(successfulSend(CREATED_TOPIC));
+
+      // when
+      publisher.onProductCreated(new ProductCreatedEvent(product));
+
+      // then
+      ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+      then(kafkaTemplate)
+          .should()
+          .send(eq(CREATED_TOPIC), eq(product.getId().toString()), payloadCaptor.capture());
+
+      JsonNode payload = objectMapper.readTree(payloadCaptor.getValue());
+      assertThat(payload.get("sellerId").asText()).isEqualTo(sellerId.toString());
+    }
+
+    @Test
     @DisplayName("판매자 표시명 조회에 실패해도 나머지 상품 필드는 생성 토픽에 발행한다")
     void onProductCreated_sellerLookupFails_publishesWithoutSellerName() throws Exception {
       // given
