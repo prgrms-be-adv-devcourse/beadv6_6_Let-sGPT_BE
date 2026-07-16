@@ -49,7 +49,7 @@ spec:
             - { name: KAFKA_LOG_DIRS, value: "/var/lib/kafka/data" }
           resources:
             limits: { memory: "700Mi" }
-            requests: { cpu: "100m", memory: "550Mi" }
+            requests: { cpu: "100m", memory: "620Mi" }   # gate2 A-5: 실사용 583>req550 스케줄러 정합
           volumeMounts:
             - { name: data, mountPath: /var/lib/kafka/data }
   volumeClaimTemplates:
