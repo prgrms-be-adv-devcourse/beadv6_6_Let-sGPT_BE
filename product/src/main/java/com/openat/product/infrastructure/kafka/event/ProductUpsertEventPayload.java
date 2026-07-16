@@ -7,6 +7,7 @@ import java.util.UUID;
 
 public record ProductUpsertEventPayload(
     UUID id,
+    UUID sellerId,
     String name,
     String description,
     UUID categoryId,
@@ -28,6 +29,7 @@ public record ProductUpsertEventPayload(
 
     return new ProductUpsertEventPayload(
         product.getId(),
+        product.getSellerId(),
         product.getName(),
         product.getDescription(),
         categoryId,

@@ -202,8 +202,8 @@
 | `refund.completed.events` | 결제 | 주문 | refundId, orderId, amount *(정산은 미구독 — 아래 `payment.settlement.events`로 적재)* |
 | `payment.settlement.events` | 결제 | 정산 | 정산 적재용 판매·환불 데이터 *(payload는 payment·정산 계약 참조, 2026-07-09 코드 확인으로 카탈로그 추가)* |
 | `refund.failed.events` | 결제 | 주문 | orderId, reason |
-| `product.created.events` | 상품 | 검색·AI(파이널) | id, name, description, categoryId, categoryName, sellerName, price, thumbnailKey, createdAt, updatedAt |
-| `product.updated.events` | 상품 | 검색·AI(파이널) | id, name, description, categoryId, categoryName, sellerName, price, thumbnailKey, createdAt, updatedAt |
+| `product.created.events` | 상품 | 검색·AI(파이널) | id, sellerId, name, description, categoryId, categoryName, sellerName, price, thumbnailKey, createdAt, updatedAt |
+| `product.updated.events` | 상품 | 검색·AI(파이널) | id, sellerId, name, description, categoryId, categoryName, sellerName, price, thumbnailKey, createdAt, updatedAt |
 | `product.deleted.events` | 상품 | 검색·AI(파이널) | id, deletedAt |
 | `order.stock.adjusted.events` | 주문 | 대기열(파이널) | eventId, dropId, count(변경 수량), reason(`COMPLETED`\|`REFUNDED`) — 드롭별 판매 증감 통지 *(2026-07-14 계약 확정, 유실·중복 상호 감수)* |
 

@@ -16,9 +16,12 @@ import com.openat.member.domain.repository.MemberRepository;
 import com.openat.member.domain.repository.RoleEntityRepository;
 import com.openat.member.domain.repository.RoleHistoryRepository;
 import com.openat.member.domain.repository.SellerInfoRepository;
+import com.openat.member.infrastructure.kafka.event.SellerStoreChangedEvent;
+import com.openat.member.infrastructure.outbox.OutboxEventWriter;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,16 +29,29 @@ import org.springframework.transaction.annotation.Transactional;
  * 판매자 정보(SellerInfo) 도메인 서비스.
  * 회원당 여러 개의 SellerInfo를 가질 수 있으며, 논리적 삭제로 이력을 보존한다.
  * 역할 승격/강등은 role_history 테이블에 이력을 남기는 방식으로 관리한다.
+ *
+ * <p>storeName 등록/변경은 아웃박스를 통해 product에 이벤트로 전파한다 — product가 이를 소비해
+ * 로컬 SellerStore 프로젝션(sellerInfoId -> storeName)을 채우고, 상품 등록/수정 Kafka 이벤트에
+ * sellerName을 실을 때 그 프로젝션을 조회한다(product가 매 요청마다 member를 동기 호출하지 않도록).
  */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class SellerService implements SellerUseCase {
 
+    private static final String AGGREGATE_TYPE = "SELLER_STORE";
+
     private final MemberRepository memberRepository;
     private final SellerInfoRepository sellerInfoRepository;
     private final RoleEntityRepository roleEntityRepository;
     private final RoleHistoryRepository roleHistoryRepository;
+    private final OutboxEventWriter outboxEventWriter;
+
+    @Value("${member.kafka.topic.seller-registered}")
+    private String sellerRegisteredTopic;
+
+    @Value("${member.kafka.topic.seller-updated}")
+    private String sellerUpdatedTopic;
 
     @Override
     public List<SellerInfoResponse> getMySellerInfo(UUID memberId, boolean isActive) {
@@ -82,6 +98,8 @@ public class SellerService implements SellerUseCase {
             roleHistoryRepository.save(RoleHistory.of(member, sellerRole));
         }
 
+        publishStoreChanged(sellerRegisteredTopic, saved);
+
         return SellerInfoResponse.from(saved);
     }
 
@@ -92,6 +110,8 @@ public class SellerService implements SellerUseCase {
                 .orElseThrow(() -> new BusinessException(SellerErrorCode.SELLER_INFO_NOT_FOUND));
 
         sellerInfo.changeStoreName(request.storeName());
+
+        publishStoreChanged(sellerUpdatedTopic, sellerInfo);
 
         return SellerInfoResponse.from(sellerInfo);
     }
@@ -113,6 +133,15 @@ public class SellerService implements SellerUseCase {
             roleHistoryRepository.findActiveByMemberIdAndRole(memberId, Role.ROLE_SELLER)
                     .ifPresent(RoleHistory::revoke);
         }
+    }
+
+    // 아웃박스 aggregateId는 SellerInfo.id(sellerInfoId)를 사용한다 — product의 SellerStore
+    // 프로젝션 PK와 동일한 키라, 같은 sellerInfoId에 대한 등록/수정 이벤트가 항상 같은 파티션에서
+    // 순서대로 처리된다(WishlistService가 memberId를 키로 쓰는 것과 같은 이유).
+    private void publishStoreChanged(String topic, SellerInfo sellerInfo) {
+        SellerStoreChangedEvent event =
+                new SellerStoreChangedEvent(sellerInfo.getId(), sellerInfo.getStoreName());
+        outboxEventWriter.write(AGGREGATE_TYPE, sellerInfo.getId(), topic, event);
     }
 
     private Member getMember(UUID memberId) {
