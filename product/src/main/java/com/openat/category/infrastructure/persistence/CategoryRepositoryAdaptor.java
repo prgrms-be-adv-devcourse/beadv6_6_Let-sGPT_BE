@@ -21,6 +21,11 @@ public class CategoryRepositoryAdaptor implements CategoryRepository {
   }
 
   @Override
+  public Optional<Category> findByName(String name) {
+    return categoryJpaRepository.findByName(name);
+  }
+
+  @Override
   public List<Category> findAll() {
     return categoryJpaRepository.findAll(Sort.by(Sort.Direction.ASC, "name"));
   }

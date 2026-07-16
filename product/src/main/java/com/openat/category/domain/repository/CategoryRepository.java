@@ -8,6 +8,8 @@ import java.util.UUID;
 public interface CategoryRepository {
   Optional<Category> findById(UUID id);
 
+  Optional<Category> findByName(String name);
+
   List<Category> findAll();
 
   boolean existsByName(String name);

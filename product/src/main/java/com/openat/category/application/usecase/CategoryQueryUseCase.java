@@ -7,5 +7,7 @@ import java.util.UUID;
 public interface CategoryQueryUseCase {
   Category getById(UUID id);
 
+  Category getByName(String name);
+
   List<Category> getAll();
 }

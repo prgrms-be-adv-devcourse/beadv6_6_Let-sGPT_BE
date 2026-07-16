@@ -26,6 +26,13 @@ public class CategoryQueryService implements CategoryQueryUseCase {
   }
 
   @Override
+  public Category getByName(String name) {
+    return categoryRepository
+        .findByName(name)
+        .orElseThrow(() -> new BusinessException(CategoryErrorCode.NOT_FOUND));
+  }
+
+  @Override
   public List<Category> getAll() {
     return categoryRepository.findAll();
   }

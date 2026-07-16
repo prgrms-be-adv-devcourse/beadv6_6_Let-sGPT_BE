@@ -46,6 +46,14 @@ drop:
 product:
   image:
     local-dir: ${PRODUCT_IMAGE_DIR:${user.home}/.openat/product-images} # 부팅 서버 로컬 저장 (TODO final: AWS S3 전환)
+  batch-import:
+    max-rows: ${PRODUCT_BATCH_IMPORT_MAX_ROWS:1000}
+    max-manifest-bytes: ${PRODUCT_BATCH_IMPORT_MAX_MANIFEST_BYTES:5242880}
+    max-image-bytes: ${PRODUCT_BATCH_IMPORT_MAX_IMAGE_BYTES:10485760}
+    worker-threads: ${PRODUCT_BATCH_IMPORT_WORKER_THREADS:2}
+    local-allowed-roots: ${PRODUCT_BATCH_IMPORT_LOCAL_ALLOWED_ROOTS:${user.home}/.openat/product-imports}
+    s3-allowed-buckets: ${PRODUCT_BATCH_IMPORT_S3_ALLOWED_BUCKETS:}
+    s3-region: ${PRODUCT_BATCH_IMPORT_S3_REGION:ap-northeast-2}
   kafka:
     topic:
       product-created: product.created.events

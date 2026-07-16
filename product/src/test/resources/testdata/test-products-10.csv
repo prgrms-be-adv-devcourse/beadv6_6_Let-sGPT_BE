@@ -1,0 +1,11 @@
+product_id,name,description,category,thumbnail_key,edition_size,source_item_id,source_image_id,width,height
+"0001","Limited Sneaker 0001","Test catalog item for limited edition sneaker search behavior.","fashion","search-demo-v1/0001.jpg","50","TEST-SOURCE-0001","TEST-IMAGE-0001","2560","2560"
+"0002","Limited Tote 0002","Test catalog item for a structured tote bag with clear image semantics.","bag","search-demo-v1/0002.jpg","50","TEST-SOURCE-0002","TEST-IMAGE-0002","2560","2560"
+"0003","Limited Necklace 0003","Test catalog item for jewelry search and image description extraction.","jewelry","search-demo-v1/0003.jpg","50","TEST-SOURCE-0003","TEST-IMAGE-0003","2560","2560"
+"0004","Limited Chair 0004","Test catalog item for home furniture search behavior.","home","search-demo-v1/0004.jpg","50","TEST-SOURCE-0004","TEST-IMAGE-0004","2560","2560"
+"0005","Limited Lamp 0005","Test catalog item for lighting search behavior with a product image.","lighting","search-demo-v1/0005.jpg","50","TEST-SOURCE-0005","TEST-IMAGE-0005","2560","2560"
+"0006","Limited Desk 0006","Test catalog item for office search behavior.","office","search-demo-v1/0006.jpg","50","TEST-SOURCE-0006","TEST-IMAGE-0006","2560","2560"
+"0007","Limited Mug 0007","Test catalog item for kitchen search behavior.","kitchen","search-demo-v1/0007.jpg","50","TEST-SOURCE-0007","TEST-IMAGE-0007","2560","2560"
+"0008","Limited Ball 0008","Test catalog item for sports search behavior.","sports","search-demo-v1/0008.jpg","50","TEST-SOURCE-0008","TEST-IMAGE-0008","2560","2560"
+"0009","Limited Pet Bed 0009","Test catalog item for pet search behavior.","pet","search-demo-v1/0009.jpg","50","TEST-SOURCE-0009","TEST-IMAGE-0009","2560","2560"
+"0010","Limited Collectible 0010","Test catalog item for collectible search behavior.","collectible","search-demo-v1/0010.jpg","50","TEST-SOURCE-0010","TEST-IMAGE-0010","2560","2560"
