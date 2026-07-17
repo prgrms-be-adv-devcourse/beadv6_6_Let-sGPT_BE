@@ -1,15 +1,7 @@
 package com.openat.search.product.application.service;
 
-import com.openat.search.product.infrastructure.image.OpenAiImageClient;
+import com.openat.search.product.infrastructure.image.InferenceServerImageClient;
 import com.openat.search.product.presentation.dto.AiImageAnalyzeResponse;
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.nio.file.Files;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -22,12 +14,27 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.file.Files;
+import java.util.Optional;
+
 @Service
 @RequiredArgsConstructor
 public class AiImageService {
 
-  private final OpenAiImageClient openAiImageClient;
+  //private final OpenAiImageClient openAiImageClient; // openai
+  private final InferenceServerImageClient inferenceServerImageClient;
+
   private final RestClient restClient;
+
+  // local
+  private final String imgUrlHost = "http://localhost:8000/api/v1/products/images/";
+
 
   @Transactional(readOnly = true)
   public AiImageAnalyzeResponse analyze(MultipartFile image, String prompt) {
@@ -36,7 +43,7 @@ public class AiImageService {
     }
 
     String usedPrompt = normalizeAnalyzePrompt(prompt);
-    String answer = openAiImageClient.analyzeImage(image, usedPrompt);
+    String answer = inferenceServerImageClient.analyzeImage(image, usedPrompt);
     return new AiImageAnalyzeResponse(usedPrompt, answer);
   }
 
@@ -46,7 +53,7 @@ public class AiImageService {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "imgurl is required");
     }
 
-    MultipartFile image = downloadAsMultipartFile(imgurl);
+    MultipartFile image = downloadAsMultipartFile(imgUrlHost + imgurl);
     return analyze(image, prompt);
   }
 

@@ -70,10 +70,10 @@ public class SeedDataRunner implements ApplicationRunner {
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
+    sellerStoreCommandUseCase.upsert(DEMO_SELLER_INFO_ID, DEMO_STORE_NAME);
     if (alreadySeeded()) {
       return;
     }
-    sellerStoreCommandUseCase.upsert(DEMO_SELLER_INFO_ID, DEMO_STORE_NAME);
     Map<String, Product> productsByName = seedProducts();
     int dropCount = seedDrops(productsByName, Instant.now());
     log.info("데모 시드 삽입 완료 - 상품 {}건, 드롭 {}건", productsByName.size(), dropCount);

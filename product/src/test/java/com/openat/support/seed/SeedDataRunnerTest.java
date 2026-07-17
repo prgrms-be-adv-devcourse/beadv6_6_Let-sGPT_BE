@@ -10,6 +10,7 @@ import com.openat.drop.domain.repository.DropRepository;
 import com.openat.drop.domain.repository.StockHistoryRepository;
 import com.openat.drop.infrastructure.persistence.DropRepositoryAdaptor;
 import com.openat.drop.infrastructure.persistence.StockHistoryRepositoryAdaptor;
+import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.infrastructure.persistence.ProductRepositoryAdaptor;
 import com.openat.seller.application.service.SellerStoreCommandService;
@@ -18,6 +19,7 @@ import com.openat.seller.infrastructure.persistence.SellerStoreRepositoryAdaptor
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -108,6 +110,28 @@ class SeedDataRunnerTest {
     assertThat(count("Product")).isEqualTo(16);
     assertThat(count("Drop")).isEqualTo(10);
     assertThat(count("StockHistory")).isEqualTo(6);
+  }
+
+  @Test
+  @DisplayName("상품이 이미 있어 카탈로그 시드를 건너뛰어도 데모 스토어 투영은 남긴다")
+  void run_catalogAlreadySeededWithoutStore_projectsDemoStore() {
+    // given
+    entityManager.persist(
+        Product.create()
+            .sellerId(UUID.fromString("11111111-1111-1111-1111-111111111111"))
+            .name("기존 상품")
+            .price(10_000L)
+            .build());
+    entityManager.flush();
+
+    // when
+    runner.run(null);
+    entityManager.flush();
+    entityManager.clear();
+
+    // then
+    assertThat(count("SellerStore")).isEqualTo(1);
+    assertThat(count("Product")).isEqualTo(1);
   }
 
   private long count(String entity) {

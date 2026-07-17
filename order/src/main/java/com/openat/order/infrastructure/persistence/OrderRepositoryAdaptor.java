@@ -2,7 +2,9 @@ package com.openat.order.infrastructure.persistence;
 
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderStatus;
+import com.openat.order.domain.model.PurchaseSignal;
 import com.openat.order.domain.repository.OrderRepository;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -37,5 +39,11 @@ public class OrderRepositoryAdaptor implements OrderRepository {
             return orderJpaRepository.findByMemberId(memberId, pageable);
         }
         return orderJpaRepository.findByMemberIdAndStatus(memberId, status, pageable);
+    }
+
+    @Override
+    public List<PurchaseSignal> findPurchaseSignals(
+            UUID memberId, OrderStatus status, Pageable pageable) {
+        return orderJpaRepository.findPurchaseSignals(memberId, status, pageable);
     }
 }

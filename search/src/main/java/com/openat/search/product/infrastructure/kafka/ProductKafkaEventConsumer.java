@@ -8,11 +8,9 @@ import com.openat.search.product.application.service.ProductEmbeddingService;
 import com.openat.search.product.infrastructure.elasticsearch.ProductDocument;
 import com.openat.search.product.infrastructure.elasticsearch.ProductSearchDocumentRepository;
 import com.openat.search.product.presentation.dto.AiImageAnalyzeResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.Optional;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -33,25 +31,25 @@ public class ProductKafkaEventConsumer {
       topics = "${search.kafka.topic.product-created}",
       groupId = "${spring.kafka.consumer.group-id}")
   public void consumeProductCreated(ConsumerRecord<String, String> record) {
-    saveProductDocument("product-created", record);
+    saveUpsertProductDocument("product-created", record);
   }
 
   @KafkaListener(
       topics = "${search.kafka.topic.product-updated}",
       groupId = "${spring.kafka.consumer.group-id}")
   public void consumeProductUpdated(ConsumerRecord<String, String> record) {
-    saveProductDocument("product-updated", record);
+    saveUpsertProductDocument("product-updated", record);
   }
 
   @KafkaListener(
       topics = "${search.kafka.topic.product-deleted}",
       groupId = "${spring.kafka.consumer.group-id}")
   public void consumeProductDeleted(ConsumerRecord<String, String> record) {
-    saveProductDocument("product-deleted", record);
+    markProductDeleted(record);
   }
 
-  private void saveProductDocument(String eventType, ConsumerRecord<String, String> record) {
-    parseProductDocument(eventType, record)
+  private void saveUpsertProductDocument(String eventType, ConsumerRecord<String, String> record) {
+    parseUpsertProductDocument(eventType, record)
         .ifPresent(
             productDocument -> {
               ProductDocument documentToSave = applyEmbeddingOrOriginal(eventType, productDocument);
@@ -68,48 +66,124 @@ public class ProductKafkaEventConsumer {
             });
   }
 
-  private Optional<ProductDocument> parseProductDocument(
+  private void markProductDeleted(ConsumerRecord<String, String> record) {
+    String eventType = "product-deleted";
+    parseJsonPayload(eventType, record)
+        .ifPresent(
+            jsonPayload -> {
+              logProductEvent(eventType, record, jsonPayload);
+
+              Optional<String> productId = productId(eventType, record, jsonPayload);
+              Optional<Instant> deletedAt = instantValue(jsonPayload, "deletedAt", "deleted_at");
+              if (productId.isEmpty() || deletedAt.isEmpty()) {
+                log.warn(
+                    "Search product delete Kafka event skipped because required fields are missing or invalid. topic={}, partition={}, offset={}, key={}, id={}, deletedAt={}",
+                    record.topic(),
+                    record.partition(),
+                    record.offset(),
+                    record.key(),
+                    textValue(jsonPayload, "id"),
+                    textValue(jsonPayload, "deletedAt", "deleted_at"));
+                return;
+              }
+
+              productSearchDocumentRepository
+                  .findById(productId.get())
+                  .ifPresentOrElse(
+                      existingDocument -> {
+                        ProductDocument deletedDocument =
+                            existingDocument.withDeletedAt(deletedAt.get());
+                        productSearchDocumentRepository.save(deletedDocument);
+                        log.info(
+                            "Search product Kafka delete event reflected in Elasticsearch. topic={}, partition={}, offset={}, key={}, productId={}, deletedAt={}",
+                            record.topic(),
+                            record.partition(),
+                            record.offset(),
+                            record.key(),
+                            productId.get(),
+                            deletedAt.get());
+                      },
+                      () ->
+                          log.warn(
+                              "Search product Kafka delete event skipped because the Elasticsearch document does not exist. topic={}, partition={}, offset={}, key={}, productId={}",
+                              record.topic(),
+                              record.partition(),
+                              record.offset(),
+                              record.key(),
+                              productId.get()));
+            });
+  }
+
+  private Optional<ProductDocument> parseUpsertProductDocument(
       String eventType, ConsumerRecord<String, String> record) {
     return parseJsonPayload(eventType, record)
         .flatMap(
             jsonPayload -> {
               logProductEvent(eventType, record, jsonPayload);
 
-              String id = textValueOrDefault(jsonPayload, virtualId(eventType, record), "id");
-              Instant createdAt =
-                  instantValueOrDefault(
-                      jsonPayload, virtualCreatedAt(record), "createdAt", "created_at");
-              Instant updatedAt =
-                  instantValueOrDefault(jsonPayload, createdAt, "updatedAt", "updated_at");
+              Optional<String> id = productId(eventType, record, jsonPayload);
+              String name = textValue(jsonPayload, "name");
+              Optional<Long> price = longValue(jsonPayload, "price");
+              Optional<Instant> createdAt = instantValue(jsonPayload, "createdAt", "created_at");
+              Optional<Instant> updatedAt = instantValue(jsonPayload, "updatedAt", "updated_at");
+
+              if (id.isEmpty()
+                  || name.isBlank()
+                  || price.isEmpty()
+                  || createdAt.isEmpty()
+                  || updatedAt.isEmpty()) {
+                log.warn(
+                    "Search product upsert Kafka event skipped because required fields are missing or invalid. eventType={}, topic={}, partition={}, offset={}, key={}, id={}, name={}, price={}, createdAt={}, updatedAt={}",
+                    eventType,
+                    record.topic(),
+                    record.partition(),
+                    record.offset(),
+                    record.key(),
+                    textValue(jsonPayload, "id"),
+                    name,
+                    textValue(jsonPayload, "price"),
+                    textValue(jsonPayload, "createdAt", "created_at"),
+                    textValue(jsonPayload, "updatedAt", "updated_at"));
+                return Optional.empty();
+              }
 
               return Optional.of(
                   new ProductDocument(
-                      id,
-                      textValueOrDefault(jsonPayload, "Virtual product " + id, "name"),
-                      textValueOrDefault(
-                          jsonPayload, "Virtual description for product " + id, "description"),
-                      textValueOrDefault(
-                          jsonPayload, virtualCategoryId(id), "categoryId", "category_id"),
-                      textValueOrDefault(
-                          jsonPayload, "Virtual Category", "categoryName", "category_nm"),
-                      textValueOrDefault(
-                          jsonPayload, "Virtual Seller", "sellerName", "seller_name"),
-                      longValueOrDefault(jsonPayload, 0L, "price"),
-                      textValueOrDefault(
-                          jsonPayload,
-                          "virtual-thumbnail-" + id + ".jpg",
-                          "thumbnailKey",
-                          "thumbnail_key"),
-                      textValueOrDefault(
-                          jsonPayload,
-                          "Virtual image description for product " + id,
-                          "imgDescription",
-                          "img_description"),
+                      id.get(),
+                      name,
+                      nullableTextValue(jsonPayload, "description"),
+                      nullableTextValue(jsonPayload, "categoryId", "category_id"),
+                      nullableTextValue(jsonPayload, "categoryName", "category_nm"),
+                      nullableTextValue(jsonPayload, "sellerName", "seller_name"),
+                      price.get(),
+                      nullableTextValue(jsonPayload, "thumbnailKey", "thumbnail_key"),
+                      nullableTextValue(jsonPayload, "imgDescription", "img_description"),
                       null,
-                      createdAt,
-                      updatedAt,
-                      deletedAtValue(eventType, jsonPayload, updatedAt)));
+                      createdAt.get(),
+                      updatedAt.get(),
+                      null));
             });
+  }
+
+  private Optional<String> productId(
+      String eventType, ConsumerRecord<String, String> record, JsonNode jsonPayload) {
+    String productId = textValue(jsonPayload, "id");
+    if (productId.isBlank()) {
+      return Optional.empty();
+    }
+
+    if (record.key() != null && !record.key().isBlank() && !record.key().equals(productId)) {
+      log.warn(
+          "Search product Kafka event skipped because key and product id do not match. eventType={}, topic={}, partition={}, offset={}, key={}, productId={}",
+          eventType,
+          record.topic(),
+          record.partition(),
+          record.offset(),
+          record.key(),
+          productId);
+      return Optional.empty();
+    }
+    return Optional.of(productId);
   }
 
   private Optional<JsonNode> parseJsonPayload(
@@ -188,67 +262,48 @@ public class ProductKafkaEventConsumer {
     return field.asText();
   }
 
-  private String textValueOrDefault(
-      JsonNode jsonPayload, String defaultValue, String fieldName, String... fallbackFieldNames) {
+  private String nullableTextValue(
+      JsonNode jsonPayload, String fieldName, String... fallbackFieldNames) {
     String value = textValue(jsonPayload, fieldName, fallbackFieldNames);
-    if (value.isBlank()) {
-      return defaultValue;
-    }
-    return value;
+    return value.isBlank() ? null : value;
   }
 
-  private Long longValueOrDefault(JsonNode jsonPayload, Long defaultValue, String fieldName) {
+  private Optional<Long> longValue(JsonNode jsonPayload, String fieldName) {
     JsonNode field = firstPresentField(jsonPayload, fieldName);
     if (field == null || field.isNull()) {
-      return defaultValue;
+      return Optional.empty();
     }
     if (field.isNumber()) {
-      return field.asLong();
+      return Optional.of(field.asLong());
     }
     String value = field.asText();
     if (value.isBlank()) {
-      return defaultValue;
-    }
-    return Long.parseLong(value);
-  }
-
-  private Instant instantValueOrDefault(
-      JsonNode jsonPayload, Instant defaultValue, String fieldName, String... fallbackFieldNames) {
-    String value = textValue(jsonPayload, fieldName, fallbackFieldNames);
-    if (value.isBlank()) {
-      return defaultValue;
+      return Optional.empty();
     }
     try {
-      return Instant.parse(value);
+      return Optional.of(Long.parseLong(value));
+    } catch (NumberFormatException e) {
+      log.warn(
+          "Search product Kafka event number parse failed. fieldName={}, value={}",
+          fieldName,
+          value);
+      return Optional.empty();
+    }
+  }
+
+  private Optional<Instant> instantValue(
+      JsonNode jsonPayload, String fieldName, String... fallbackFieldNames) {
+    String value = textValue(jsonPayload, fieldName, fallbackFieldNames);
+    if (value.isBlank()) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(Instant.parse(value));
     } catch (DateTimeParseException e) {
       log.warn(
           "Search product Kafka event date parse failed. fieldName={}, value={}", fieldName, value);
-      return defaultValue;
+      return Optional.empty();
     }
-  }
-
-  private Instant deletedAtValue(String eventType, JsonNode jsonPayload, Instant updatedAt) {
-    Instant defaultValue = "product-deleted".equals(eventType) ? updatedAt : null;
-    return instantValueOrDefault(jsonPayload, defaultValue, "deletedAt", "deleted_at");
-  }
-
-  private Instant virtualCreatedAt(ConsumerRecord<String, String> record) {
-    long seconds = Math.max(0L, record.offset());
-    return Instant.parse("2026-07-08T00:00:00Z").plusSeconds(seconds);
-  }
-
-  private String virtualId(String eventType, ConsumerRecord<String, String> record) {
-    String source =
-        "%s:%s:%d:%d:%s"
-            .formatted(
-                eventType, record.topic(), record.partition(), record.offset(), record.key());
-    return UUID.nameUUIDFromBytes(source.getBytes(StandardCharsets.UTF_8)).toString();
-  }
-
-  private String virtualCategoryId(String productId) {
-    return UUID.nameUUIDFromBytes(
-            ("virtual-category-" + productId).getBytes(StandardCharsets.UTF_8))
-        .toString();
   }
 
   private JsonNode firstPresentField(
