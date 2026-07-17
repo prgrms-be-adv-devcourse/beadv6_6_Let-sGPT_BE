@@ -18,13 +18,12 @@ spec:
       nodeSelector: { tier: observability }
       tolerations:
         - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
-      imagePullSecrets:
-        - name: ghcr-pull
       containers:
         - name: elasticsearch
-          # WS-G(7/10 observability plan) — nori 포함 커스텀 이미지(k8s/images/elasticsearch-nori/).
-          # 태그는 베이스 ES 버전과 반드시 동일(플러그인-ES 버전 정합 필수).
-          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/elasticsearch-nori:9.2.5
+          # 공식 이미지 사용. nori 플러그인은 코드베이스에서 한 번도 배선된 적이 없어 제거함
+          # (근거: personal_workplan/research/nori_removal_research.md — analyzer 선언 0건).
+          # 태그는 docker-compose.yml의 elasticsearch 서비스와 동일하게 유지할 것.
+          image: docker.elastic.co/elasticsearch/elasticsearch:9.2.5
           env:
             - { name: discovery.type, value: single-node }
             - { name: xpack.security.enabled, value: "false" }
