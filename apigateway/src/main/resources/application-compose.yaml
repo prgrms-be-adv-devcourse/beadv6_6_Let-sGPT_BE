@@ -88,6 +88,16 @@ spring:
                 - Path=/settlement/**
               filters:
                 - StripPrefix=1
+            - id: recommendation-api
+              uri: http://recommendation:9220
+              predicates:
+                - Path=/api/v1/recommendations/**
+            - id: recommendation
+              uri: http://recommendation:9220
+              predicates:
+                - Path=/recommendation/**
+              filters:
+                - StripPrefix=1
 
 openapi:
   aggregate:
@@ -99,5 +109,6 @@ openapi:
       payment-service: http://payment:9130/api-docs
       settlement-service: http://settlement:9140/api-docs
       queue-service: http://queue:9150/api-docs
+      recommendation-service: http://recommendation:9220/api-docs
     prefixes:
       payment-service: /payment

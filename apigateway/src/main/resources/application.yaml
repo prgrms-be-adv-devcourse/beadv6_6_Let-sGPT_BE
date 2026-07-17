@@ -27,6 +27,8 @@ springdoc:
         url: /payment/api-docs
       - name: settlement-service
         url: /settlement/api-docs
+      - name: recommendation-service
+        url: /recommendation/api-docs
 
 
 # k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
