@@ -36,3 +36,4 @@ data:
     CREATE SCHEMA IF NOT EXISTS orders;
     CREATE SCHEMA IF NOT EXISTS payment;
     CREATE SCHEMA IF NOT EXISTS settlement;
+    CREATE SCHEMA IF NOT EXISTS recommendation;

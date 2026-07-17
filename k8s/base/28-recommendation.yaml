@@ -1,0 +1,61 @@
+# 추천(recommendation) — MVC/JPA 스택, DB 사용. queue 패턴 복제(경량, default 노드).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommendation
+  namespace: openat
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: recommendation }
+  template:
+    metadata:
+      labels: { app: recommendation }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9220"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: recommendation
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/recommendation:latest
+          ports: [{ containerPort: 9220 }]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: app-secrets }
+          env:
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:+UseSerialGC -XX:MaxRAMPercentage=55.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+            - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9220 }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 9220 }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9220 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+          resources:
+            limits: { memory: "300Mi" }
+            requests: { cpu: "100m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: recommendation
+  namespace: openat
+spec:
+  selector: { app: recommendation }
+  ports: [{ port: 9220, targetPort: 9220 }]

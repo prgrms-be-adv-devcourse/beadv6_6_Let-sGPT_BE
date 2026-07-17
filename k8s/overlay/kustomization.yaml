@@ -24,5 +24,7 @@ images:
     newTag: latest
   - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
     newTag: latest
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/recommendation
+    newTag: latest
   - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
     newTag: "1951fa78ce805c1e1b3a6bd49f15e503e78df55d"
