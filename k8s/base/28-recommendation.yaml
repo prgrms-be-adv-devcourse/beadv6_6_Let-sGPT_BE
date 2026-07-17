@@ -31,7 +31,11 @@ spec:
             - configMapRef: { name: app-config }
             - secretRef: { name: app-secrets }
           env:
-            - { name: JAVA_TOOL_OPTIONS, value: "-XX:+UseSerialGC -XX:MaxRAMPercentage=55.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
+            # MaxMetaspaceSize 캡 없음(qna.md Q116) — 서브리밋 안 걸고 pod limit 하나로 통제.
+            # 캡이 있으면 메타스페이스만 먼저 자기 상한에 부딪혀 OutOfMemoryError: Metaspace를
+            # 스레드 단위로 던지는데, 이건 JVM도 컨테이너도 안 죽여서 파드가 좀비로 남는다.
+            # 캡을 빼면 합계가 limit를 넘는 순간 OOMKilled로 죽고 kubelet이 재시작한다.
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:+UseSerialGC -XX:MaxRAMPercentage=55.0 -XX:InitialRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
           startupProbe:
