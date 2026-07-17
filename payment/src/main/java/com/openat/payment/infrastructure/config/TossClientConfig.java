@@ -7,14 +7,12 @@ import java.util.Base64;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
-// G2 — 실제 토스페이먼츠 API 호출용 RestClient. real 프로필에서만 등록(StubTossPaymentClient와 양립 방지, G2).
+// G2 — 실제 토스페이먼츠 API 호출용 RestClient. 전 프로필 공통 등록.
 @Configuration
-@Profile("real")
 public class TossClientConfig {
 
     private static final String TOSS_BASE_URL = "https://api.tosspayments.com";
