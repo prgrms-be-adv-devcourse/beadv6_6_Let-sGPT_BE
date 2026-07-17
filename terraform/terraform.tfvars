@@ -31,3 +31,15 @@ deployer_user = "deployer"
 # ---------------------------------------------------------------------
 s3_bucket_name = "team02-letsgpt-bucket"
 s3_app_prefix  = "app/"
+
+# ---------------------------------------------------------------------
+# 이미지 저장소 + k3s OIDC issuer JWKS 미러 버킷
+# oidc_jwks_bucket_name 은 issuer URL로 쓰이므로 점(.) 사용 불가(variables.tf에서 강제).
+# 이 이름은 k3s --service-account-issuer 와 IAM OIDC provider url 양쪽에 박히므로
+# 바꾸려면 노드 재구성 + provider 재생성이 함께 필요하다.
+# images_cors_allowed_origins 는 31-ingress.yaml 의 host 와 일치해야 한다.
+# ---------------------------------------------------------------------
+images_staging_bucket_name  = "team02-letsgpt-images-staging"
+images_final_bucket_name    = "team02-letsgpt-images-final"
+oidc_jwks_bucket_name       = "team02-letsgpt-oidc-jwks"
+images_cors_allowed_origins = ["https://openat.duckdns.org"]

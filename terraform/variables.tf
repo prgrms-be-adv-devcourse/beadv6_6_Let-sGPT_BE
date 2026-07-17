@@ -84,3 +84,43 @@ variable "s3_ops_prefix" {
   type        = string
   default     = "ops/"
 }
+
+# ---------------------------------------------------------------------
+# 이미지 저장소 (staging / final) + k3s OIDC issuer JWKS 미러 버킷
+# ---------------------------------------------------------------------
+
+variable "images_staging_bucket_name" {
+  description = "브라우저 presigned PUT 업로드용 임시(staging) 이미지 버킷 이름 (전역적으로 유일해야 함)"
+  type        = string
+  default     = "team02-letsgpt-images-staging"
+}
+
+variable "images_final_bucket_name" {
+  description = "승격된 실제 서비스 이미지(final) 버킷 이름 (전역적으로 유일해야 함)"
+  type        = string
+  default     = "team02-letsgpt-images-final"
+}
+
+variable "oidc_jwks_bucket_name" {
+  description = <<-EOT
+    k3s ServiceAccount OIDC issuer의 discovery/JWKS 공개 미러 버킷 이름 (전역적으로 유일해야 함).
+    issuer URL(https://<버킷>.s3.<region>.amazonaws.com)로 쓰이므로 **점(.)이 없어야 한다** —
+    점이 있으면 가상 호스트 스타일 URL이 S3 와일드카드 인증서와 매칭되지 않아 TLS 검증에 실패한다.
+  EOT
+  type        = string
+  default     = "team02-letsgpt-oidc-jwks"
+
+  validation {
+    condition     = !can(regex("\\.", var.oidc_jwks_bucket_name))
+    error_message = "oidc_jwks_bucket_name 에는 점(.)을 포함할 수 없다 (S3 가상 호스트 스타일 TLS 인증서 매칭 제약)."
+  }
+}
+
+variable "images_cors_allowed_origins" {
+  description = <<-EOT
+    staging 버킷 CORS가 presigned PUT을 허용할 FE origin 목록.
+    확인필요: 실제 FE 배포 origin으로 교체할 것(예: https://openat.duckdns.org).
+  EOT
+  type        = list(string)
+  default     = ["https://openat.duckdns.org"]
+}
