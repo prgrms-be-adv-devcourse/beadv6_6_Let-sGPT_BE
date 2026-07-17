@@ -10,16 +10,13 @@ import java.util.List;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
-// G — 실제 토스페이먼츠 API 연동(plan.md G). TossPaymentClient(포트)는 이미 확정돼 있어
-// 서비스 레이어(PaymentService/WalletChargeService/RefundService/PaymentTtlScanner)는 변경 없음 — 구현체만 교체.
+// G — 실제 토스페이먼츠 API 연동. TossPaymentClient(포트)의 유일한 구현체(스텁은 2026-07-17 제거).
 @Slf4j
 @Component
-@Profile("real")
 public class RealTossPaymentClient implements TossPaymentClient {
 
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";

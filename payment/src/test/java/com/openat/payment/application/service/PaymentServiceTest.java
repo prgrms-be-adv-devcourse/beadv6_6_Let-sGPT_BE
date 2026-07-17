@@ -14,11 +14,7 @@ import com.openat.payment.application.event.DomainEventPublisher;
 import com.openat.payment.application.exception.PaymentErrorCode;
 import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.domain.model.Payment;
-import com.openat.payment.domain.model.Wallet;
-import com.openat.payment.domain.repository.PaymentEventRepository;
 import com.openat.payment.domain.repository.PaymentRepository;
-import com.openat.payment.domain.repository.WalletRepository;
-import com.openat.payment.domain.repository.WalletTransactionRepository;
 import java.lang.reflect.RecordComponent;
 import java.util.Optional;
 import java.util.UUID;
@@ -26,22 +22,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 // 프레임워크(Spring) 의존 없는 순수 Mockito 단위테스트(A13 목표) — plan.md D1.
-// 전체 커버리지가 아니라 plan.md A9의 하자드(#7·#8·#10·#13·#20) 가드가 실제로 호출되는지를 검증.
+// PaymentService는 오케스트레이션(멱등 조회 -> Order 검증 -> WalletPaymentApprover 위임)만 담당한다.
+// WALLET 쓰기 경로(차감·저장·이벤트)의 상세 검증은 WalletPaymentApproverTest로 이관.
 // confirmPg는 7-13 plan WS-C로 재작성(get-or-create 예약) — 해당 동작은 PaymentServiceConfirmTest.
 class PaymentServiceTest {
 
-  private static final String COMPLETED_TOPIC = "payment.completed.events";
   private static final String SETTLEMENT_SOURCE_TOPIC = "payment.settlement.events";
 
   private final PaymentRepository paymentRepository = mock(PaymentRepository.class);
-  private final WalletRepository walletRepository = mock(WalletRepository.class);
-  private final WalletTransactionRepository walletTransactionRepository =
-      mock(WalletTransactionRepository.class);
-  private final PaymentEventRepository paymentEventRepository = mock(PaymentEventRepository.class);
   private final OrderValidationClient orderValidationClient = mock(OrderValidationClient.class);
   private final TossPaymentClient tossPaymentClient = mock(TossPaymentClient.class);
   private final DomainEventPublisher eventPublisher = mock(DomainEventPublisher.class);
   private final PaymentFinalizer paymentFinalizer = mock(PaymentFinalizer.class);
+  private final WalletPaymentApprover walletPaymentApprover = mock(WalletPaymentApprover.class);
 
   private PaymentService paymentService;
 
@@ -55,71 +48,66 @@ class PaymentServiceTest {
     paymentService =
         new PaymentService(
             paymentRepository,
-            walletRepository,
-            walletTransactionRepository,
-            paymentEventRepository,
             orderValidationClient,
             tossPaymentClient,
             eventPublisher,
-            paymentFinalizer);
+            paymentFinalizer,
+            walletPaymentApprover);
 
     orderId = UUID.randomUUID();
     memberId = UUID.randomUUID();
     amount = 10_000L;
     idempotencyKey = "idem-" + UUID.randomUUID();
-
-    // 빌더가 만든 객체를 그대로 돌려주는 저장 스텁 — 대부분의 케이스에서 재사용.
-    when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-    when(walletRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-    when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-    when(paymentEventRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
   }
 
   // ---------- payWithWallet ----------
 
   @Test
-  void WALLET_결제_정상_흐름이면_잔액차감_저장_completed이벤트_발행까지_수행된다() {
+  void WALLET_결제_정상_흐름이면_WalletPaymentApprover에_위임하고_결과를_반환한다() {
     PayWithWalletCommand command =
         new PayWithWalletCommand(orderId, memberId, amount, idempotencyKey);
     when(paymentRepository.findByIdempotencyKey(idempotencyKey)).thenReturn(Optional.empty());
     when(orderValidationClient.validate(orderId, memberId, amount))
         .thenReturn(new OrderValidationResult(memberId, amount, "APPROVED", true));
-    Wallet wallet = Wallet.builder().memberId(memberId).balance(10_000L).build();
-    when(walletRepository.findOrCreateByMemberId(memberId)).thenReturn(wallet);
-    when(walletRepository.tryDeduct(any(), eq(amount))).thenReturn(1);
-    when(walletRepository.findByMemberId(memberId))
-        .thenReturn(Optional.of(Wallet.builder().memberId(memberId).balance(0L).build()));
+    Payment approved =
+        Payment.builder()
+            .id(UUID.randomUUID())
+            .orderId(orderId)
+            .memberId(memberId)
+            .amount(amount)
+            .method(Payment.Method.WALLET)
+            .status(Payment.Status.APPROVED)
+            .idempotencyKey(idempotencyKey)
+            .build();
+    when(walletPaymentApprover.deductAndApprove(any(), any())).thenReturn(approved);
 
     PaymentResult result = paymentService.payWithWallet(command);
 
     assertThat(result.status()).isEqualTo("APPROVED");
     assertThat(result.amount()).isEqualTo(amount);
-    verify(eventPublisher)
-        .publish(eq("PAYMENT"), any(), eq(COMPLETED_TOPIC), any(PaymentCompletedPayload.class));
+    verify(walletPaymentApprover).deductAndApprove(eq(command), any());
+    // completed 이벤트 발행 검증은 approver 책임 — WalletPaymentApproverTest 참조.
+    verifyNoInteractions(eventPublisher);
   }
 
   @Test
-  void WALLET_결제시_잔액부족이면_INSUFFICIENT_BALANCE_예외가_발생하고_이후_단계는_호출되지_않는다() {
+  void WALLET_결제시_잔액부족이면_approver가_던진_INSUFFICIENT_BALANCE_예외가_전파된다() {
     PayWithWalletCommand command =
         new PayWithWalletCommand(orderId, memberId, amount, idempotencyKey);
     when(paymentRepository.findByIdempotencyKey(idempotencyKey)).thenReturn(Optional.empty());
     when(orderValidationClient.validate(orderId, memberId, amount))
         .thenReturn(new OrderValidationResult(memberId, amount, "APPROVED", true));
-    when(walletRepository.findOrCreateByMemberId(memberId))
-        .thenReturn(Wallet.builder().memberId(memberId).balance(0L).build());
-    when(walletRepository.tryDeduct(any(), eq(amount))).thenReturn(0);
+    when(walletPaymentApprover.deductAndApprove(any(), any()))
+        .thenThrow(new BusinessException(PaymentErrorCode.INSUFFICIENT_BALANCE));
 
     assertThatThrownBy(() -> paymentService.payWithWallet(command))
         .isInstanceOf(BusinessException.class)
         .extracting(e -> ((BusinessException) e).getErrorCode())
         .isEqualTo(PaymentErrorCode.INSUFFICIENT_BALANCE);
-
-    verify(paymentRepository, never()).save(any());
-    verify(eventPublisher, never()).publish(any(), any(), any(), any());
   }
 
   @Test
-  void WALLET_결제시_Order_검증에_실패하면_ORDER_VALIDATION_FAILED_예외가_발생하고_잔액차감을_시도하지_않는다() {
+  void WALLET_결제시_Order_검증에_실패하면_ORDER_VALIDATION_FAILED_예외가_발생하고_approver를_호출하지_않는다() {
     PayWithWalletCommand command =
         new PayWithWalletCommand(orderId, memberId, amount, idempotencyKey);
     when(paymentRepository.findByIdempotencyKey(idempotencyKey)).thenReturn(Optional.empty());
@@ -131,7 +119,7 @@ class PaymentServiceTest {
         .extracting(e -> ((BusinessException) e).getErrorCode())
         .isEqualTo(PaymentErrorCode.ORDER_VALIDATION_FAILED);
 
-    verify(walletRepository, never()).tryDeduct(any(), any());
+    verify(walletPaymentApprover, never()).deductAndApprove(any(), any());
   }
 
   @Test
@@ -161,7 +149,7 @@ class PaymentServiceTest {
     assertThat(result.paymentId()).isEqualTo(existing.getId());
     assertThat(result.status()).isEqualTo("APPROVED");
     verifyNoInteractions(orderValidationClient);
-    verify(walletRepository, never()).tryDeduct(any(), any());
+    verify(walletPaymentApprover, never()).deductAndApprove(any(), any());
   }
 
   @Test
@@ -187,6 +175,8 @@ class PaymentServiceTest {
         .isInstanceOf(BusinessException.class)
         .extracting(e -> ((BusinessException) e).getErrorCode())
         .isEqualTo(PaymentErrorCode.IDEMPOTENCY_KEY_CONFLICT);
+
+    verify(walletPaymentApprover, never()).deductAndApprove(any(), any());
   }
 
   // payWithPg는 7-13 plan D1로 제거(PG는 confirm 단일 진입점). confirmPg 신규 동작은 PaymentServiceConfirmTest.

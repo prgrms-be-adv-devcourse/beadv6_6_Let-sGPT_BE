@@ -29,6 +29,7 @@ jobs:
             product: ['**/product/**']
             settlement: ['**/settlement/**']
             search: ['**/search/**']
+            recommendation: ['**/recommendation/**']
             queue: ['**/queue/**']
 
       - name: Resolve build matrix

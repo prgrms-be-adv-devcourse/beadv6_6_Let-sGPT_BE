@@ -39,7 +39,6 @@ spec:
             - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
-            - { name: SPRING_JPA_OPEN_IN_VIEW, value: "false" }
             - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: "3" }
           # 기동 완료까지 최대 300초 유예(2vCPU에서 6개 JVM 동시 부팅 + kubelet/kube 예약 감안, 실측 최악 251s) — 이후 liveness로 전환. k3s_node_coldboot_contention_plan §2-B/§2-A 동시 적용 전제
           startupProbe:

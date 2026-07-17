@@ -10,16 +10,19 @@ import com.openat.order.domain.model.OrderStatus;
 import com.openat.order.presentation.dto.CreateOrderRequest;
 import com.openat.order.presentation.dto.CreateOrderResponse;
 import com.openat.order.presentation.dto.InternalOrderValidationResponse;
+import com.openat.order.presentation.dto.InternalPurchaseSignalResponse;
 import com.openat.order.presentation.dto.OrderCancelResponse;
 import com.openat.order.presentation.dto.OrderResponse;
 import com.openat.order.presentation.dto.OrderSummaryResponse;
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -31,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping
 @RequiredArgsConstructor
+@Validated
 public class OrderController implements OrderApiSpec {
 
     private final OrderUseCase orderUseCase;
@@ -91,6 +95,17 @@ public class OrderController implements OrderApiSpec {
     ) {
         return ResponseEntity.ok(
                 InternalOrderValidationResponse.from(orderUseCase.getPaymentValidationInfo(memberId, orderId)));
+    }
+
+    @Override
+    @GetMapping("/internal/v1/orders/purchase-signals")
+    public ResponseEntity<List<InternalPurchaseSignalResponse>> getPurchaseSignals(
+            @RequestParam UUID memberId,
+            @RequestParam(defaultValue = "20") int limit
+    ) {
+        return ResponseEntity.ok(orderUseCase.getPurchaseSignals(memberId, limit).stream()
+                .map(InternalPurchaseSignalResponse::from)
+                .toList());
     }
 
     private UUID memberId(UserContext userContext) {

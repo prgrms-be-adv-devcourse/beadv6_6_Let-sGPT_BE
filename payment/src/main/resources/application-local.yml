@@ -7,8 +7,9 @@ spring:
     bootstrap-servers: localhost:29092
 
 pg:
-  client-key: localtest-dummy
-  secret-key: localtest-dummy
+  # .env에 토스 테스트 키가 있으면 실 토스 연동, 없으면 dummy로 부팅만 됨(결제 시도 시 토스가 401 거절).
+  # 스텁 PG 클라이언트는 2026-07-17 제거 — local도 compose와 동일하게 RealTossPaymentClient가 뜬다.
+  secret-key: ${PG_SECRET_KEY:localtest-dummy}
 
 services:
   member:

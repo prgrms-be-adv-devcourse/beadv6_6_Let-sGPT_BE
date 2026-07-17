@@ -20,10 +20,7 @@ import com.openat.payment.application.event.DomainEventPublisher;
 import com.openat.payment.application.exception.PaymentErrorCode;
 import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.domain.model.Payment;
-import com.openat.payment.domain.repository.PaymentEventRepository;
 import com.openat.payment.domain.repository.PaymentRepository;
-import com.openat.payment.domain.repository.WalletRepository;
-import com.openat.payment.domain.repository.WalletTransactionRepository;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,14 +31,11 @@ import org.mockito.ArgumentCaptor;
 class PaymentServiceConfirmTest {
 
   private final PaymentRepository paymentRepository = mock(PaymentRepository.class);
-  private final WalletRepository walletRepository = mock(WalletRepository.class);
-  private final WalletTransactionRepository walletTransactionRepository =
-      mock(WalletTransactionRepository.class);
-  private final PaymentEventRepository paymentEventRepository = mock(PaymentEventRepository.class);
   private final OrderValidationClient orderValidationClient = mock(OrderValidationClient.class);
   private final TossPaymentClient tossPaymentClient = mock(TossPaymentClient.class);
   private final DomainEventPublisher eventPublisher = mock(DomainEventPublisher.class);
   private final PaymentFinalizer paymentFinalizer = mock(PaymentFinalizer.class);
+  private final WalletPaymentApprover walletPaymentApprover = mock(WalletPaymentApprover.class);
 
   private PaymentService paymentService;
 
@@ -56,13 +50,11 @@ class PaymentServiceConfirmTest {
     paymentService =
         new PaymentService(
             paymentRepository,
-            walletRepository,
-            walletTransactionRepository,
-            paymentEventRepository,
             orderValidationClient,
             tossPaymentClient,
             eventPublisher,
-            paymentFinalizer);
+            paymentFinalizer,
+            walletPaymentApprover);
 
     orderId = UUID.randomUUID();
     memberId = UUID.randomUUID();

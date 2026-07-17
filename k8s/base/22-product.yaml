@@ -52,7 +52,6 @@ spec:
             - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
-            - { name: SPRING_JPA_OPEN_IN_VIEW, value: "false" }
             - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: "3" }
             # 7-16-s3_presigned_oidc_plan §7-2 — AWS OIDC 배선.
             # AWS_ROLE_ARN은 서비스마다 값이 달라 configmap에 못 넣는다(§7-3) → 여기 Deployment env.

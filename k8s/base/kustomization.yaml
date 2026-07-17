@@ -23,6 +23,7 @@ resources:
   - 25-settlement.yaml
   - 26-search.yaml
   - 27-queue.yaml
+  - 28-recommendation.yaml
   - 30-frontend.yaml
   - 31-ingress.yaml
   - 32-https-redirect-middleware.yaml

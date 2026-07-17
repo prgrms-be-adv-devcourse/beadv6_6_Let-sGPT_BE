@@ -26,8 +26,9 @@
 | 정산(settlement) | 9140 | 이벤트 기반 판매 적재, Spring Batch 월 정산 |
 | 검색(search, **파이널**) | - | Elasticsearch 색인·하이브리드 검색 |
 | AI(ai, **파이널**) | - | Spring AI·RAG 챗봇·임베딩·WebFlux SSE |
+| 추천(recommendation, **파이널**) | 9220 | (설계 예정) |
 
-- 포트 규칙: 메인 도메인은 **10단위 증가**, 도메인 파생 서비스는 **부모 포트 + 1**.
+- 포트 규칙: 메인 도메인(세미 5개, 1인 1도메인)은 **10단위 증가**(9100~9140). 파이널 파생 서비스(같은 담당자가 세미 이후 추가로 만드는 서비스)는 **담당자 메인 도메인 포트 + 100**(예: member 9100 담당자의 파생 서비스 queue → 9200, settlement 9140 담당자의 파생 서비스 search → 9240).
 
 ---
 
@@ -201,8 +202,8 @@
 | `refund.completed.events` | 결제 | 주문 | refundId, orderId, amount *(정산은 미구독 — 아래 `payment.settlement.events`로 적재)* |
 | `payment.settlement.events` | 결제 | 정산 | 정산 적재용 판매·환불 데이터 *(payload는 payment·정산 계약 참조, 2026-07-09 코드 확인으로 카탈로그 추가)* |
 | `refund.failed.events` | 결제 | 주문 | orderId, reason |
-| `product.created.events` | 상품 | 검색·AI(파이널) | id, name, description, categoryId, categoryName, sellerName, price, thumbnailKey, createdAt, updatedAt |
-| `product.updated.events` | 상품 | 검색·AI(파이널) | id, name, description, categoryId, categoryName, sellerName, price, thumbnailKey, createdAt, updatedAt |
+| `product.created.events` | 상품 | 검색·AI(파이널) | id, sellerId, name, description, categoryId, categoryName, sellerName, price, thumbnailKey, createdAt, updatedAt |
+| `product.updated.events` | 상품 | 검색·AI(파이널) | id, sellerId, name, description, categoryId, categoryName, sellerName, price, thumbnailKey, createdAt, updatedAt |
 | `product.deleted.events` | 상품 | 검색·AI(파이널) | id, deletedAt |
 | `order.stock.adjusted.events` | 주문 | 대기열(파이널) | eventId, dropId, count(변경 수량), reason(`COMPLETED`\|`REFUNDED`) — 드롭별 판매 증감 통지 *(2026-07-14 계약 확정, 유실·중복 상호 감수)* |
 

@@ -6,13 +6,11 @@ import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
-// X-3 — 주문 서비스 내부 API 호출용 RestClient. real 프로필에서만 등록.
+// X-3 — 주문 서비스 내부 API 호출용 RestClient. 전 프로필 공통 등록.
 @Configuration
-@Profile("real")
 public class OrderClientConfig {
 
     // WS-E(7/10 observability plan) — 정적 RestClient.builder()는 auto-configured 계측(전파 헤더 +
