@@ -43,8 +43,8 @@ public class WalletChargeRepositoryAdaptor implements WalletChargeRepository {
     }
 
     @Override
-    public void updatePgPaymentKey(UUID id, String pgPaymentKey) {
-        walletChargeJpaRepository.updatePgPaymentKey(id, pgPaymentKey, RequestHasher.hash(pgPaymentKey));
+    public int reservePgPaymentKeyIfPending(UUID id, String pgPaymentKey) {
+        return walletChargeJpaRepository.reservePgPaymentKeyIfPending(id, pgPaymentKey, RequestHasher.hash(pgPaymentKey));
     }
 
     @Override
