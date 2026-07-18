@@ -1,7 +1,5 @@
 package com.openat.payment.infrastructure.webhook;
 
-import org.springframework.transaction.annotation.Transactional;
-
 // Template Method — payments/wallet-charge/refunds 웹훅 3종이 공유하는 파싱→멱등→조건부UPDATE→분기 골격.
 // Strategy(PgSignatureVerifier 인터페이스)는 기각(plan.md A: PG 추가 계획 없음).
 // 서명검증(TossSignatureVerifier)은 제거(2026-06-24) — 실제 토스 웹훅은 우리 자체 HMAC 헤더를 보내지 않아
@@ -12,10 +10,11 @@ import org.springframework.transaction.annotation.Transactional;
 // P = 파싱된 페이로드, T = applyConditionalUpdate가 다루는 애그리거트.
 public abstract class AbstractPgWebhookHandler<P, T> {
 
-  // final이면 Spring의 CGLIB 프록시가 이 메서드를 오버라이드할 수 없어 @Transactional이 적용되지 않음
-  // (트랜잭션 없이 @Modifying 쿼리가 실행돼 TransactionRequiredException) — final 제거, 서브클래스는 여전히 오버라이드 안 함.
-  @Transactional
-  public WebhookResult handle(WebhookRequest request) {
+  // 웹훅 처리는 @Transactional을 걸지 않는다 — applyConditionalUpdate 안에서 토스 재조회(queryPaymentStatus/
+  // queryRefundStatus) HTTP가 일어나는데, 트랜잭션을 걸면 그 왕복 내내 DB 커넥션을 점유한다(confirmPg와 동일 원칙).
+  // 대신 "재조회(TX 밖) → 확정(각 Finalizer의 @Transactional)" 2단으로 처리한다: 상태 조회는 커넥션 비점유로 두고,
+  // 조건부 UPDATE(affected rows 기준 원자성)는 Finalizer가 자기 짧은 TX에서 수행한다. 오버라이드 대상이 아니므로 final.
+  public final WebhookResult handle(WebhookRequest request) {
     P payload =
         parse(request); // 1회만 파싱(종전: checkIdempotency/applyConditionalUpdate 각자 파싱하던 이중화 제거)
     if (payload == null) {
