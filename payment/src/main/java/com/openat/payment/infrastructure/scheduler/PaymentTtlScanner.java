@@ -3,10 +3,13 @@ package com.openat.payment.infrastructure.scheduler;
 import com.openat.payment.application.client.TossPaymentClient;
 import com.openat.payment.application.client.TossQueryResult;
 import com.openat.payment.application.service.PaymentFinalizer;
+import com.openat.payment.application.service.RefundFinalizer;
 import com.openat.payment.application.service.WalletChargeFinalizer;
 import com.openat.payment.domain.model.Payment;
+import com.openat.payment.domain.model.Refund;
 import com.openat.payment.domain.model.WalletCharge;
 import com.openat.payment.domain.repository.PaymentRepository;
+import com.openat.payment.domain.repository.RefundRepository;
 import com.openat.payment.domain.repository.WalletChargeRepository;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -27,9 +30,11 @@ public class PaymentTtlScanner {
 
   private final PaymentRepository paymentRepository;
   private final WalletChargeRepository walletChargeRepository;
+  private final RefundRepository refundRepository;
   private final TossPaymentClient tossPaymentClient;
   private final PaymentFinalizer finalizer;
   private final WalletChargeFinalizer chargeFinalizer;
+  private final RefundFinalizer refundFinalizer;
 
   // N분 — pgPaymentKey가 NULL인 row(handleMissingKey) 기준. 운영 기본값 10분, 시연/테스트 시 application-local.yml에서
   // 짧게 오버라이드.
@@ -50,14 +55,18 @@ public class PaymentTtlScanner {
   public PaymentTtlScanner(
       PaymentRepository paymentRepository,
       WalletChargeRepository walletChargeRepository,
+      RefundRepository refundRepository,
       TossPaymentClient tossPaymentClient,
       PaymentFinalizer finalizer,
-      WalletChargeFinalizer chargeFinalizer) {
+      WalletChargeFinalizer chargeFinalizer,
+      RefundFinalizer refundFinalizer) {
     this.paymentRepository = paymentRepository;
     this.walletChargeRepository = walletChargeRepository;
+    this.refundRepository = refundRepository;
     this.tossPaymentClient = tossPaymentClient;
     this.finalizer = finalizer;
     this.chargeFinalizer = chargeFinalizer;
+    this.refundFinalizer = refundFinalizer;
   }
 
   @Scheduled(fixedDelay = 60_000)
@@ -92,6 +101,18 @@ public class PaymentTtlScanner {
       } catch (Exception e) {
         log.error(
             "[PaymentTtlScanner] WalletCharge 처리 실패, 다음 주기에 재시도: chargeId={}", charge.getId(), e);
+      }
+    }
+
+    // 환불 PG 호출이 타임아웃(UNKNOWN)돼 PENDING으로 굳은 건도 같은 주기로 회수. 환불은 항상 PG 결제 대상이라
+    // (WALLET 환불은 접수 TX에서 즉시 완료됨) pgPaymentKey가 있어 재조회로만 판정 — Payment의 handleWithKey와 동형.
+    List<Refund> staleRefunds = refundRepository.findStalePending(threshold);
+    for (Refund refund : staleRefunds) {
+      try {
+        handleStaleRefund(refund);
+      } catch (Exception e) {
+        log.error(
+            "[PaymentTtlScanner] Refund 처리 실패, 다음 주기에 재시도: refundId={}", refund.getId(), e);
       }
     }
   }
@@ -173,6 +194,38 @@ public class PaymentTtlScanner {
       case NOT_FOUND ->
           finalizer.finalizePending(
               payment.getId(), Payment.Status.FAILED, result.pgTxId(), "EXPIRED");
+    }
+  }
+
+  // 환불 PG 응답을 못 받아 굳은 PENDING Refund 회수 — 마지노선 도달 전엔 조회하지 않고(created_at 기준),
+  // 도달하면 토스에 1회 조회해 확정한다. RefundWebhookHandler.applyConditionalUpdate와 동일한 판정 로직.
+  private void handleStaleRefund(Refund refund) {
+    LocalDateTime deadlineThreshold = LocalDateTime.now().minusMinutes(finalizeDeadlineMinutes);
+    if (refund.getCreatedAt().isAfter(deadlineThreshold)) {
+      return; // 마지노선 전 — 조회하지 않음, 다음 주기에 재확인(그 사이 보조 웹훅이 확정할 수도 있다).
+    }
+    Payment payment = paymentRepository.findById(refund.getPaymentId()).orElse(null);
+    if (payment == null) {
+      log.warn("[PaymentTtlScanner] Refund의 Payment 없음, 다음 주기에 재시도: refundId={}", refund.getId());
+      return;
+    }
+    TossQueryResult result;
+    try {
+      // pgRefundKey가 null(refundPayment 타임아웃)이면 amount 폴백으로 매칭(RefundWebhookHandler와 동일).
+      result =
+          tossPaymentClient.queryRefundStatus(
+              payment.getPgPaymentKey(), refund.getPgRefundKey(), refund.getAmount());
+    } catch (Exception e) {
+      // Payment/충전과 달리 강제 종결하지 않는다 — 환불을 임의 FAILED로 닫으면 환불액 원복이 일어나는데, 실제로는
+      // PG에서 환불이 성사됐을 수 있어 이중 환불 창이 열린다. PENDING 유지 후 다음 주기·야간 대사에 위임.
+      log.warn("[PaymentTtlScanner] 환불 재조회 실패, PENDING 유지: refundId={}", refund.getId(), e);
+      return;
+    }
+    if (result.status() == TossQueryResult.Status.APPROVED) {
+      refundFinalizer.complete(refund.getId(), payment, result.pgTxId());
+    } else {
+      // FAILED/NOT_FOUND — PG가 환불을 처리하지 않았음. fail이 환불액 원복(tryDecreaseRefundedAmount)까지 수행.
+      refundFinalizer.fail(refund.getId(), payment, "PG_REJECTED");
     }
   }
 }
