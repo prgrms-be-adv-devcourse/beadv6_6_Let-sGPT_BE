@@ -104,9 +104,24 @@ public class SecurityConfig {
                         // (Ingress는 /와 /api만 라우팅하므로 외부에 노출되지 않는 경로)
                         .pathMatchers("/actuator/health/**", "/actuator/prometheus").permitAll()
 
-                        // payment 웹훅 — Toss PG가 JWT 없이 직접 호출 (apigateway/docs/SECURITY_CONFIG_GUIDE.md 패턴)
-                        // payment 라우트가 Path=/payment/**+StripPrefix=1(product/order/settlement와 동일 컨벤션,
-                        // member만 예외)이라 Security 필터가 보는 실제 요청 경로도 /payment 접두사가 붙어야 매칭된다.
+                        // payment 웹훅 — Toss PG가 JWT 없이 직접 호출 (apigateway/docs/SECURITY_CONFIG_GUIDE.md 패턴).
+                        // 서명검증은 없고(AbstractPgWebhookHandler, 2026-06-24 제거) PG 재조회가 진실 공급원이라
+                        // 인증을 방어선으로 삼지 않는 설계 — 임의 호출자가 때려도 재조회 단계에서 걸러진다.
+                        //
+                        // Security(WebFilterChainProxy, order=-100)는 WebFilter라 라우트 선택·StripPrefix보다
+                        // 항상 먼저 실행된다 → 여기서 매칭되는 건 "클라이언트가 보낸 원본 경로"다.
+                        // payment로 가는 경로가 두 갈래라 양쪽 다 등록한다:
+                        //  1) /api/v1/... — payments-api/wallet-api/refunds-api 라우트(StripPrefix 없음).
+                        //     Ingress가 외부에 노출하는 경로(/api)라 Toss 웹훅이 실제로 타는 경로.
+                        //     Toss 개발자센터 등록 URL: https://openat.duckdns.org/api/v1/payments/webhook 등.
+                        //  2) /payment/... — payment 라우트(Path=/payment/**+StripPrefix=1, compose 프로필 한정).
+                        //     Ingress에 /payment rule이 없어 외부 도달은 불가하나, 클러스터 내부 호출과
+                        //     향후 /payment 노출 대비로 유지한다.
+                        .pathMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/payments/webhook",
+                                "/api/v1/wallet/charge/webhook",
+                                "/api/v1/refunds/webhook").permitAll()
                         .pathMatchers(
                                 HttpMethod.POST,
                                 "/payment/api/v1/payments/webhook",
