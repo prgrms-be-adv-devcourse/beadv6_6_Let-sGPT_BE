@@ -1,0 +1,36 @@
+# observability 네임스페이스 ingress 격리: default-deny + 내부 전면허용 + OTLP 예외.
+# 원래 설계는 앱이 Tempo에 직접 push하던 구조라 tempo OTLP 예외였으나,
+# 앱 트래픽이 otel-collector 게이트웨이 경유로 전환되어(11-otel-collector.yaml)
+# openat에서의 유일한 진입점은 otel-collector 4317/4318이다. tempo는 collector가
+# 같은 네임스페이스에서 전달하므로 내부 전면허용 정책으로 커버된다.
+# kubectl port-forward(grafana/prometheus 접근)는 NetworkPolicy 적용 대상이 아니다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: observability-intra-only
+  namespace: observability
+spec:
+  # 전체 파드 선택 = default-deny, 내부 파드 간 트래픽만 허용.
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector-otlp-from-openat
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels: { app: otel-collector }
+  policyTypes: [Ingress]
+  ingress:
+    # openat 앱 파드의 OTLP push(http 4318, grpc 4317)만 외부 예외로 허용.
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: openat }
+      ports:
+        - { port: 4318, protocol: TCP }
+        - { port: 4317, protocol: TCP }

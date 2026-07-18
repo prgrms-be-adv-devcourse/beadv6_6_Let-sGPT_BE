@@ -12,3 +12,4 @@ resources:
   - 21-postgres-exporter.yaml
   - 30-grafana.yaml
   - 31-grafana-dashboard-jvm.yaml
+  - 40-networkpolicy.yaml
