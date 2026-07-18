@@ -24,6 +24,11 @@ spec:
         prometheus.io/port: "9140"
         prometheus.io/path: "/actuator/prometheus"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       imagePullSecrets:
         - name: ghcr-pull
       containers:
@@ -61,6 +66,15 @@ spec:
           resources:
             limits: { memory: "600Mi" }
             requests: { cpu: "100m", memory: "400Mi" }   # gate2 A-5: 실사용 374>req320 스케줄러 정합
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

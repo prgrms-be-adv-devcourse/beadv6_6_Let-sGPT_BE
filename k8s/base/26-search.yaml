@@ -33,6 +33,11 @@ spec:
         prometheus.io/port: "9240"
         prometheus.io/path: "/actuator/prometheus"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       # 7-16-s3_presigned_oidc_plan §7-2/§7-4③ — SA ref + projected 토큰 + AWS env 3종이
       # 모두 있어야 SDK가 WebIdentity provider를 켠다(하나라도 빠지면 자격증명 자체가 안 잡힘).
       serviceAccountName: search-sa
@@ -65,6 +70,7 @@ spec:
             - { name: AWS_STS_REGIONAL_ENDPOINTS, value: "regional" }
           volumeMounts:
             - { name: aws-token, mountPath: /var/run/secrets/aws, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
           startupProbe:
             httpGet: { path: /actuator/health/liveness, port: 9240 }
             periodSeconds: 5
@@ -83,7 +89,13 @@ spec:
             # ES가 벡터를 들고 있고 search는 쿼리당 임베딩 1개(6KB)만 다뤄 축소 여유 있음.
             limits: { memory: "650Mi" }
             requests: { cpu: "100m", memory: "460Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
       volumes:
+        - name: tmp
+          emptyDir: {}
         # 기본 SA 토큰(audience=k8s api)이 아니라 STS 전용 audience 토큰을 별도 발급받는다.
         - name: aws-token
           projected:
