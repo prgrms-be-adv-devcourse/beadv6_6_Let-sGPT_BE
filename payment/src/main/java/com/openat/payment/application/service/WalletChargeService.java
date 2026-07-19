@@ -108,10 +108,13 @@ public class WalletChargeService implements WalletChargeUseCase {
     return new WalletChargeResult(pending.getId(), pending.getStatus().name(), pending.getAmount());
   }
 
+  // confirmPg와 동일한 TX 분리 원칙(D5) — 메서드에 @Transactional을 걸지 않는다. 걸면 토스 confirm HTTP 왕복
+  // 내내 DB 커넥션을 점유한다(pool=2에서 즉시 고갈, osiv_throughput_analysis §2-3 [E]). TX는 아래 세 단위로 분리:
+  // [예약 TX1] reservePgPaymentKeyIfPending -> [TX 밖] 토스 confirm -> [확정 TX2] WalletChargeFinalizer.
   @Override
-  @Transactional
   public WalletChargeResult confirmCharge(ChargeConfirmCommand command) {
     // confirmPg와 동일 원칙(하자드20) — 여기서는 #7(바디해시 대조)을 쓰지 않고 status 기준으로만 멱등성을 판단한다.
+    // [1] 조회·소유자검증·멱등 조기반환(TX 밖 — 읽기, 커넥션 비점유).
     WalletCharge charge =
         walletChargeRepository
             .findById(command.chargeId())
@@ -126,10 +129,18 @@ public class WalletChargeService implements WalletChargeUseCase {
       return new WalletChargeResult(charge.getId(), charge.getStatus().name(), charge.getAmount());
     }
 
-    // 신-하자드9와 동일 원칙 — PG를 호출하기 *전에* 먼저 pgPaymentKey를 기록.
-    walletChargeRepository.updatePgPaymentKey(charge.getId(), command.paymentKey());
+    // [2] 예약(TX1) — 신-하자드9와 동일 원칙으로 PG 호출 *전에* pgPaymentKey를 기록하되, WHERE status='PENDING'
+    // 조건부 UPDATE로 선점한다. affected=0이면 그 사이 다른 경로가 확정한 것 — PG 재호출 없이 현재 상태를 반환.
+    int reserved =
+        walletChargeRepository.reservePgPaymentKeyIfPending(charge.getId(), command.paymentKey());
+    if (reserved == 0) {
+      WalletCharge current = walletChargeRepository.findById(charge.getId()).orElse(charge);
+      return new WalletChargeResult(
+          current.getId(), current.getStatus().name(), current.getAmount());
+    }
 
-    // A10과 동일 원칙 — 멱등키를 confirm 호출에 부착.
+    // [3] 토스 confirm(TX 밖, DB 커넥션 비점유) — A10과 동일 원칙으로 멱등키를 confirm 호출에 부착.
+    // 타임아웃/네트워크 예외는 삼키지 않고 그대로 전파 — row는 PENDING(+pgPaymentKey)로 남아 TTL 스캐너가 수렴한다.
     TossConfirmResult confirmResult =
         tossPaymentClient.confirmCharge(
             command.paymentKey(), command.chargeId(), command.amount(), command.idempotencyKey());
@@ -137,8 +148,8 @@ public class WalletChargeService implements WalletChargeUseCase {
     WalletCharge.Status newStatus =
         confirmResult.approved() ? WalletCharge.Status.APPROVED : WalletCharge.Status.FAILED;
 
-    // 하자드10과 동일 원칙 — 보조 웹훅과 동시에 같은 row를 만질 수 있어 WalletChargeFinalizer의 조건부
-    // UPDATE로 원자처리(7-12 plan WS-D). lost-race면 이 스레드의 계산값이 아니라 현재 DB상태를 그대로 반환.
+    // [4] 확정(TX2) — 하자드10과 동일 원칙, WalletChargeFinalizer의 조건부 UPDATE로 원자처리(7-12 plan WS-D).
+    // lost-race면 이 스레드의 계산값이 아니라 현재 DB상태를 그대로 반환.
     WalletCharge updated =
         walletChargeFinalizer
             .finalizePending(charge.getId(), newStatus, confirmResult.pgTxId())
