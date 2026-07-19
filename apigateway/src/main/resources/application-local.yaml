@@ -59,6 +59,30 @@ spring:
                 - Path=/order/**
               filters:
                 - StripPrefix=1
+            # 결제 confirm 유량제어(유저별) — 넓은 payment-api보다 먼저 매칭되도록 order를 낮게(-1) 지정.
+            - id: payment-confirm-rl
+              uri: http://localhost:9130
+              order: -1
+              predicates:
+                - Path=/api/v1/payments/confirm,/api/v1/wallet/charge/confirm
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    redis-rate-limiter.replenishRate: ${GW_CONFIRM_RL_REPLENISH:2}
+                    redis-rate-limiter.burstCapacity: ${GW_CONFIRM_RL_BURST:5}
+                    key-resolver: "#{@userIdKeyResolver}"
+            # 웹훅 유량제어(IP별) — 서명 없는 웹훅이 매 호출 토스 재조회를 유발하는 증폭 공격 차단.
+            - id: payment-webhook-rl
+              uri: http://localhost:9130
+              order: -1
+              predicates:
+                - Path=/api/v1/payments/webhook,/api/v1/refunds/webhook,/api/v1/wallet/charge/webhook
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    redis-rate-limiter.replenishRate: ${GW_WEBHOOK_RL_REPLENISH:5}
+                    redis-rate-limiter.burstCapacity: ${GW_WEBHOOK_RL_BURST:10}
+                    key-resolver: "#{@ipKeyResolver}"
             - id: payment-docs
               uri: http://localhost:9130
               predicates:

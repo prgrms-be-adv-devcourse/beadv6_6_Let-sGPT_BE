@@ -19,6 +19,11 @@ dependencies {
     // 분리됨(flyway/kafka와 같은 이유) — 없으면 OrderClientConfig/TossClientConfig의
     // RestClient.Builder 주입이 실패해 real 프로필 기동이 깨짐(7-15 research)
     implementation("org.springframework.boot:spring-boot-restclient")
+    // 아웃바운드 회복탄력성(토스 PG·주문검증) — 코어 프로그래매틱 사용(Boot 4.1 AOP 리스크로 스타터·어노테이션 미사용).
+    implementation("io.github.resilience4j:resilience4j-circuitbreaker:2.3.0")
+    implementation("io.github.resilience4j:resilience4j-ratelimiter:2.3.0")
+    // 서킷/리미터 상태를 기존 프로메테우스 노출로 바인딩(TaggedCircuitBreakerMetrics·TaggedRateLimiterMetrics)
+    implementation("io.github.resilience4j:resilience4j-micrometer:2.3.0")
 }
 
 tasks.withType<Test> {
