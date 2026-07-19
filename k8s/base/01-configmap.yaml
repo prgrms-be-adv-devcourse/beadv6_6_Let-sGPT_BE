@@ -21,6 +21,8 @@ data:
   MANAGEMENT_TRACING_EXPORT_OTLP_ENABLED: "true"
   MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4318/v1/traces"
   MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
+  # 가상 스레드 베이스라인을 명시값 off로 고정 — 전 서비스 공통 정책. 이후 토글은 이 값 변경만으로 처리.
+  SPRING_THREADS_VIRTUAL_ENABLED: "false"
   # 7-16-s3_presigned_oidc_plan §7-3 — S3 이미지 저장 비민감 공용값(버킷명·리전).
   # AWS_ROLE_ARN은 서비스마다 달라 여기 넣지 않는다 — Deployment env(22-product/26-search)에서 직접 주입.
   # 버킷명은 terraform(images.tf)이 생성한 실명과 일치해야 한다.
