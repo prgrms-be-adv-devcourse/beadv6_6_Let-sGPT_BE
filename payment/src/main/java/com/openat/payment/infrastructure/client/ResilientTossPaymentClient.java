@@ -67,10 +67,19 @@ public class ResilientTossPaymentClient implements TossPaymentClient {
   public TossRefundResult refundPayment(String pgPaymentKey, Long amount, String idempotencyKey) {
     try {
       return decorate(() -> delegate.refundPayment(pgPaymentKey, amount, idempotencyKey)).get();
-    } catch (CallNotPermittedException | RequestNotPermitted e) {
-      // 서킷 open/유량 거절도 응답 불확실과 동일 취급 — PENDING 유지, 보조 웹훅이 나중에 확정.
-      log.warn("[ResilientTossPaymentClient] 환불 호출 차단({}), UNKNOWN 처리: pgPaymentKey={}",
-          e.getClass().getSimpleName(), pgPaymentKey);
+    } catch (CallNotPermittedException e) {
+      // 서킷 OPEN(PG 장애 국면) — 응답 불확실과 동일 취급, PENDING 유지, 보조 웹훅이 나중에 확정.
+      log.warn(
+          "[ResilientTossPaymentClient] 토스 서킷 OPEN — 환불 호출 차단, UNKNOWN 처리: pgPaymentKey={}",
+          pgPaymentKey,
+          e);
+      return TossRefundResult.unknown();
+    } catch (RequestNotPermitted e) {
+      // 유량 한도 초과(자가 보호) — 마찬가지로 PENDING 유지, 보조 웹훅이 나중에 확정.
+      log.warn(
+          "[ResilientTossPaymentClient] 토스 유량 한도 초과 — 환불 호출 차단, UNKNOWN 처리: pgPaymentKey={}",
+          pgPaymentKey,
+          e);
       return TossRefundResult.unknown();
     }
   }
@@ -94,9 +103,16 @@ public class ResilientTossPaymentClient implements TossPaymentClient {
   private TossConfirmResult callConfirm(Supplier<TossConfirmResult> call) {
     try {
       return decorate(call).get();
-    } catch (CallNotPermittedException | RequestNotPermitted e) {
-      log.warn("[ResilientTossPaymentClient] confirm 호출 차단: {}", e.getClass().getSimpleName());
-      throw new BusinessException(PaymentErrorCode.PG_UNAVAILABLE);
+    } catch (CallNotPermittedException e) {
+      // 서킷 OPEN — PG 장애 국면. 원인 예외를 cause로 보존.
+      log.warn("[ResilientTossPaymentClient] 토스 서킷 OPEN — confirm 호출 차단", e);
+      throw new BusinessException(
+          PaymentErrorCode.PG_UNAVAILABLE, PaymentErrorCode.PG_UNAVAILABLE.getMessage(), e);
+    } catch (RequestNotPermitted e) {
+      // 유량 한도 초과 — 자가 보호. 원인 예외를 cause로 보존.
+      log.warn("[ResilientTossPaymentClient] 토스 유량 한도 초과 — confirm 호출 차단", e);
+      throw new BusinessException(
+          PaymentErrorCode.PG_UNAVAILABLE, PaymentErrorCode.PG_UNAVAILABLE.getMessage(), e);
     }
   }
 

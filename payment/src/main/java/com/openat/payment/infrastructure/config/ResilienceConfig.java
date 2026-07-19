@@ -10,6 +10,7 @@ import io.github.resilience4j.ratelimiter.RateLimiterConfig;
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,6 +26,7 @@ import org.springframework.web.client.ResourceAccessException;
  * <p>튜닝값은 env 외부화 + 코드 기본값(재컴파일 없는 rollout). 윈도우 크기(10)·최소호출수(5) 같은
  * 구조 파라미터는 튜닝 대상이 아니라 코드 고정.
  */
+@Slf4j
 @Configuration
 public class ResilienceConfig {
 
@@ -50,7 +52,7 @@ public class ResilienceConfig {
   @Bean
   public CircuitBreaker tossCircuitBreaker(
       CircuitBreakerRegistry registry,
-      @Value("${toss.cb.failure-rate:50}") float failureRate,
+      @Value("${toss.cb.failure-rate:30}") float failureRate,
       @Value("${toss.cb.slow-call-ms:3000}") long slowCallMs,
       @Value("${toss.cb.wait-open-s:10}") long waitOpenS) {
     CircuitBreakerConfig config =
@@ -64,7 +66,17 @@ public class ResilienceConfig {
             .waitDurationInOpenState(Duration.ofSeconds(waitOpenS))
             .recordExceptions(IllegalStateException.class, ResourceAccessException.class)
             .build();
-    return registry.circuitBreaker("toss", config);
+    CircuitBreaker circuitBreaker = registry.circuitBreaker("toss", config);
+    // OPEN 진입/복귀 사후 분석용 — 상태 전이 시점을 로그로 남긴다.
+    circuitBreaker
+        .getEventPublisher()
+        .onStateTransition(
+            event ->
+                log.warn(
+                    "[ResilienceConfig] toss 서킷 상태 전이: {} -> {}",
+                    event.getStateTransition().getFromState(),
+                    event.getStateTransition().getToState()));
+    return circuitBreaker;
   }
 
   /**
@@ -84,6 +96,7 @@ public class ResilienceConfig {
             .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
             .slidingWindowSize(WINDOW_SIZE)
             .minimumNumberOfCalls(MIN_CALLS)
+            // 내부 API라 보수화 불요(toss는 외부 PG라 평시 성공률 99.9% 기준 30으로 낮춤). 여기는 50 고정 유지.
             .failureRateThreshold(50f)
             .slowCallDurationThreshold(Duration.ofMillis(slowCallMs))
             .slowCallRateThreshold(SLOW_CALL_RATE)
