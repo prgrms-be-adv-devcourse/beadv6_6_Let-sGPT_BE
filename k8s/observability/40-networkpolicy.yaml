@@ -54,3 +54,23 @@ spec:
             matchLabels: { kubernetes.io/metadata.name: kube-system }
       ports:
         - { port: 3000, protocol: TCP }
+---
+# cert-manager HTTP-01 ACME solver 예외 — grafana-tls 발급 시 cert-manager가 이 네임스페이스에
+# 임시 solver 파드를 띄우고 Traefik이 /.well-known/acme-challenge/* 를 그 파드(8089)로 라우팅한다.
+# default-deny가 traefik→solver 유입을 막으면 self-check가 502로 고착돼 인증서가 영원히 pending
+# (2026-07-20 grafana-tls 발급 실측). solver 파드는 cert-manager가 아래 라벨을 자동 부착한다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: acme-solver-from-traefik
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels: { acme.cert-manager.io/http01-solver: "true" }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { port: 8089, protocol: TCP }
