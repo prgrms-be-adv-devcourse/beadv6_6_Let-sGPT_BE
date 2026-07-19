@@ -6,6 +6,8 @@ import com.openat.payment.application.client.TossPaymentClient;
 import com.openat.payment.application.client.TossPaymentDetail;
 import com.openat.payment.application.client.TossQueryResult;
 import com.openat.payment.application.client.TossRefundResult;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.util.List;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
@@ -24,9 +26,12 @@ public class RealTossPaymentClient implements TossPaymentClient {
     private static final String DEFAULT_CANCEL_REASON = "고객 요청에 의한 결제 취소";
 
     private final RestClient tossRestClient;
+    private final MeterRegistry meterRegistry;
 
-    public RealTossPaymentClient(@Qualifier("tossRestClient") RestClient tossRestClient) {
+    public RealTossPaymentClient(@Qualifier("tossRestClient") RestClient tossRestClient,
+            MeterRegistry meterRegistry) {
         this.tossRestClient = tossRestClient;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
@@ -41,21 +46,29 @@ public class RealTossPaymentClient implements TossPaymentClient {
 
     // 결제/충전 confirm은 같은 토스 API(POST /v1/payments/confirm)를 공유 — orderId 필드에 chargeId를 그대로 매핑(G1).
     private TossConfirmResult confirm(String paymentKey, String orderId, Long amount, String idempotencyKey) {
-        return tossRestClient.post()
-                .uri("/v1/payments/confirm")
-                .header(IDEMPOTENCY_KEY_HEADER, idempotencyKey)
-                .body(new ConfirmRequest(paymentKey, orderId, amount))
-                .exchange((request, response) -> {
-                    if (response.getStatusCode().is2xxSuccessful()) {
-                        ConfirmResponse body = response.bodyTo(ConfirmResponse.class);
-                        return TossConfirmResult.approved(body.lastTransactionKey());
-                    }
-                    if (response.getStatusCode().is4xxClientError()) {
-                        return TossConfirmResult.rejected(readErrorMessage(response));
-                    }
-                    // 5xx — 신-하자드9 보정 로직(confirm이 PG호출까지 갔는지 모르는 상태)에 위임, 예외를 그대로 던짐(G2).
-                    throw new IllegalStateException("토스 confirm 실패: status=" + response.getStatusCode());
-                });
+        Timer.Sample sample = Timer.start(meterRegistry);
+        String outcome = "error";
+        try {
+            TossConfirmResult result = tossRestClient.post()
+                    .uri("/v1/payments/confirm")
+                    .header(IDEMPOTENCY_KEY_HEADER, idempotencyKey)
+                    .body(new ConfirmRequest(paymentKey, orderId, amount))
+                    .exchange((request, response) -> {
+                        if (response.getStatusCode().is2xxSuccessful()) {
+                            ConfirmResponse body = response.bodyTo(ConfirmResponse.class);
+                            return TossConfirmResult.approved(body.lastTransactionKey());
+                        }
+                        if (response.getStatusCode().is4xxClientError()) {
+                            return TossConfirmResult.rejected(readErrorMessage(response));
+                        }
+                        // 5xx — 신-하자드9 보정 로직(confirm이 PG호출까지 갔는지 모르는 상태)에 위임, 예외를 그대로 던짐(G2).
+                        throw new IllegalStateException("토스 confirm 실패: status=" + response.getStatusCode());
+                    });
+            outcome = result.approved() ? "approved" : "rejected";
+            return result;
+        } finally {
+            sample.stop(meterRegistry.timer("payment.pg.call", "operation", "confirm", "outcome", outcome));
+        }
     }
 
     @Override

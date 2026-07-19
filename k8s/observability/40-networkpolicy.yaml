@@ -34,3 +34,23 @@ spec:
       ports:
         - { port: 4318, protocol: TCP }
         - { port: 4317, protocol: TCP }
+---
+# Grafana Ingress 노출(34-grafana-ingress.yaml) 예외 — 인그레스 컨트롤러(k3s 번들 Traefik, kube-system)
+# 파드가 grafana:3000으로 들어오는 트래픽만 허용. default-deny(observability-intra-only)에 더해지는 additive
+# 정책이라 내부 파드 간 허용은 그대로 유지된다.
+# NOTE: traefik 파드 위치를 kube-system으로 가정(k3s 기본). 다른 ns면 namespaceSelector 라벨을 교체할 것.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-from-traefik
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels: { app: grafana }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { port: 3000, protocol: TCP }

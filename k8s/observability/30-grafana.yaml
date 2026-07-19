@@ -1,6 +1,6 @@
-# WS-D(7/10 observability plan) — Grafana. 시연/본인용이라 Ingress 미노출(port-forward 원칙,
-# 외부 노출 최소화 — 7/11 보안작업과 함께 재론). admin 비밀번호는 하드코딩 금지(create-secrets.sh
-# 참고) — "실패는 시끄럽게" 원칙상 Secret 미존재 시 파드가 뜨지 않는 편이 낫다.
+# WS-D(7/10 observability plan) — Grafana. 이제 Ingress로 외부 노출(34-grafana-ingress.yaml,
+# Traefik rate-limit/inflight + HTTPS 리다이렉트 체인). admin 비밀번호는 하드코딩 금지(create-secrets.sh
+# 참고) — "실패는 시끄럽게" 원칙상 Secret(grafana-admin) 미존재 시 파드가 뜨지 않는 편이 낫다.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,12 +10,16 @@ data:
   datasources.yaml: |
     apiVersion: 1
     datasources:
+      # uid 고정 — 대시보드 JSON이 datasource를 uid로 참조(prometheus/tempo). 미지정 시 랜덤 uid가
+      # 배정되어 프로비저닝 대시보드의 datasource 참조가 깨진다. 기존 name 참조("Prometheus")도 계속 유효.
       - name: Prometheus
+        uid: prometheus
         type: prometheus
         access: proxy
         url: "http://prometheus:9090"
         isDefault: true
       - name: Tempo
+        uid: tempo
         type: tempo
         access: proxy
         url: "http://tempo:3200"
@@ -29,14 +33,58 @@ data:
   providers.yaml: |
     apiVersion: 1
     providers:
-      - name: default
+      # 폴더 소유권을 ConfigMap(provider)이 가짐 — 폴더당 provider 1개, 폴더는 프로비저닝 시 자동 생성.
+      # 각 path는 Deployment에서 해당 폴더 ConfigMap을 마운트한 디렉토리와 1:1 대응.
+      - name: 공통
         orgId: 1
-        folder: ""
+        folder: 공통
         type: file
         disableDeletion: false
+        allowUiUpdates: false
         updateIntervalSeconds: 30
         options:
-          path: /var/lib/grafana/dashboards
+          path: /var/lib/grafana/dashboards/common
+          foldersFromFilesStructure: false
+      - name: 도메인
+        orgId: 1
+        folder: 도메인
+        type: file
+        disableDeletion: false
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/domain
+          foldersFromFilesStructure: false
+      - name: 결제
+        orgId: 1
+        folder: 결제
+        type: file
+        disableDeletion: false
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/payment
+          foldersFromFilesStructure: false
+      - name: E2E
+        orgId: 1
+        folder: E2E
+        type: file
+        disableDeletion: false
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/e2e
+          foldersFromFilesStructure: false
+      - name: 인프라
+        orgId: 1
+        folder: 인프라
+        type: file
+        disableDeletion: false
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/infra
+          foldersFromFilesStructure: false
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -65,10 +113,17 @@ spec:
           image: grafana/grafana:11.6.16
           ports: [{ containerPort: 3000 }]
           env:
+            # admin 자격은 Secret(grafana-admin)에서만 주입 — 미존재 시 파드 기동 실패로 시끄럽게 드러남.
+            # Secret 생성은 부트스트랩 스크립트(k8s/bootstrap/create-secrets.sh, keys: admin-user/admin-password)로 수행.
             - name: GF_SECURITY_ADMIN_USER
               valueFrom: { secretKeyRef: { name: grafana-admin, key: admin-user } }
             - name: GF_SECURITY_ADMIN_PASSWORD
               valueFrom: { secretKeyRef: { name: grafana-admin, key: admin-password } }
+            # 하드닝: 익명 접근 차단 + 셀프 가입 차단(계정은 create-grafana-users.sh로만 생성).
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "false" }
+            - { name: GF_USERS_ALLOW_SIGN_UP, value: "false" }
+            # TLS 인그레스 뒤에서의 절대경로 리다이렉트/asset URL 정합.
+            - { name: GF_SERVER_ROOT_URL, value: "https://grafana.openat.duckdns.org" }
           readinessProbe:
             httpGet: { path: /api/health, port: 3000 }
             periodSeconds: 10
@@ -80,14 +135,27 @@ spec:
           volumeMounts:
             - { name: datasources, mountPath: /etc/grafana/provisioning/datasources }
             - { name: dashboard-providers, mountPath: /etc/grafana/provisioning/dashboards }
-            - { name: dashboard-jvm, mountPath: /var/lib/grafana/dashboards }
+            # 폴더별 ConfigMap을 provider path와 1:1로 마운트(폴더당 디렉토리 1개).
+            - { name: dash-common, mountPath: /var/lib/grafana/dashboards/common }
+            - { name: dash-domain, mountPath: /var/lib/grafana/dashboards/domain }
+            - { name: dash-payment, mountPath: /var/lib/grafana/dashboards/payment }
+            - { name: dash-e2e, mountPath: /var/lib/grafana/dashboards/e2e }
+            - { name: dash-infra, mountPath: /var/lib/grafana/dashboards/infra }
       volumes:
         - name: datasources
           configMap: { name: grafana-datasources }
         - name: dashboard-providers
           configMap: { name: grafana-dashboard-providers }
-        - name: dashboard-jvm
-          configMap: { name: grafana-dashboard-jvm }
+        - name: dash-common
+          configMap: { name: grafana-dashboard-common }
+        - name: dash-domain
+          configMap: { name: grafana-dashboard-domain }
+        - name: dash-payment
+          configMap: { name: grafana-dashboard-payment }
+        - name: dash-e2e
+          configMap: { name: grafana-dashboard-e2e }
+        - name: dash-infra
+          configMap: { name: grafana-dashboard-infra }
 ---
 apiVersion: v1
 kind: Service
