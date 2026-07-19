@@ -17,10 +17,15 @@ ec2_instances = {
   semi = {
     instance_type    = "t3.large"
     root_volume_size = 50
+    k3s_role         = "server"
+    k3s_node_label   = "tier=hotpath"
   }
   final = {
     instance_type    = "t3.medium"
     root_volume_size = 50
+    k3s_role         = "agent"
+    k3s_node_label   = "tier=observability"
+    k3s_node_taint   = "dedicated=observability:NoSchedule"
   }
 }
 
