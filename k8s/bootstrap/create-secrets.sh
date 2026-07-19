@@ -26,6 +26,38 @@ for key in DB_USER DB_PASSWORD JWT_KEY_ID JWT_PRIVATE_KEY JWT_PUBLIC_KEY PG_CLIE
   [ -n "${!key:-}" ] || { echo "ERROR: $ENV_FILE 에 $key 없음/빈값 — 실패를 조용히 넘기지 않는다" >&2; exit 1; }
 done
 
+# --- 도메인별 Secret 분리 (7/18 env 주입 전환) ---
+# 공용 DB (단일 postgres·단일 role이라 공유 합리)
+"$KUBECTL" create secret generic db-secrets -n "$NS" \
+  --from-literal=DB_USER="$DB_USER" \
+  --from-literal=DB_PASSWORD="$DB_PASSWORD" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: db-secrets 적용 완료"
+
+# member 전용 — JWT 발급/서명 주체
+"$KUBECTL" create secret generic member-secrets -n "$NS" \
+  --from-literal=JWT_KEY_ID="$JWT_KEY_ID" \
+  --from-literal=JWT_PRIVATE_KEY="$JWT_PRIVATE_KEY" \
+  --from-literal=JWT_PUBLIC_KEY="$JWT_PUBLIC_KEY" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: member-secrets 적용 완료"
+
+# payment 전용
+"$KUBECTL" create secret generic payment-secrets -n "$NS" \
+  --from-literal=PG_SECRET_KEY="$PG_SECRET_KEY" \
+  --from-literal=PAYMENT_FIELD_ENCRYPTION_KEY="$PAYMENT_FIELD_ENCRYPTION_KEY" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: payment-secrets 적용 완료"
+
+# search 전용
+"$KUBECTL" create secret generic search-secrets -n "$NS" \
+  --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: search-secrets 적용 완료"
+
+# (전환기 한정) 레거시 app-secrets 병행 생성 — 매니페스트 revert 롤백 지렛대.
+# 안정 확인 후 후속 커밋에서 이 블록과 위 필수 키 목록의 PG_CLIENT_KEY를 함께 제거하고
+# `kubectl delete secret app-secrets -n openat` 1회 수동 실행으로 마감한다.
 "$KUBECTL" create secret generic app-secrets -n "$NS" \
   --from-literal=DB_USER="$DB_USER" \
   --from-literal=DB_PASSWORD="$DB_PASSWORD" \
