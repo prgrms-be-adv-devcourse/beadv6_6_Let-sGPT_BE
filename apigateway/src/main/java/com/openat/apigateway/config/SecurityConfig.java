@@ -128,6 +128,11 @@ public class SecurityConfig {
                                 "/payment/api/v1/wallet/charge/webhook",
                                 "/payment/api/v1/refunds/webhook").permitAll()
 
+                        // payment 내부 운영 경로(DLQ 재처리, PG 대사 실행, 정산 이벤트 테스트, 정산 조회) —
+                        // payment 서비스 자체 SecurityConfig가 permitAll 전면 개방이라 게이트웨이 인가가 유일한 방어선.
+                        // /payment/** 라우트(StripPrefix=1)로 /payment/internal/... 이 서비스의 /internal/... 로 전달된다.
+                        .pathMatchers("/payment/internal/**").hasRole("ADMIN")
+
                         // POST만 공개
                         .pathMatchers(
                                 HttpMethod.POST,
