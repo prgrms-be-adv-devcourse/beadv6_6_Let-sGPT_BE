@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openat.order.domain.model.OutboxEvent;
 import com.openat.order.domain.repository.OutboxEventRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -22,6 +23,7 @@ public class OutboxEventPublisher {
     private final OutboxEventRepository outboxEventRepository;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void publish(UUID outboxEventId) {
@@ -36,6 +38,7 @@ public class OutboxEventPublisher {
             kafkaTemplate.send(event.getTopic(), orderId, event.getPayload())
                     .get(5, TimeUnit.SECONDS);
             event.markPublished(Instant.now());
+            meterRegistry.counter("order.outbox.published").increment();
             log.info("Outbox event published. outboxEventId={}, orderId={}, topic={}",
                     event.getId(), orderId, event.getTopic());
         } catch (InvalidOutboxPayloadException exception) {

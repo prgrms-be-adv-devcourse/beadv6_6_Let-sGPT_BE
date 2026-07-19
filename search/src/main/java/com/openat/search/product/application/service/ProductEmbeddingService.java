@@ -4,6 +4,7 @@ import com.openat.search.product.application.vector.ProductEmbeddingGenerator;
 import com.openat.search.product.infrastructure.elasticsearch.ProductDocument;
 import com.openat.search.product.infrastructure.vector.InferenceServerProductEmbeddingGenerator;
 import com.openat.search.product.infrastructure.vector.NoOpProductEmbeddingGenerator;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +25,7 @@ public class ProductEmbeddingService {
 
   private final InferenceServerProductEmbeddingGenerator inferenceServerProductEmbeddingGenerator;
   private final NoOpProductEmbeddingGenerator noOpProductEmbeddingGenerator;
+  private final MeterRegistry meterRegistry;
 
   @Value("${openai.embedding.enabled:false}")
   private boolean embeddingEnabled;
@@ -34,41 +36,49 @@ public class ProductEmbeddingService {
 
   public ProductDocument applyEmbedding(ProductDocument productDocument) {
     if (!embeddingEnabled) {
+      meterRegistry.counter("search.embedding.result", "result", "skipped").increment();
       log.info(
           "[product-embedding] Product embedding skipped. productId={}, embeddingEnabled=false",
           productDocument.id());
       return productDocument;
     }
 
-    String source = buildSourceText(productDocument); // 문자열 취합 (제목 + 상품설명 + 이미지 설명)
+    try {
+      String source = buildSourceText(productDocument); // 문자열 취합 (제목 + 상품설명 + 이미지 설명)
 
-    log.info(
-            "[product-es] Product source = {}",
-            source);
+      log.info(
+              "[product-es] Product source = {}",
+              source);
 
-    if (source.isBlank()) {
-      throw new IllegalStateException(
-          "Product embedding source text is blank. productId=" + productDocument.id());
+      if (source.isBlank()) {
+        throw new IllegalStateException(
+            "Product embedding source text is blank. productId=" + productDocument.id());
+      }
+
+      float[] embedding =
+          currentGenerator()
+              .generate(source)
+              .filter(this::hasEmbedding)
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Product embedding is empty. productId="
+                              + productDocument.id()
+                              + ", embeddingEnabled="
+                              + embeddingEnabled));
+
+      validateEmbeddingDimensions(productDocument, embedding);
+      log.info(
+          "[product-kafka-to-es] Product embedding generated. productId={}, dimensions={}",
+          productDocument.id(),
+          embedding.length);
+      ProductDocument embedded = productDocument.withEmbedding(embedding);
+      meterRegistry.counter("search.embedding.result", "result", "success").increment();
+      return embedded;
+    } catch (RuntimeException e) {
+      meterRegistry.counter("search.embedding.result", "result", "fail").increment();
+      throw e;
     }
-
-    float[] embedding =
-        currentGenerator()
-            .generate(source)
-            .filter(this::hasEmbedding)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Product embedding is empty. productId="
-                            + productDocument.id()
-                            + ", embeddingEnabled="
-                            + embeddingEnabled));
-
-    validateEmbeddingDimensions(productDocument, embedding);
-    log.info(
-        "[product-kafka-to-es] Product embedding generated. productId={}, dimensions={}",
-        productDocument.id(),
-        embedding.length);
-    return productDocument.withEmbedding(embedding);
   }
 
   private ProductEmbeddingGenerator currentGenerator() {
