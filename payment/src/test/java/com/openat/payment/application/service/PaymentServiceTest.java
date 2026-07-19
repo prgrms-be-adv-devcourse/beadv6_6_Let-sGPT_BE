@@ -15,6 +15,7 @@ import com.openat.payment.application.exception.PaymentErrorCode;
 import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.domain.model.Payment;
 import com.openat.payment.domain.repository.PaymentRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.lang.reflect.RecordComponent;
 import java.util.Optional;
 import java.util.UUID;
@@ -52,7 +53,8 @@ class PaymentServiceTest {
             tossPaymentClient,
             eventPublisher,
             paymentFinalizer,
-            walletPaymentApprover);
+            walletPaymentApprover,
+            new SimpleMeterRegistry());
 
     orderId = UUID.randomUUID();
     memberId = UUID.randomUUID();

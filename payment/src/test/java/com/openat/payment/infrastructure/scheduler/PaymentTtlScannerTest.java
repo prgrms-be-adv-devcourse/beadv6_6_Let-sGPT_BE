@@ -12,6 +12,7 @@ import com.openat.payment.application.service.WalletChargeFinalizer;
 import com.openat.payment.domain.model.Payment;
 import com.openat.payment.domain.repository.PaymentRepository;
 import com.openat.payment.domain.repository.WalletChargeRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -34,7 +35,8 @@ class PaymentTtlScannerTest {
   void setUp() {
     scanner =
         new PaymentTtlScanner(
-            paymentRepository, walletChargeRepository, tossPaymentClient, finalizer, chargeFinalizer);
+            paymentRepository, walletChargeRepository, tossPaymentClient, finalizer, chargeFinalizer,
+            new SimpleMeterRegistry());
     ReflectionTestUtils.setField(scanner, "finalizeDeadlineMinutes", 8L);
     ReflectionTestUtils.setField(scanner, "pendingTimeoutMinutes", 10L);
     ReflectionTestUtils.setField(scanner, "nullKeyGraceMinutes", 0L);

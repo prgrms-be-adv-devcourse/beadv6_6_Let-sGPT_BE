@@ -8,6 +8,8 @@ import com.openat.payment.domain.model.Payment;
 import com.openat.payment.domain.model.WalletCharge;
 import com.openat.payment.domain.repository.PaymentRepository;
 import com.openat.payment.domain.repository.WalletChargeRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +32,7 @@ public class PaymentTtlScanner {
   private final TossPaymentClient tossPaymentClient;
   private final PaymentFinalizer finalizer;
   private final WalletChargeFinalizer chargeFinalizer;
+  private final Counter expiredCounter;
 
   // N분 — pgPaymentKey가 NULL인 row(handleMissingKey) 기준. 운영 기본값 10분, 시연/테스트 시 application-local.yml에서
   // 짧게 오버라이드.
@@ -52,12 +55,14 @@ public class PaymentTtlScanner {
       WalletChargeRepository walletChargeRepository,
       TossPaymentClient tossPaymentClient,
       PaymentFinalizer finalizer,
-      WalletChargeFinalizer chargeFinalizer) {
+      WalletChargeFinalizer chargeFinalizer,
+      MeterRegistry meterRegistry) {
     this.paymentRepository = paymentRepository;
     this.walletChargeRepository = walletChargeRepository;
     this.tossPaymentClient = tossPaymentClient;
     this.finalizer = finalizer;
     this.chargeFinalizer = chargeFinalizer;
+    this.expiredCounter = meterRegistry.counter("payment.ttl.expired");
   }
 
   @Scheduled(fixedDelay = 60_000)
@@ -103,6 +108,7 @@ public class PaymentTtlScanner {
     if (payment.getCreatedAt().isAfter(graceThreshold)) {
       return; // 그레이스 기간 안 지남 — 다음 회차에 재시도
     }
+    expiredCounter.increment();
     finalizer.finalizePending(payment.getId(), Payment.Status.FAILED, null, "EXPIRED");
   }
 
@@ -112,6 +118,7 @@ public class PaymentTtlScanner {
     if (charge.getCreatedAt().isAfter(graceThreshold)) {
       return;
     }
+    expiredCounter.increment();
     chargeFinalizer.finalizePending(charge.getId(), WalletCharge.Status.FAILED, null);
   }
 
@@ -130,6 +137,7 @@ public class PaymentTtlScanner {
           finalizeDeadlineMinutes,
           charge.getId(),
           e);
+      expiredCounter.increment();
       chargeFinalizer.finalizePending(charge.getId(), WalletCharge.Status.FAILED, null);
       return;
     }
@@ -160,6 +168,7 @@ public class PaymentTtlScanner {
           finalizeDeadlineMinutes,
           payment.getId(),
           e);
+      expiredCounter.increment();
       finalizer.finalizePending(payment.getId(), Payment.Status.FAILED, null, "FORCED_TIMEOUT");
       return;
     }
@@ -170,9 +179,11 @@ public class PaymentTtlScanner {
       case FAILED ->
           finalizer.finalizePending(
               payment.getId(), Payment.Status.FAILED, result.pgTxId(), "PG_REJECTED");
-      case NOT_FOUND ->
-          finalizer.finalizePending(
-              payment.getId(), Payment.Status.FAILED, result.pgTxId(), "EXPIRED");
+      case NOT_FOUND -> {
+        expiredCounter.increment();
+        finalizer.finalizePending(
+            payment.getId(), Payment.Status.FAILED, result.pgTxId(), "EXPIRED");
+      }
     }
   }
 }

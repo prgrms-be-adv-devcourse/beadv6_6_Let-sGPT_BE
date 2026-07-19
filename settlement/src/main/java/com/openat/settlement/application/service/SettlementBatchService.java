@@ -11,6 +11,8 @@ import com.openat.settlement.domain.model.SellerSettlementStatus;
 import com.openat.settlement.domain.model.SettlementBatch;
 import com.openat.settlement.domain.repository.SellerSettlementRepository;
 import com.openat.settlement.domain.repository.SettlementBatchRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -25,6 +27,7 @@ public class SettlementBatchService implements SettlementBatchUseCase {
 
     private final SettlementBatchRepository settlementBatchRepository;
     private final SellerSettlementRepository sellerSettlementRepository;
+    private final MeterRegistry meterRegistry;
 
     @Override
     @Transactional
@@ -41,44 +44,56 @@ public class SettlementBatchService implements SettlementBatchUseCase {
     @Override
     @Transactional
     public void finalizeSettlementRunBatch(FinalizeSettlementBatchCommand command) {
-        SettlementBatch batch = findBatch(command.batchId());
+        Timer.Sample sample = Timer.start(meterRegistry);
+        String outcome = "fail";
+        try {
+            SettlementBatch batch = findBatch(command.batchId());
 
-        long failedCount = sellerSettlementRepository.countByBatchIdAndStatus(
-                command.batchId(),
-                SellerSettlementStatus.FAILED
-        );
+            long failedCount = sellerSettlementRepository.countByBatchIdAndStatus(
+                    command.batchId(),
+                    SellerSettlementStatus.FAILED
+            );
 
-        List<SellerSettlement> settlements = sellerSettlementRepository.findByBatchId(command.batchId());
+            List<SellerSettlement> settlements = sellerSettlementRepository.findByBatchId(command.batchId());
 
-        int totalOrderCount = settlements.stream()
-                .mapToInt(SellerSettlement::getTotalOrderCountOrZero)
-                .sum();
+            int totalOrderCount = settlements.stream()
+                    .mapToInt(SellerSettlement::getTotalOrderCountOrZero)
+                    .sum();
 
-        long totalSettlementAmount = settlements.stream()
-                .filter(SellerSettlement::isCompleted)
-                .mapToLong(SellerSettlement::getFinalSettlementAmountOrZero)
-                .sum();
+            long totalSettlementAmount = settlements.stream()
+                    .filter(SellerSettlement::isCompleted)
+                    .mapToLong(SellerSettlement::getFinalSettlementAmountOrZero)
+                    .sum();
 
-        int totalSellerCount = settlements.size();
+            int totalSellerCount = settlements.size();
 
-        if (failedCount > 0) {
-            batch.fail("failedSellerCount=" + failedCount + ", totalSellerCount=" + totalSellerCount);
-            return;
+            if (failedCount > 0) {
+                batch.fail("failedSellerCount=" + failedCount + ", totalSellerCount=" + totalSellerCount);
+                return;
+            }
+
+            batch.complete(
+                    totalOrderCount,
+                    totalSellerCount,
+                    totalSettlementAmount
+            );
+            outcome = "success";
+        } finally {
+            sample.stop(meterRegistry.timer("settlement.batch", "outcome", outcome));
         }
-
-        batch.complete(
-                totalOrderCount,
-                totalSellerCount,
-                totalSettlementAmount
-        );
     }
 
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void failBatch(FailSettlementBatchCommand command) {
-        SettlementBatch batch = findBatch(command.batchId());
+        Timer.Sample sample = Timer.start(meterRegistry);
+        try {
+            SettlementBatch batch = findBatch(command.batchId());
 
-        batch.fail(command.reason());
+            batch.fail(command.reason());
+        } finally {
+            sample.stop(meterRegistry.timer("settlement.batch", "outcome", "fail"));
+        }
     }
 
     private SettlementBatch findBatch(UUID batchId) {

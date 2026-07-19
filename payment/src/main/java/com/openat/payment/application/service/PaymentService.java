@@ -15,6 +15,7 @@ import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.application.usecase.PaymentUseCase;
 import com.openat.payment.domain.model.Payment;
 import com.openat.payment.domain.repository.PaymentRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Optional;
@@ -34,6 +35,7 @@ public class PaymentService implements PaymentUseCase {
   private final DomainEventPublisher eventPublisher;
   private final PaymentFinalizer paymentFinalizer;
   private final WalletPaymentApprover walletPaymentApprover;
+  private final MeterRegistry meterRegistry;
 
   public PaymentService(
       PaymentRepository paymentRepository,
@@ -41,13 +43,15 @@ public class PaymentService implements PaymentUseCase {
       TossPaymentClient tossPaymentClient,
       DomainEventPublisher eventPublisher,
       PaymentFinalizer paymentFinalizer,
-      WalletPaymentApprover walletPaymentApprover) {
+      WalletPaymentApprover walletPaymentApprover,
+      MeterRegistry meterRegistry) {
     this.paymentRepository = paymentRepository;
     this.orderValidationClient = orderValidationClient;
     this.tossPaymentClient = tossPaymentClient;
     this.eventPublisher = eventPublisher;
     this.paymentFinalizer = paymentFinalizer;
     this.walletPaymentApprover = walletPaymentApprover;
+    this.meterRegistry = meterRegistry;
   }
 
   // confirmPg와 동일한 TX 분리 원칙(D5) — 메서드에 @Transactional을 걸지 않는다. 걸면 [2]의 Order 검증
@@ -87,6 +91,23 @@ public class PaymentService implements PaymentUseCase {
   // 메서드 자체엔 @Transactional을 걸지 않는다 — 걸면 토스 HTTP 호출이 DB 커넥션을 점유한 채 대기하게 된다.
   @Override
   public PaymentResult confirmPg(PgConfirmCommand command) {
+    try {
+      PaymentResult result = doConfirmPg(command);
+      meterRegistry.counter("payment.confirm.result", "result", "success", "reason", "none")
+          .increment();
+      return result;
+    } catch (RuntimeException e) {
+      meterRegistry.counter("payment.confirm.result", "result", "fail", "reason", confirmFailReason(e))
+          .increment();
+      throw e;
+    }
+  }
+
+  private static String confirmFailReason(RuntimeException e) {
+    return e instanceof BusinessException be ? be.getErrorCode().getCode() : e.getClass().getSimpleName();
+  }
+
+  private PaymentResult doConfirmPg(PgConfirmCommand command) {
     String keyHash = RequestHasher.hash(command.paymentKey());
 
     // [1] Order 검증(TX 밖, 하자드17·22 유지) — 예약 INSERT보다 먼저 둬서 검증 실패 주문이 order_id를

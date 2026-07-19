@@ -4,6 +4,7 @@ import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderSagaState;
 import com.openat.order.domain.model.OrderSagaStep;
 import com.openat.order.domain.repository.OrderSagaStateRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -22,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class OrderSagaRecorder {
 
     private final OrderSagaStateRepository orderSagaStateRepository;
+    private final MeterRegistry meterRegistry;
 
     @Transactional
     public void recordOrderCreated(Order order) {
@@ -48,7 +50,10 @@ public class OrderSagaRecorder {
     @Transactional
     public void recordCompensating(UUID orderId) {
         orderSagaStateRepository.findByOrderId(orderId)
-                .ifPresent(OrderSagaState::enterCompensating);
+                .ifPresent(sagaState -> {
+                    sagaState.enterCompensating();
+                    meterRegistry.counter("order.saga.compensation").increment();
+                });
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

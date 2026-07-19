@@ -1,5 +1,8 @@
 package com.openat.payment.infrastructure.outbox;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -15,11 +18,17 @@ public class OutboxPublisher {
 
     private final OutboxEventJpaRepository outboxEventJpaRepository;
     private final KafkaTemplate<String, String> kafkaTemplate;
+    private final Counter publishedCounter;
 
     public OutboxPublisher(OutboxEventJpaRepository outboxEventJpaRepository,
-            KafkaTemplate<String, String> kafkaTemplate) {
+            KafkaTemplate<String, String> kafkaTemplate,
+            MeterRegistry meterRegistry) {
         this.outboxEventJpaRepository = outboxEventJpaRepository;
         this.kafkaTemplate = kafkaTemplate;
+        this.publishedCounter = meterRegistry.counter("payment.outbox.published");
+        Gauge.builder("payment.outbox.pending", outboxEventJpaRepository,
+                        repository -> repository.countByStatus(OutboxEventJpaEntity.Status.PENDING))
+                .register(meterRegistry);
     }
 
     @Scheduled(fixedDelay = 3000)
@@ -31,6 +40,7 @@ public class OutboxPublisher {
             try {
                 kafkaTemplate.send(event.getTopic(), event.getAggregateId().toString(), event.getPayload()).get();
                 event.markPublished();
+                publishedCounter.increment();
             } catch (Exception e) {
                 log.error("[OutboxPublisher] 발행 실패, 다음 주기에 재시도: topic={}, aggregateId={}",
                         event.getTopic(), event.getAggregateId(), e);

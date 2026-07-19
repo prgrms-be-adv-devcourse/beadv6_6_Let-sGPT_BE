@@ -11,14 +11,15 @@ import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderSagaState;
 import com.openat.order.domain.model.OrderSagaStep;
 import com.openat.order.domain.repository.OrderSagaStateRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -29,8 +30,12 @@ class OrderSagaRecorderTest {
     @Mock
     private OrderSagaStateRepository orderSagaStateRepository;
 
-    @InjectMocks
     private OrderSagaRecorder orderSagaRecorder;
+
+    @BeforeEach
+    void setUp() {
+        orderSagaRecorder = new OrderSagaRecorder(orderSagaStateRepository, new SimpleMeterRegistry());
+    }
 
     @Test
     @DisplayName("주문 생성 시 사가 상태를 ORDER_CREATED로 생성하고 주문에 sagaId를 채운다")

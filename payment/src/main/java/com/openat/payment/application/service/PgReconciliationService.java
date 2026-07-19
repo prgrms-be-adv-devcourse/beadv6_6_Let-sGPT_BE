@@ -14,6 +14,7 @@ import com.openat.payment.infrastructure.reconciliation.ReconciliationDiscrepanc
 import com.openat.payment.infrastructure.reconciliation.ReconciliationDiscrepancyJpaEntity.DiscrepancyType;
 import com.openat.payment.infrastructure.reconciliation.ReconciliationDiscrepancyJpaEntity.EntityType;
 import com.openat.payment.infrastructure.reconciliation.ReconciliationDiscrepancyJpaRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -43,13 +44,16 @@ public class PgReconciliationService {
     private final RefundRepository refundRepository;
     private final TossPaymentClient tossPaymentClient;
     private final ReconciliationDiscrepancyJpaRepository discrepancyRepository;
+    private final MeterRegistry meterRegistry;
 
     public PgReconciliationService(PaymentRepository paymentRepository, RefundRepository refundRepository,
-            TossPaymentClient tossPaymentClient, ReconciliationDiscrepancyJpaRepository discrepancyRepository) {
+            TossPaymentClient tossPaymentClient, ReconciliationDiscrepancyJpaRepository discrepancyRepository,
+            MeterRegistry meterRegistry) {
         this.paymentRepository = paymentRepository;
         this.refundRepository = refundRepository;
         this.tossPaymentClient = tossPaymentClient;
         this.discrepancyRepository = discrepancyRepository;
+        this.meterRegistry = meterRegistry;
     }
 
     @Transactional
@@ -189,6 +193,7 @@ public class PgReconciliationService {
         LocalDate businessDate = occurredAt != null ? occurredAt.toLocalDate() : LocalDate.now();
         discrepancyRepository.save(new ReconciliationDiscrepancyJpaEntity(
                 UuidV7Generator.generate(), businessDate, entityType, entityId, discrepancyType, detail));
+        meterRegistry.counter("payment.reconcile.discrepancy", "type", discrepancyType.name()).increment();
     }
 
     private enum Outcome {

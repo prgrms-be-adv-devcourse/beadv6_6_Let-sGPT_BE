@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openat.order.domain.model.OutboxEvent;
 import com.openat.order.domain.model.OutboxEventStatus;
 import com.openat.order.domain.repository.OutboxEventRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -38,7 +39,8 @@ class OutboxEventPublisherTest {
         when(kafkaTemplate.send(event.getTopic(), orderId.toString(), event.getPayload()))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
-        new OutboxEventPublisher(repository, kafkaTemplate, new ObjectMapper()).publish(eventId);
+        new OutboxEventPublisher(repository, kafkaTemplate, new ObjectMapper(), new SimpleMeterRegistry())
+                .publish(eventId);
 
         verify(kafkaTemplate).send(event.getTopic(), orderId.toString(), event.getPayload());
         assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.PUBLISHED);
@@ -63,7 +65,8 @@ class OutboxEventPublisherTest {
         failed.completeExceptionally(new RuntimeException("kafka unavailable"));
         when(kafkaTemplate.send(event.getTopic(), orderId.toString(), event.getPayload())).thenReturn(failed);
 
-        new OutboxEventPublisher(repository, kafkaTemplate, new ObjectMapper()).publish(eventId);
+        new OutboxEventPublisher(repository, kafkaTemplate, new ObjectMapper(), new SimpleMeterRegistry())
+                .publish(eventId);
 
         assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.PENDING);
         assertThat(event.getPublishedAt()).isNull();
@@ -83,7 +86,8 @@ class OutboxEventPublisherTest {
         org.springframework.test.util.ReflectionTestUtils.setField(event, "id", eventId);
         when(repository.findById(eventId)).thenReturn(Optional.of(event));
 
-        new OutboxEventPublisher(repository, kafkaTemplate, new ObjectMapper()).publish(eventId);
+        new OutboxEventPublisher(repository, kafkaTemplate, new ObjectMapper(), new SimpleMeterRegistry())
+                .publish(eventId);
 
         assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.FAILED);
         verify(kafkaTemplate, never()).send(
@@ -112,7 +116,8 @@ class OutboxEventPublisherTest {
         when(future.get(5, TimeUnit.SECONDS)).thenThrow(new InterruptedException("shutdown"));
 
         try {
-            new OutboxEventPublisher(repository, kafkaTemplate, new ObjectMapper()).publish(eventId);
+            new OutboxEventPublisher(repository, kafkaTemplate, new ObjectMapper(), new SimpleMeterRegistry())
+                .publish(eventId);
 
             assertThat(Thread.currentThread().isInterrupted()).isTrue();
             assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.PENDING);
