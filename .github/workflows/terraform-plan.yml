@@ -12,7 +12,7 @@ name: Terraform Plan
 #   → 정적 AWS 키를 GitHub Secrets에 넣지 않는다(OIDC로 단명 자격만 발급).
 on:
   pull_request:
-    paths: ["terraform/**"]
+    paths: ["terraform/**", "!terraform/github-repo/**"]
   workflow_dispatch:
 
 permissions:
