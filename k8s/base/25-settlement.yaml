@@ -24,6 +24,11 @@ spec:
         prometheus.io/port: "9140"
         prometheus.io/path: "/actuator/prometheus"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       imagePullSecrets:
         - name: ghcr-pull
       containers:
@@ -42,6 +47,8 @@ spec:
             - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: "10" }
             - { name: SPRING_DATASOURCE_HIKARI_MINIMUMIDLE, value: "2" }
             - { name: SPRING_DATASOURCE_HIKARI_IDLETIMEOUT, value: "60000" }
+            - { name: SPRING_DATASOURCE_HIKARI_CONNECTIONTIMEOUT, value: "5000" }
+            - { name: SETTLEMENT_BATCH_GRIDSIZE, value: "2" }
           # 기동 완료까지 최대 300초 유예(2vCPU에서 6개 JVM 동시 부팅 + kubelet/kube 예약 감안, 실측 최악 251s) — 이후 liveness로 전환. k3s_node_coldboot_contention_plan §2-B/§2-A 동시 적용 전제
           startupProbe:
             httpGet: { path: /actuator/health/liveness, port: 9140 }
@@ -59,6 +66,15 @@ spec:
           resources:
             limits: { memory: "600Mi" }
             requests: { cpu: "100m", memory: "400Mi" }   # gate2 A-5: 실사용 374>req320 스케줄러 정합
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
