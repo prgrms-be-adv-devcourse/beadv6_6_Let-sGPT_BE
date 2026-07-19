@@ -17,7 +17,15 @@ public enum PaymentErrorCode implements ErrorCode {
   INVALID_AMOUNT(HttpStatus.BAD_REQUEST, "INVALID_AMOUNT", "금액은 1 이상의 양수여야 합니다."),
   ALREADY_PROCESSED(HttpStatus.CONFLICT, "ALREADY_PROCESSED", "이미 종결된 결제이며 다른 paymentKey로 재confirm이 시도되었습니다."),
   PAYMENT_ATTEMPT_IN_PROGRESS(
-      HttpStatus.CONFLICT, "PAYMENT_ATTEMPT_IN_PROGRESS", "동일 주문의 다른 결제 시도가 진행 중입니다.");
+      HttpStatus.CONFLICT, "PAYMENT_ATTEMPT_IN_PROGRESS", "동일 주문의 다른 결제 시도가 진행 중입니다."),
+  PG_UNAVAILABLE(
+      HttpStatus.SERVICE_UNAVAILABLE,
+      "PG_UNAVAILABLE",
+      "결제 대행사가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해주세요."),
+  ORDER_SERVICE_UNAVAILABLE(
+      HttpStatus.SERVICE_UNAVAILABLE,
+      "ORDER_SERVICE_UNAVAILABLE",
+      "주문 서비스가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해주세요.");
 
   private final HttpStatus httpStatus;
   private final String code;
