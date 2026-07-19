@@ -12,6 +12,12 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
+    # k3s 사전공유 조인 토큰(random_password) 생성용 — server/agent 양쪽 user_data에
+    # 동일 값 주입해 node-token 대기 없이 조인(compute.tf).
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 
   # ---------------------------------------------------------------------
