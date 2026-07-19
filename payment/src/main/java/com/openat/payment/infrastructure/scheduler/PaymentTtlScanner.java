@@ -69,6 +69,10 @@ public class PaymentTtlScanner {
     this.refundFinalizer = refundFinalizer;
   }
 
+  // 멀티 인스턴스 동시 실행 안전성: 여러 인스턴스가 같은 stale row를 동시에 집어도 중복 조회는 무해하고(PG 조회는 멱등),
+  // 종결은 전부 상태 조건부 UPDATE(WHERE status='PENDING'/'PAYMENT_PENDING')라 한쪽만 이기고 나머지는 0-row로 무시돼
+  // 정합성이 유지된다(complete/fail/finalizePending 모두 동일 구조). fail의 환불액 원복도 전이에 이긴 경우에만 수행되므로
+  // 이중 원복이 없다. 지금은 replicas=1이라 실경합이 없고, 스케일아웃 시점에 중복 조회 낭비를 없애려면 ShedLock을 이 지점에 도입.
   @Scheduled(fixedDelay = 60_000)
   public void scan() {
     // D9 — 키 있는 row(마지노선)/키 없는 row(pending-timeout) 중 더 이른 임계값으로 한 번에 가져온 뒤,
@@ -221,11 +225,18 @@ public class PaymentTtlScanner {
       log.warn("[PaymentTtlScanner] 환불 재조회 실패, PENDING 유지: refundId={}", refund.getId(), e);
       return;
     }
-    if (result.status() == TossQueryResult.Status.APPROVED) {
-      refundFinalizer.complete(refund.getId(), payment, result.pgTxId());
-    } else {
-      // FAILED/NOT_FOUND — PG가 환불을 처리하지 않았음. fail이 환불액 원복(tryDecreaseRefundedAmount)까지 수행.
-      refundFinalizer.fail(refund.getId(), payment, "PG_REJECTED");
+    switch (result.status()) {
+      case APPROVED -> refundFinalizer.complete(refund.getId(), payment, result.pgTxId());
+      case FAILED ->
+          // PG가 환불을 명시적으로 거절했음. fail이 환불액 원복(tryDecreaseRefundedAmount)까지 수행.
+          refundFinalizer.fail(refund.getId(), payment, "PG_REJECTED");
+      case NOT_FOUND ->
+          // NOT_FOUND는 '확정 실패'가 아니라 '조회 불확실'(pgRefundKey null로 amount 폴백 매칭이 빗나갔거나 PG 반영 지연).
+          // 여기서 fail로 강제 종결하면 환불액 원복이 일어나는데 실제로 PG 환불이 성사돼 있으면 이중 환불 창이 열린다 —
+          // 위 조회 실패 catch 절과 동일 원칙(불확실은 강제 종결하지 않는다). PENDING 유지 후 다음 주기·야간 대사에 위임.
+          log.warn(
+              "[PaymentTtlScanner] 환불 조회 불확실(NOT_FOUND), PENDING 유지 — 야간 대사에 위임: refundId={}",
+              refund.getId());
     }
   }
 }

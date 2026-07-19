@@ -127,6 +127,22 @@ class PaymentTtlScannerTest {
   }
 
   @Test
+  void PENDING_환불_조회결과가_NOT_FOUND면_강제_종결하지_않고_PENDING을_유지한다() {
+    UUID paymentId = UUID.randomUUID();
+    Payment payment = Payment.builder().id(paymentId).pgPaymentKey("toss-payment-key").build();
+    Refund overdue = refundPendingCreatedAt(paymentId, LocalDateTime.now().minusMinutes(9));
+    when(refundRepository.findStalePending(any())).thenReturn(List.of(overdue));
+    when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment));
+    when(tossPaymentClient.queryRefundStatus("toss-payment-key", null, 3_000L))
+        .thenReturn(TossQueryResult.of(TossQueryResult.Status.NOT_FOUND, null));
+
+    scanner.scan();
+
+    verify(refundFinalizer, never()).complete(any(), any(), any());
+    verify(refundFinalizer, never()).fail(any(), any(), any());
+  }
+
+  @Test
   void PENDING_환불_재조회가_실패하면_강제_종결하지_않고_PENDING을_유지한다() {
     UUID paymentId = UUID.randomUUID();
     Payment payment = Payment.builder().id(paymentId).pgPaymentKey("toss-payment-key").build();
