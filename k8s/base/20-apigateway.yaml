@@ -33,7 +33,6 @@ spec:
           ports: [{ containerPort: 8000 }]
           envFrom:
             - configMapRef: { name: app-config }
-            - secretRef: { name: app-secrets }
           env:
             # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 고정 Xmx 제거, limit 비례 힙(WebFlux
             # 오프힙 감안 비율 최저 50%) + InitialRAMPercentage(콜드부트 GC 빈발 절충) + codecache 캡.

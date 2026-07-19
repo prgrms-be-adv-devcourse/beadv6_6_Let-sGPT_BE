@@ -47,7 +47,8 @@ spec:
           ports: [{ containerPort: 9240 }]
           envFrom:
             - configMapRef: { name: app-config }
-            - secretRef: { name: app-secrets }
+            - secretRef: { name: db-secrets }
+            - secretRef: { name: search-secrets }
           env:
             # k3s_memory_mitigation_plan.md §7-5(WS-M5) — ES 프록시(G1, limit 비례 60%).
             # MaxMetaspaceSize 캡 제거(qna.md Q116) — 서브리밋 안 걸고 pod limit 하나로 통제.

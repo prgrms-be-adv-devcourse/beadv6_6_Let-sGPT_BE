@@ -44,7 +44,7 @@ spec:
           ports: [{ containerPort: 9110 }]
           envFrom:
             - configMapRef: { name: app-config }
-            - secretRef: { name: app-secrets }
+            - secretRef: { name: db-secrets }
           env:
             # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 핫패스(G1 유지, limit 비례 65%).
             # Q113: 128m→256m 1차 상향(OutOfMemoryError: Metaspace 실측 대응) → Q116에서 서브리밋

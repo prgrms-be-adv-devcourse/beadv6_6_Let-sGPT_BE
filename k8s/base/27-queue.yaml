@@ -32,7 +32,6 @@ spec:
           ports: [{ containerPort: 9150 }]
           envFrom:
             - configMapRef: { name: app-config }
-            - secretRef: { name: app-secrets }
           env:
             - { name: JAVA_TOOL_OPTIONS, value: "-XX:+UseSerialGC -XX:MaxRAMPercentage=55.0 -XX:InitialRAMPercentage=25.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
