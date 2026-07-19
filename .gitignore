@@ -56,6 +56,9 @@ bin/
 # 배포 시크릿 (커밋 금지)
 ENV_SECRETS.json
 
+# Grafana 계정 생성 스크립트 산출물(초기 비밀번호 평문) — 커밋 금지
+grafana-users-*.txt
+
 # Terraform — state·plan·로컬 캐시는 커밋 금지 (state는 S3 backend, plan은 apply 1회용 임시 아티팩트)
 **/.terraform/*
 *.tfstate
