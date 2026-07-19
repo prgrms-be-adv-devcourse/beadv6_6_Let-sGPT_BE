@@ -16,6 +16,7 @@ import com.openat.payment.domain.model.Refund;
 import com.openat.payment.domain.repository.PaymentRepository;
 import com.openat.payment.domain.repository.RefundRepository;
 import com.openat.payment.domain.repository.WalletChargeRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -47,7 +48,8 @@ class PaymentTtlScannerTest {
             tossPaymentClient,
             finalizer,
             chargeFinalizer,
-            refundFinalizer);
+            refundFinalizer,
+            new SimpleMeterRegistry());
     ReflectionTestUtils.setField(scanner, "finalizeDeadlineMinutes", 8L);
     ReflectionTestUtils.setField(scanner, "pendingTimeoutMinutes", 10L);
     ReflectionTestUtils.setField(scanner, "nullKeyGraceMinutes", 0L);

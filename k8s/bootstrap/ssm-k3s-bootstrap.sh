@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 상호 참조: 라이브 클러스터 재작업 시 이 스크립트(bootstrap), 콜드 리빌드 시 ssm-k3s-postboot.sh 사용.
 # k3s 2노드 클러스터 부트스트랩 (terraform apply 완료 후, 로컬에서 1회 실행)
 # 전제: aws cli + terraform output 접근 가능, SSM send-command 권한.
 # 절차 = k3s_2node_cluster_plan.md §2~§6 (apiserver OIDC 인자 → 서버 설치 → JWKS 미러 게시 →

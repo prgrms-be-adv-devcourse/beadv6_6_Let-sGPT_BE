@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.openat.search.product.application.dto.ProductSearchResult;
 import com.openat.search.product.infrastructure.elasticsearch.ProductDocument;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -37,7 +38,8 @@ class ProductSearchServiceSortTest {
     elasticsearchOperations = mock(ElasticsearchOperations.class);
     productEmbeddingService = mock(ProductEmbeddingService.class);
     productSearchService =
-        new ProductSearchService(elasticsearchOperations, productEmbeddingService);
+        new ProductSearchService(
+            elasticsearchOperations, productEmbeddingService, new SimpleMeterRegistry());
   }
 
   @ParameterizedTest

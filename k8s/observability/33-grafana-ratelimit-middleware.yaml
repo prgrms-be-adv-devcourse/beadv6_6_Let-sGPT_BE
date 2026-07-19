@@ -1,0 +1,37 @@
+# Grafana Ingress 보안용 Traefik Middleware 3종(all observability ns).
+# 이 클러스터 인그레스 컨트롤러는 Traefik(k3s 번들) — nginx.ingress.* 어노테이션은 무시되므로
+# rate-limit/connection-limit은 Middleware CRD로 구현. CRD 그룹은 traefik.io/v1alpha1(32-...yaml 실사 확인).
+#
+# 대응: nginx limit-rps -> rateLimit.average/burst, nginx limit-connections -> inFlightReq.amount.
+# 초과 시 Traefik이 429 반환(별도 status-code 설정 불요).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: grafana-ratelimit
+  namespace: observability
+spec:
+  rateLimit:
+    average: 20      # 초당 평균 허용 요청 — 정상 페이지 로딩(다중 정적파일)이 걸리지 않는 수준
+    burst: 50        # 순간 폭주 허용 상한 — 대시보드 첫 로딩 asset 다발 흡수
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: grafana-inflight
+  namespace: observability
+spec:
+  inFlightReq:
+    amount: 10       # 소스IP당 동시 연결 10 — 자원고갈 방어
+---
+# HTTP -> HTTPS 리다이렉트. base/32-https-redirect-middleware.yaml의 redirect-https는 openat ns 소속이고
+# k3s 번들 Traefik은 기본적으로 네임스페이스 교차 Middleware 참조를 허용하지 않으므로,
+# observability ns에 동등 Middleware를 두어 34-grafana-ingress.yaml이 observability- 접두로 참조.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: https-redirect
+  namespace: observability
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true

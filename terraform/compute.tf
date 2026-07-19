@@ -20,6 +20,13 @@ data "aws_ami" "ubuntu" {
   }
 }
 
+# k3s 조인 사전공유 토큰. tfstate(S3, 암호화·네이티브 락)에 평문 저장됨 — 인지된 트레이드오프.
+# server/agent 양쪽 user_data에 동일 값으로 주입해 서버 node-token 대기 없이 조인한다.
+resource "random_password" "k3s_token" {
+  length  = 48
+  special = false
+}
+
 resource "aws_instance" "app" {
   for_each = var.ec2_instances
 
@@ -29,6 +36,10 @@ resource "aws_instance" "app" {
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.app.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
+
+  # k3s server만 정적 IP — agent 템플릿이 조인 주소로 참조(자기참조 순환 회피).
+  # 라이브 노드에는 ignore_changes로 미적용, 콜드 리빌드의 생성 시점에만 효력.
+  private_ip = each.value.k3s_role == "server" ? var.k3s_server_private_ip : null
 
   # 부팅 직후 user_data(apt-get, docker pull 등)가 인터넷에 접근하려면 퍼블릭 IP가
   # 필요하다. aws_eip 연결은 인스턴스 생성 이후의 별도 API 호출이라 그 사이에
@@ -49,14 +60,23 @@ resource "aws_instance" "app" {
   }
 
   user_data = templatefile("${path.module}/user_data.sh.tpl", {
-    deployer_user = var.deployer_user
+    deployer_user   = var.deployer_user
+    k3s_role        = each.value.k3s_role
+    k3s_node_label  = each.value.k3s_node_label
+    k3s_node_taint  = each.value.k3s_node_taint
+    k3s_token       = random_password.k3s_token.result
+    k3s_server_ip   = var.k3s_server_private_ip
+    k3s_oidc_issuer = local.k3s_oidc_issuer_url # iam-oidc-k3s.tf의 기존 local — 변수만으로 계산되어 순환 없음
   })
 
   # most_recent AMI 조회 결과가 갱신될 때마다 기존 인스턴스가 교체(destroy+create)되는
   # 것을 차단 — 신규 인스턴스는 생성 시점의 최신 AMI를 쓰고, 기존 인스턴스는 유지된다.
   # (2026-07-08 final 노드 추가 시 semi가 신형 AMI로 강제 교체되려던 것을 발견)
+  # AMI 함정과 동형의 방어를 user_data/private_ip에도 적용(이번 축의 최우선 안전장치).
+  # user_data: 변경 시 기본이 인스턴스 교체(destroy+create) — 라이브 노드 파괴 금지.
+  # private_ip: 정적 IP 부여도 교체 유발 — 콜드 리빌드 생성 시점에만 반영되게 봉인.
   lifecycle {
-    ignore_changes = [ami]
+    ignore_changes = [ami, user_data, private_ip]
   }
 
   tags = {

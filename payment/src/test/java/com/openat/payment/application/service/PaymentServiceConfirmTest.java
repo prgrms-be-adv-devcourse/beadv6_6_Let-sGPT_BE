@@ -21,6 +21,7 @@ import com.openat.payment.application.exception.PaymentErrorCode;
 import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.domain.model.Payment;
 import com.openat.payment.domain.repository.PaymentRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,7 +55,8 @@ class PaymentServiceConfirmTest {
             tossPaymentClient,
             eventPublisher,
             paymentFinalizer,
-            walletPaymentApprover);
+            walletPaymentApprover,
+            new SimpleMeterRegistry());
 
     orderId = UUID.randomUUID();
     memberId = UUID.randomUUID();

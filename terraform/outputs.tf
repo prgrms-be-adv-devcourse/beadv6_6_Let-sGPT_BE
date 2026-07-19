@@ -48,6 +48,11 @@ output "instance_private_ips" {
   value       = { for k, v in aws_instance.app : k => v.private_ip }
 }
 
+output "k3s_server_private_ip_planned" {
+  description = "다음 콜드 리빌드에서 server 노드에 고정될 private IP (라이브 노드와 다를 수 있음 — ignore_changes 봉인)"
+  value       = var.k3s_server_private_ip
+}
+
 output "ssm_connect_commands" {
   description = "인스턴스별 SSM Session Manager 접속 명령어 (AWS CLI + session-manager-plugin 필요)"
   value = {

@@ -47,7 +47,27 @@ variable "ec2_instances" {
   type = map(object({
     instance_type    = string
     root_volume_size = number
+    k3s_role         = optional(string, "agent") # "server" | "agent"
+    k3s_node_label   = optional(string, "")      # 예: "tier=hotpath"
+    k3s_node_taint   = optional(string, "")      # agent 전용, 예: "dedicated=observability:NoSchedule"
   }))
+
+  validation {
+    condition     = length([for k, v in var.ec2_instances : k if v.k3s_role == "server"]) == 1
+    error_message = "ec2_instances 에는 k3s_role=\"server\" 인 항목이 정확히 1개 있어야 한다."
+  }
+}
+
+variable "k3s_server_private_ip" {
+  description = <<-EOT
+    k3s server 노드에 고정 할당할 프라이빗 IP. agent가 조인 주소로 쓰므로 apply 전에
+    확정돼야 한다. 퍼블릭 서브넷 CIDR(10.0.1.0/24) 내에서 AWS 예약(첫 4개+마지막)을
+    피하고, 라이브 인스턴스의 현재 DHCP IP와 겹치지 않아야 한다(terraform output
+    instance_private_ips 로 확인). 라이브 노드에는 ignore_changes 봉인으로 미적용 —
+    다음 콜드 리빌드의 생성 시점에만 효력.
+  EOT
+  type        = string
+  default     = "10.0.1.10"
 }
 
 variable "deployer_user" {

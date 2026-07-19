@@ -102,3 +102,79 @@ curl -fsSL -o /tmp/actions-runner.tar.gz \
 tar xzf /tmp/actions-runner.tar.gz -C "$RUNNER_DIR"
 rm -f /tmp/actions-runner.tar.gz
 chown -R ${deployer_user}:${deployer_user} "$RUNNER_DIR"
+
+# =====================================================================
+# 5) zram 스왑 (server/agent 공통 — 기존 런북 0단계를 cloud-init으로 흡수)
+# =====================================================================
+apt-get install -y zram-tools
+printf "ALGO=zstd\nPERCENT=25\nPRIORITY=100\n" > /etc/default/zramswap
+systemctl enable --now zramswap
+systemctl restart zramswap
+echo "vm.swappiness=100" > /etc/sysctl.d/99-zram.conf
+sysctl -p /etc/sysctl.d/99-zram.conf
+
+# =====================================================================
+# 6) k3s 설치 — 역할별 config.yaml 선기록 후 설치(OIDC primary issuer 순서 보존)
+# =====================================================================
+mkdir -p /etc/rancher/k3s
+
+%{ if k3s_role == "server" ~}
+cat > /etc/rancher/k3s/config.yaml <<'K3SCFG'
+secrets-encryption: true
+write-kubeconfig-mode: "0644"
+node-label:
+  - "${k3s_node_label}"
+kube-apiserver-arg:
+  # 첫 항목이 primary — S3 URL이 첫 줄이어야 STS가 토큰을 받는다(순서 민감).
+  - "service-account-issuer=${k3s_oidc_issuer}"
+  - "service-account-issuer=https://kubernetes.default.svc.cluster.local"
+  - "api-audiences=https://kubernetes.default.svc.cluster.local,k3s,sts.amazonaws.com"
+kubelet-arg:
+  # 콜드부트 CPU 아사 방지 + 스래싱 전 시끄러운 Evicted 전환(기존 런북 1단계 값 그대로)
+  - "system-reserved=cpu=300m,memory=256Mi"
+  - "kube-reserved=cpu=300m,memory=256Mi"
+  - "eviction-hard=memory.available<400Mi"
+  - "eviction-soft=memory.available<600Mi"
+  - "eviction-soft-grace-period=memory.available=60s"
+  - "eviction-max-pod-grace-period=30"
+K3SCFG
+chmod 600 /etc/rancher/k3s/config.yaml
+echo "${k3s_token}" > /etc/rancher/k3s/cluster-token
+chmod 600 /etc/rancher/k3s/cluster-token
+curl -sfL https://get.k3s.io | sh -s - server --token-file /etc/rancher/k3s/cluster-token
+
+# helm CLI (서버 노드 전용 — 기존 런북 4단계 흡수)
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+grep -q KUBECONFIG /home/ubuntu/.bashrc 2>/dev/null || echo "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml" >> /home/ubuntu/.bashrc
+%{ else ~}
+cat > /etc/rancher/k3s/config.yaml <<'K3SCFG'
+server: "https://${k3s_server_ip}:6443"
+node-label:
+  - "${k3s_node_label}"
+kubelet-arg:
+  # 콜드부트 CPU 아사 방지 — server와 동일한 CPU 예약. 단 memory 예약은 제외:
+  # t3.medium(3.8Gi)에서 memory 512Mi 예약이 eviction-hard 400Mi와 allocatable에서
+  # 이중 차감돼 기존 파드 requests 합(3098Mi)을 밑돌아 스케줄 불가를 유발함이
+  # 2026-07-20 라이브 적용에서 실측됨. 메모리 보호는 eviction 임계값이 담당.
+  - "system-reserved=cpu=300m"
+  - "kube-reserved=cpu=300m"
+  - "eviction-hard=memory.available<400Mi"
+  - "eviction-soft=memory.available<600Mi"
+  - "eviction-soft-grace-period=memory.available=60s"
+  - "eviction-max-pod-grace-period=30"
+%{ if k3s_node_taint != "" ~}
+node-taint:
+  # 조인 시점 자가 등록 — 기존 런북의 사후 taint 단계를 대체. post-boot 잔여 아님.
+  - "${k3s_node_taint}"
+%{ endif ~}
+K3SCFG
+chmod 600 /etc/rancher/k3s/config.yaml
+echo "${k3s_token}" > /etc/rancher/k3s/cluster-token
+chmod 600 /etc/rancher/k3s/cluster-token
+# agent는 서버 6443이 열릴 때까지 재시도 — cloud-init은 병렬 부팅 순서를 보장하지 않는다.
+for i in $(seq 1 60); do
+  curl -ksf --max-time 5 "https://${k3s_server_ip}:6443/ping" && break
+  sleep 10
+done
+curl -sfL https://get.k3s.io | sh -s - agent --token-file /etc/rancher/k3s/cluster-token
+%{ endif ~}
