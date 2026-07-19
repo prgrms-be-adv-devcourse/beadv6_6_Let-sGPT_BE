@@ -151,6 +151,17 @@ cat > /etc/rancher/k3s/config.yaml <<'K3SCFG'
 server: "https://${k3s_server_ip}:6443"
 node-label:
   - "${k3s_node_label}"
+kubelet-arg:
+  # 콜드부트 CPU 아사 방지 — server와 동일한 CPU 예약. 단 memory 예약은 제외:
+  # t3.medium(3.8Gi)에서 memory 512Mi 예약이 eviction-hard 400Mi와 allocatable에서
+  # 이중 차감돼 기존 파드 requests 합(3098Mi)을 밑돌아 스케줄 불가를 유발함이
+  # 2026-07-20 라이브 적용에서 실측됨. 메모리 보호는 eviction 임계값이 담당.
+  - "system-reserved=cpu=300m"
+  - "kube-reserved=cpu=300m"
+  - "eviction-hard=memory.available<400Mi"
+  - "eviction-soft=memory.available<600Mi"
+  - "eviction-soft-grace-period=memory.available=60s"
+  - "eviction-max-pod-grace-period=30"
 %{ if k3s_node_taint != "" ~}
 node-taint:
   # 조인 시점 자가 등록 — 기존 런북의 사후 taint 단계를 대체. post-boot 잔여 아님.
