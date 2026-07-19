@@ -10,7 +10,7 @@ resources:
 images:
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
-  newTag: 8e3e630da494b6c04da0219dce8bb8877d8b6552
+  newTag: 430e009795235902ea4730ace05fd2e770d3dc4f
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
   newTag: 8e3e630da494b6c04da0219dce8bb8877d8b6552
