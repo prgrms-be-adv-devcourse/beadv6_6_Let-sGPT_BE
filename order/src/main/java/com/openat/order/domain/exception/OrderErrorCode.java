@@ -22,6 +22,7 @@ public enum OrderErrorCode implements ErrorCode {
   DROP_NOT_OPEN(HttpStatus.BAD_REQUEST, "DROP_NOT_OPEN", "드롭이 오픈되지 않았습니다."),
   DROP_CLOSED(HttpStatus.CONFLICT, "DROP_CLOSED", "종료된 드롭입니다."),
   LIMIT_EXCEEDED(HttpStatus.CONFLICT, "LIMIT_EXCEEDED", "구매 가능 수량을 초과했습니다."),
+  PAYMENT_IN_PROGRESS(HttpStatus.CONFLICT, "ORDER_PAYMENT_IN_PROGRESS", "결제 확인 중입니다. 잠시 후 다시 시도해주세요."),
   PORT_ERROR(HttpStatus.BAD_GATEWAY, "ORDER_EXTERNAL_API_ERROR", "외부 주문 연동 API 처리에 실패했습니다.");
 
   private final HttpStatus httpStatus;

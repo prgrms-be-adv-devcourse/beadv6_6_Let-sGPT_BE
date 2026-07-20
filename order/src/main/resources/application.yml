@@ -20,7 +20,12 @@ spring:
       hibernate:
         default_schema: orders # 스키마 분리
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
+  flyway:
+    schemas: orders # flyway_schema_history도 orders 스키마 안에 생성
+    locations: classpath:db/migration
+    baseline-on-migrate: true # 기존 ddl-auto로 이미 떠 있는 스키마는 V1을 재실행하지 않고 자동으로 베이스라인 처리
+    baseline-version: 1
 springdoc:
   api-docs:
     path: /api-docs

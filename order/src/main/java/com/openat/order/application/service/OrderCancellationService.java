@@ -4,6 +4,7 @@ import com.openat.common.exception.BusinessException;
 import com.openat.order.application.dto.OrderCancelInfo;
 import com.openat.order.application.dto.PaymentRefundResult;
 import com.openat.order.application.dto.StockRestoreCommand;
+import com.openat.order.application.port.PaymentPendingException;
 import com.openat.order.application.port.PaymentRefundPort;
 import com.openat.order.application.port.PaymentRefundPortException;
 import com.openat.order.application.port.ProductIntegrationPort;
@@ -41,6 +42,8 @@ public class OrderCancellationService {
     PaymentRefundResult result;
     try {
       result = paymentRefundPort.requestRefund(orderId, automaticRefundKey(orderId));
+    } catch (PaymentPendingException exception) {
+      throw new BusinessException(OrderErrorCode.PAYMENT_IN_PROGRESS);
     } catch (PaymentRefundPortException exception) {
       return cancelAndRestoreStock(memberId, order, "환불 API 무응답으로 결제 전 낙관 확정");
     }
