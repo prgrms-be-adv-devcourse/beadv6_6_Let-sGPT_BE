@@ -174,7 +174,7 @@ jobs:
           TARGET_REV: ${{ steps.pin.outputs.revision }}
         run: |
           kubectl -n argocd annotate application openat argocd.argoproj.io/refresh=hard --overwrite
-          for i in $(seq 1 60); do   # 최대 5분
+          for i in $(seq 1 120); do   # 최대 10분
             REV=$(kubectl -n argocd get application openat -o jsonpath='{.status.sync.revision}' 2>/dev/null || echo "?")
             S=$(kubectl -n argocd get application openat \
                 -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "?")
@@ -183,6 +183,7 @@ jobs:
             fi
             echo "waiting... (rev=$REV, want=$TARGET_REV, status=$S)"; sleep 5
           done
-          echo "ERROR: ArgoCD did not converge to $TARGET_REV in 300s (last rev=$REV status=$S)" >&2   # 실패는 시끄럽게
+          echo "ERROR: ArgoCD did not converge to $TARGET_REV in 600s (last rev=$REV status=$S)" >&2   # 실패는 시끄럽게
           kubectl -n argocd get application openat -o yaml | tail -40 >&2
           exit 1
+  300s
