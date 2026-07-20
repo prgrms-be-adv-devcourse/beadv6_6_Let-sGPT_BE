@@ -10,7 +10,7 @@ name: PR-Agent
 on:
   pull_request:
     branches: [main, dev]    # main·dev 대상 PR 자동 리뷰 (자체 서버 무과금이라 dev도 포함)
-    types: [opened, reopened, ready_for_review]
+    types: [opened, reopened, ready_for_review, synchronize]  # (임시) synchronize는 디버깅용 — 원인 파악 후 제거
   issue_comment:
     types: [created]         # 수동 /review·/improve (사람이 명시적으로 칠 때만, 드묾)
 
@@ -29,6 +29,26 @@ jobs:
       pull-requests: write
       contents: write
     steps:
+      # (임시 디버그) Actions 러너에서 추론 서버 도달성·인증 사전점검.
+      # LLM 호출이 "Your request was blocked."로 실패해 네트워크/WAF 차단 여부를 분리 진단.
+      - name: 추론서버 연결 사전점검
+        env:
+          INFERENCE_API_KEY: ${{ secrets.INFERENCE_API_KEY }}
+        run: |
+          echo "key length: ${#INFERENCE_API_KEY}"
+          echo "--- GET /health ---"
+          curl -sS -o /tmp/health.out -w "http_code=%{http_code}\n" \
+            -H "Authorization: Bearer ${INFERENCE_API_KEY}" \
+            https://api.inferway.xyz/health || true
+          head -c 300 /tmp/health.out; echo
+          echo "--- POST /v1/chat/completions (chat 별칭, 짧은 프롬프트) ---"
+          curl -sS -o /tmp/chat.out -w "http_code=%{http_code}\n" \
+            -H "Authorization: Bearer ${INFERENCE_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"chat","messages":[{"role":"user","content":"ping"}]}' \
+            https://api.inferway.xyz/v1/chat/completions || true
+          head -c 300 /tmp/chat.out; echo
+
       - uses: qodo-ai/pr-agent@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
