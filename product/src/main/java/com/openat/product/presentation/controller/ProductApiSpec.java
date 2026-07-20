@@ -63,6 +63,6 @@ public interface ProductApiSpec {
   //   이벤트(payload: sellerInfoId, storeName)를 발행해야 실제로 채워짐(로컬은 시드로 표시). 상세: DECISIONS.md.
   //
   // NOTE(image): 이미지 업로드/조회는 ProductImageController(POST·GET /api/v1/products/images)로 구현됨.
-  //   imageKeys·thumbnailKey 에 반환 키를 사용한다. 세미 단계는 백엔드 부팅 서버 로컬 파일시스템 저장
-  //   (ImageStorageUseCase 포트). TODO(final): 배포 시 AWS S3 스토리지 어댑터로 교체. [screens/14]
+  //   imageKeys·thumbnailKey 에 반환 키를 사용한다. ImageStorageUseCase 구현은 환경에 따라
+  //   로컬 파일시스템 또는 AWS S3로 선택된다. [screens/14]
 }
