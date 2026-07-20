@@ -1,5 +1,9 @@
 dependencies {
     implementation(project(":common"))
+    implementation(platform("software.amazon.awssdk:bom:2.46.7"))
+    implementation("software.amazon.awssdk:s3")
+    // 배포는 k3s SA 토큰 OIDC(AssumeRoleWithWebIdentity) 자격증명 — WebIdentity provider가 런타임에 sts 모듈을 요구
+    implementation("software.amazon.awssdk:sts")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     // k8s readiness/liveness probe + Prometheus 메트릭 노출 (버전은 Boot BOM/micrometer-bom 관리)

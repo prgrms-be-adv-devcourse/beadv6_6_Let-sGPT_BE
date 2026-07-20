@@ -14,15 +14,23 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 public interface OrderUseCase {
-    CreateOrderResult createOrder(UUID memberId, CreateOrderCommand command);
+  CreateOrderResult createOrder(UUID memberId, CreateOrderCommand command);
 
-    OrderDetailInfo getMyOrder(UUID memberId, UUID orderId);
+  OrderDetailInfo getMyOrder(UUID memberId, UUID orderId);
 
-    Page<OrderSummaryInfo> getMyOrders(UUID memberId, OrderStatus status, Pageable pageable);
+  Page<OrderSummaryInfo> getMyOrders(UUID memberId, OrderStatus status, Pageable pageable);
 
-    OrderCancelInfo cancelOrder(UUID memberId, UUID orderId);
+  OrderCancelInfo cancelOrder(UUID memberId, UUID orderId);
 
-    PaymentValidationInfo getPaymentValidationInfo(UUID memberId, UUID orderId);
+  OrderCancelInfo requestRefund(UUID memberId, UUID orderId);
 
-    List<PurchaseSignalInfo> getPurchaseSignals(UUID memberId, int limit);
+  OrderCancelInfo retryRefund(UUID orderId);
+
+  OrderCancelInfo confirmRefund(UUID orderId);
+
+  OrderCancelInfo retryStockRollback(UUID orderId);
+
+  PaymentValidationInfo getPaymentValidationInfo(UUID memberId, UUID orderId);
+
+  List<PurchaseSignalInfo> getPurchaseSignals(UUID memberId, int limit);
 }

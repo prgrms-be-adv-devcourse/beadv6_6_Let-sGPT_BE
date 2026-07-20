@@ -488,7 +488,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(jvm_memory_used_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\",area=\"heap\"})",
+              "expr": "sum by (app)(jvm_memory_used_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\",area=\"heap\"})",
               "legendFormat": "{{app}}",
               "refId": "A"
             }
@@ -543,7 +543,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "avg by (app)(process_cpu_usage{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "expr": "avg by (app)(process_cpu_usage{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
               "legendFormat": "{{app}}",
               "refId": "A"
             }
@@ -598,7 +598,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(process_memory_rss_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "expr": "sum by (app)(process_memory_rss_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
               "legendFormat": "{{app}}",
               "refId": "A"
             }
@@ -653,8 +653,855 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(process_open_fds{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "expr": "sum by (app)(process_open_fds{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
               "legendFormat": "{{app}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 14,
+          "type": "row",
+          "title": "커넥션풀 (HikariCP)",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 30
+          },
+          "panels": []
+        },
+        {
+          "id": 15,
+          "type": "timeseries",
+          "title": "Active vs Max (서비스별)",
+          "description": "active가 max에 붙는 순간이 풀 포화. 겹쳐 그려 여유 판단.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 31
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(hikaricp_connections_active)",
+              "legendFormat": "{{app}} active",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(hikaricp_connections_max)",
+              "legendFormat": "{{app}} max",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "id": 16,
+          "type": "timeseries",
+          "title": "Pending threads (서비스별)",
+          "description": "0이 아니면 이미 풀 대기 발생 = 병목.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 31
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(hikaricp_connections_pending)",
+              "legendFormat": "{{app}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 17,
+          "type": "timeseries",
+          "title": "Timeouts (5m rate)",
+          "description": "5초 대기 후 예외 발생률 — 무조건 0이어야 정상.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 39
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(rate(hikaricp_connections_timeout_total[5m]))",
+              "legendFormat": "{{app}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 18,
+          "type": "row",
+          "title": "JVM 상세 (기존 수집분)",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 47
+          },
+          "panels": []
+        },
+        {
+          "id": 19,
+          "type": "timeseries",
+          "title": "Metaspace 사용량 (서비스별)",
+          "description": "우상향 지속이면 클래스로더 릭 의심, 계단 후 평탄이면 정상.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 48
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(jvm_memory_used_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\",id=\"Metaspace\"})",
+              "legendFormat": "{{app}} used",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(jvm_memory_committed_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\",id=\"Metaspace\"})",
+              "legendFormat": "{{app}} committed",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "id": 20,
+          "type": "timeseries",
+          "title": "GC pause rate (5m)",
+          "description": "rate(jvm_gc_pause_seconds_sum[5m]) — 웜업 전후 비교·병목 진단 베이스라인.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 48
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(rate(jvm_gc_pause_seconds_sum{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"}[5m]))",
+              "legendFormat": "{{app}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 21,
+          "type": "timeseries",
+          "title": "톰캣 busy 스레드",
+          "description": "tomcat_threads_busy_threads — 수집 여부 불확실. 시리즈가 없으면 톰캣 메트릭 미노출(Explore로 확정 필요), 앞단 스레드 포화 감시용.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 48
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(tomcat_threads_busy_threads{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "legendFormat": "{{app}} busy",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(tomcat_threads_config_max_threads{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "legendFormat": "{{app}} max",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "id": 22,
+          "type": "row",
+          "title": "노드 메모리 종합 (cAdvisor)",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 56
+          },
+          "panels": []
+        },
+        {
+          "id": 23,
+          "type": "timeseries",
+          "title": "파드별 메모리 (working set, 스택) vs 노드 총량",
+          "description": "get pods 메모리판 — 파드별 실점유 합과 노드 총량(machine_memory) 상한선. 어떤 파드가 얼마나 먹는지, 합이 총량 대비 어디까지.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 57
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 30,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto",
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "노드 총량"
+                },
+                "properties": [
+                  {
+                    "id": "custom.stacking",
+                    "value": {
+                      "mode": "none"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (pod)(container_memory_working_set_bytes{container!=\"\",pod!=\"\"})",
+              "legendFormat": "{{pod}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(machine_memory_bytes)",
+              "legendFormat": "노드 총량",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "id": 24,
+          "type": "gauge",
+          "title": "노드 여유율 (노드별)",
+          "description": "free -h 요약판 — 1 − 파드합/노드총량. 낮을수록 위험.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 57
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.15
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.3
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "orientation": "auto",
+            "showThresholdLabels": false,
+            "showThresholdMarkers": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "1 - (sum by (node)(container_memory_working_set_bytes{container!=\"\",pod!=\"\"}) / sum by (node)(machine_memory_bytes))",
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 25,
+          "type": "timeseries",
+          "title": "시스템+k3s 잔차 (노드별)",
+          "description": "노드총량 − 파드합 = 컨트롤플레인·OS·캐시 몫. k3s server 프로세스는 파드가 아니라 이 잔차로만 보임.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 66
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (node)(machine_memory_bytes) - sum by (node)(container_memory_working_set_bytes{container!=\"\",pod!=\"\"})",
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 26,
+          "type": "timeseries",
+          "title": "네임스페이스별 메모리 합",
+          "description": "openat vs observability vs kube-system 배분.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 66
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (namespace)(container_memory_working_set_bytes{container!=\"\",pod!=\"\"})",
+              "legendFormat": "{{namespace}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 27,
+          "type": "timeseries",
+          "title": "Limit 대비 사용률 (파드별)",
+          "description": "working_set / spec_memory_limit. 90% 상회 = OOMKill 임박·limit 상향 후보, 낮게 유지 = limit 회수 후보(라이트사이징).",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 74
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (pod)(container_memory_working_set_bytes{container!=\"\",pod!=\"\"}) / sum by (pod)(container_spec_memory_limit_bytes{container!=\"\",pod!=\"\"} > 0)",
+              "legendFormat": "{{pod}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 28,
+          "type": "timeseries",
+          "title": "CPU 스로틀링 비율 (파드별)",
+          "description": "throttled_periods / periods. limit에 눌려 느려지는 파드 식별 — 병목 진단에서 앱 문제 vs limit 문제 분리.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 74
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (pod)(rate(container_cpu_cfs_throttled_periods_total{container!=\"\",pod!=\"\"}[5m])) / sum by (pod)(rate(container_cpu_cfs_periods_total{container!=\"\",pod!=\"\"}[5m]))",
+              "legendFormat": "{{pod}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 29,
+          "type": "stat",
+          "title": "eviction 여유 (노드별)",
+          "description": "노드총량 − 파드합. k3s 메모리 완화 안건의 상시 감시점 — 임계 근처면 롤아웃 금지 신호.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 24,
+            "x": 0,
+            "y": 82
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 314572800
+                  },
+                  {
+                    "color": "green",
+                    "value": 524288000
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "value_and_name",
+            "orientation": "horizontal"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (node)(machine_memory_bytes) - sum by (node)(container_memory_working_set_bytes{container!=\"\",pod!=\"\"})",
+              "legendFormat": "{{node}}",
               "refId": "A"
             }
           ]
@@ -667,11 +1514,11 @@ data:
             "h": 4,
             "w": 24,
             "x": 0,
-            "y": 30
+            "y": 88
           },
           "options": {
             "mode": "markdown",
-            "content": "이 대시보드는 실제로 수집되는 메트릭만 다룹니다. **postgres-exporter**와 **애플리케이션 파드 JVM/프로세스** 메트릭이 유일한 확인된 유입원입니다.\n\n> Prometheus 자체 메트릭과 otel-collector 처리량은 현재 스크레이프 대상이 아닙니다(두 파드에 `prometheus.io/scrape` 어노테이션 없음). kube-state-metrics / cAdvisor(컨테이너 메트릭)도 미배포 상태입니다. 노출하려면 해당 파드에 스크레이프 어노테이션 추가 또는 exporter 배포가 선행되어야 합니다."
+            "content": "이 대시보드는 실제로 수집되는 메트릭만 다룹니다. 유입원은 **postgres-exporter**, **애플리케이션 파드 JVM/프로세스**, 그리고 **k3s kubelet 내장 cAdvisor**(컨테이너 메모리·CPU)입니다.\n\n> cAdvisor는 kubelet(`/metrics/cadvisor`)에서 스크레이프하며 카디널리티 방어를 위해 working_set·cpu·limit·throttling·machine_memory 시리즈만 keep합니다. **node-exporter / kube-state-metrics는 미배포** — buff/cache 정밀도와 requests 대비 사용률·OOMKilled 사유는 아직 사각지대이며, 노드 여유는 `노드총량 − 파드합` 근사로 봅니다. Prometheus 자체·otel-collector 처리량은 여전히 스크레이프 대상이 아닙니다."
           }
         }
       ]
