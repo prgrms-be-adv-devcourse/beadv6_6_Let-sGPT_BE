@@ -660,6 +660,389 @@ data:
           ]
         },
         {
+          "id": 14,
+          "type": "row",
+          "title": "커넥션풀 (HikariCP)",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 30
+          },
+          "panels": []
+        },
+        {
+          "id": 15,
+          "type": "timeseries",
+          "title": "Active vs Max (서비스별)",
+          "description": "active가 max에 붙는 순간이 풀 포화. 겹쳐 그려 여유 판단.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 31
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(hikaricp_connections_active)",
+              "legendFormat": "{{app}} active",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(hikaricp_connections_max)",
+              "legendFormat": "{{app}} max",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "id": 16,
+          "type": "timeseries",
+          "title": "Pending threads (서비스별)",
+          "description": "0이 아니면 이미 풀 대기 발생 = 병목.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 31
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(hikaricp_connections_pending)",
+              "legendFormat": "{{app}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 17,
+          "type": "timeseries",
+          "title": "Timeouts (5m rate)",
+          "description": "5초 대기 후 예외 발생률 — 무조건 0이어야 정상.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 39
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(rate(hikaricp_connections_timeout_total[5m]))",
+              "legendFormat": "{{app}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 18,
+          "type": "row",
+          "title": "JVM 상세 (기존 수집분)",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 47
+          },
+          "panels": []
+        },
+        {
+          "id": 19,
+          "type": "timeseries",
+          "title": "Metaspace 사용량 (서비스별)",
+          "description": "우상향 지속이면 클래스로더 릭 의심, 계단 후 평탄이면 정상.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 48
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(jvm_memory_used_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\",id=\"Metaspace\"})",
+              "legendFormat": "{{app}} used",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(jvm_memory_committed_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\",id=\"Metaspace\"})",
+              "legendFormat": "{{app}} committed",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "id": 20,
+          "type": "timeseries",
+          "title": "GC pause rate (5m)",
+          "description": "rate(jvm_gc_pause_seconds_sum[5m]) — 웜업 전후 비교·병목 진단 베이스라인.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 48
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(rate(jvm_gc_pause_seconds_sum{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"}[5m]))",
+              "legendFormat": "{{app}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 21,
+          "type": "timeseries",
+          "title": "톰캣 busy 스레드",
+          "description": "tomcat_threads_busy_threads — 수집 여부 불확실. 시리즈가 없으면 톰캣 메트릭 미노출(Explore로 확정 필요), 앞단 스레드 포화 감시용.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 48
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(tomcat_threads_busy_threads{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "legendFormat": "{{app}} busy",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(tomcat_threads_config_max_threads{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "legendFormat": "{{app}} max",
+              "refId": "B"
+            }
+          ]
+        },
+        {
           "id": 13,
           "type": "text",
           "title": "인프라 메트릭 범위 안내",
@@ -667,7 +1050,7 @@ data:
             "h": 4,
             "w": 24,
             "x": 0,
-            "y": 30
+            "y": 56
           },
           "options": {
             "mode": "markdown",
