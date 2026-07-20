@@ -18,26 +18,42 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class OrderFailureRecorder {
 
-    private final OrderRepository orderRepository;
-    private final OrderHistoryRepository orderHistoryRepository;
+  private final OrderRepository orderRepository;
+  private final OrderHistoryRepository orderHistoryRepository;
+  private final OrderSagaRecorder orderSagaRecorder;
 
-    @Transactional
-    public void recordCreateFailure(UUID orderId, OrderFailCode failCode, String message, Instant failedAt) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
-        OrderStatus previousStatus = order.getStatus();
-        if (!order.fail(failCode, message, failedAt)) {
-            throw new BusinessException(OrderErrorCode.INVALID_STATUS);
-        }
-        orderHistoryRepository.save(
-                OrderHistory.record()
-                        .orderId(order.getId())
-                        .previousStatus(previousStatus)
-                        .newStatus(order.getStatus())
-                        .reasonCode("ORDER_CREATE_FAILED")
-                        .reasonMessage(message)
-                        .sourceEventKey("order-fail-" + order.getId())
-                        .build()
-        );
+  @Transactional
+  public void recordCreateFailure(
+      UUID orderId, OrderFailCode failCode, String message, Instant failedAt) {
+    recordCreateFailure(orderId, failCode, message, failedAt, false);
+  }
+
+  @Transactional
+  public void recordCreateFailure(
+      UUID orderId,
+      OrderFailCode failCode,
+      String message,
+      Instant failedAt,
+      boolean compensating) {
+    Order order =
+        orderRepository
+            .findById(orderId)
+            .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
+    OrderStatus previousStatus = order.getStatus();
+    if (!order.fail(failCode, message, failedAt)) {
+      throw new BusinessException(OrderErrorCode.INVALID_STATUS);
     }
+    orderHistoryRepository.save(
+        OrderHistory.record()
+            .orderId(order.getId())
+            .previousStatus(previousStatus)
+            .newStatus(order.getStatus())
+            .reasonCode("ORDER_CREATE_FAILED")
+            .reasonMessage(message)
+            .sourceEventKey("order-fail-" + order.getId())
+            .build());
+    if (compensating) {
+      orderSagaRecorder.recordCompensating(orderId);
+    }
+  }
 }
