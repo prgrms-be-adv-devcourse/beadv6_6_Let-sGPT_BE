@@ -24,6 +24,11 @@ spec:
         prometheus.io/port: "9100"
         prometheus.io/path: "/actuator/prometheus"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       imagePullSecrets:
         - name: ghcr-pull
       containers:
@@ -32,7 +37,8 @@ spec:
           ports: [{ containerPort: 9100 }]
           envFrom:
             - configMapRef: { name: app-config }
-            - secretRef: { name: app-secrets }
+            - secretRef: { name: db-secrets }
+            - secretRef: { name: member-secrets }
           env:
             # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 저트래픽군(SerialGC, limit 비례 60%).
             # MaxMetaspaceSize 캡 제거(qna.md Q116) — 서브리밋 안 걸고 pod limit 하나로 통제.
@@ -40,6 +46,7 @@ spec:
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
             - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: "2" }
+            - { name: SPRING_DATASOURCE_HIKARI_CONNECTIONTIMEOUT, value: "5000" }
           # 기동 완료까지 최대 300초 유예(2vCPU에서 6개 JVM 동시 부팅 + kubelet/kube 예약 감안, 실측 최악 251s) — 이후 liveness로 전환. k3s_node_coldboot_contention_plan §2-B/§2-A 동시 적용 전제
           startupProbe:
             httpGet: { path: /actuator/health/liveness, port: 9100 }
@@ -57,6 +64,15 @@ spec:
           resources:
             limits: { memory: "600Mi" }
             requests: { cpu: "100m", memory: "400Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

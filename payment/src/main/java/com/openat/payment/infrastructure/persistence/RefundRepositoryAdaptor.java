@@ -53,6 +53,12 @@ public class RefundRepositoryAdaptor implements RefundRepository {
     }
 
     @Override
+    public List<Refund> findStalePending(LocalDateTime threshold) {
+        return refundJpaRepository.findStalePending(threshold).stream()
+                .map(RefundJpaEntity::toDomain).toList();
+    }
+
+    @Override
     public List<Refund> findByMemberId(UUID memberId, int page, int size) {
         return refundJpaRepository.findByMemberId(memberId, PageRequest.of(page, size))
                 .stream().map(RefundJpaEntity::toDomain).toList();

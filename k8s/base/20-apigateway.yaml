@@ -25,6 +25,11 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/actuator/prometheus"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       imagePullSecrets:
         - name: ghcr-pull
       containers:
@@ -33,7 +38,6 @@ spec:
           ports: [{ containerPort: 8000 }]
           envFrom:
             - configMapRef: { name: app-config }
-            - secretRef: { name: app-secrets }
           env:
             # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 고정 Xmx 제거, limit 비례 힙(WebFlux
             # 오프힙 감안 비율 최저 50%) + InitialRAMPercentage(콜드부트 GC 빈발 절충) + codecache 캡.
@@ -55,8 +59,17 @@ spec:
             timeoutSeconds: 3    # k3s_memory_mitigation_plan §4(WS-M3) — GC pause/CPU 기아 오탐 흡수
             failureThreshold: 5  # 3→5, kill 유예 30s→50s
           resources:
-            limits: { memory: "256Mi" }
-            requests: { cpu: "100m", memory: "192Mi" }
+            limits: { memory: "320Mi" }   # gate2 A-3: 실사용 237Mi 초과·재기동 종식 (MaxRAMPercentage 힙 여유)
+            requests: { cpu: "100m", memory: "256Mi" }   # gate2 A-3: 실사용 237Mi 초과·재기동 종식 (MaxRAMPercentage 힙 여유)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

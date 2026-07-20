@@ -6,6 +6,18 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    # k3s OIDC issuer(S3)의 TLS 체인 지문을 동적으로 조회하기 위한 provider
+    # (iam-oidc-k3s.tf의 data "tls_certificate").
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
+    # k3s 사전공유 조인 토큰(random_password) 생성용 — server/agent 양쪽 user_data에
+    # 동일 값 주입해 node-token 대기 없이 조인(compute.tf).
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 
   # ---------------------------------------------------------------------
@@ -20,12 +32,12 @@ terraform {
   #         `terraform init -migrate-state` 를 실행해 로컬 state를 S3로 옮긴다.
   # ---------------------------------------------------------------------
   backend "s3" {
-     bucket       = "team02-letsgpt-bucket" # var.s3_bucket_name과 동일한 값으로 교체
-     key          = "tfstate/letsGPT-openAt/terraform.tfstate"
-     region       = "ap-northeast-2"
-     encrypt      = true
-     use_lockfile = true # DynamoDB 락 대신 S3 네이티브 락 사용
-   }
+    bucket       = "team02-letsgpt-bucket" # var.s3_bucket_name과 동일한 값으로 교체
+    key          = "tfstate/letsGPT-openAt/terraform.tfstate"
+    region       = "ap-northeast-2"
+    encrypt      = true
+    use_lockfile = true # DynamoDB 락 대신 S3 네이티브 락 사용
+  }
 }
 
 provider "aws" {

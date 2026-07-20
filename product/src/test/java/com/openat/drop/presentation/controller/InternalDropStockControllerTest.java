@@ -13,6 +13,7 @@ import com.openat.common.exception.GlobalExceptionHandler;
 import com.openat.config.WebConfig;
 import com.openat.drop.application.usecase.DropStockUseCase;
 import com.openat.drop.domain.error.DropErrorCode;
+import com.openat.drop.infrastructure.metrics.DropStockMetrics;
 import com.openat.drop.presentation.dto.StockChangeRequest;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,6 +35,7 @@ class InternalDropStockControllerTest {
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private DropStockUseCase dropStockUseCase;
+  @MockitoBean private DropStockMetrics dropStockMetrics;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Test

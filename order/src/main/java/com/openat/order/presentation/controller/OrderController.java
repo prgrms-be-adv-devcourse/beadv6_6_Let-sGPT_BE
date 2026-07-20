@@ -14,6 +14,7 @@ import com.openat.order.presentation.dto.InternalPurchaseSignalResponse;
 import com.openat.order.presentation.dto.OrderCancelResponse;
 import com.openat.order.presentation.dto.OrderResponse;
 import com.openat.order.presentation.dto.OrderSummaryResponse;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -38,14 +39,24 @@ import org.springframework.web.bind.annotation.RestController;
 public class OrderController implements OrderApiSpec {
 
   private final OrderUseCase orderUseCase;
+  private final MeterRegistry meterRegistry;
 
   @Override
   @PostMapping("/api/v1/orders")
   public ResponseEntity<CreateOrderResponse> createOrder(
       @CurrentUser UserContext userContext, @Valid @RequestBody CreateOrderRequest request) {
-    CreateOrderResponse response =
-        CreateOrderResponse.from(
-            orderUseCase.createOrder(memberId(userContext), request.toCommand()));
+    CreateOrderResponse response;
+    try {
+      response =
+          CreateOrderResponse.from(
+              orderUseCase.createOrder(memberId(userContext), request.toCommand()));
+    } catch (RuntimeException e) {
+      meterRegistry.counter("order.create.result", "result", "fail").increment();
+      throw e;
+    }
+    meterRegistry
+        .counter("order.create.result", "result", response.created() ? "created" : "duplicate")
+        .increment();
     if (response.created()) {
       return ResponseEntity.created(Locations.fromCurrentRequest(response.orderId()))
           .body(response);

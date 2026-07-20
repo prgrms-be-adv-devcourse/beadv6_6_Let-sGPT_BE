@@ -27,6 +27,7 @@ resources:
   - 30-frontend.yaml
   - 31-ingress.yaml
   - 32-https-redirect-middleware.yaml
+  - 50-networkpolicy.yaml
   # ClusterIssuer(cert-manager)는 여기 없음 — kustomize의 namespace 트랜스포머가 CRD의 스코프를
   # 모르고 cluster-scoped 리소스에도 namespace: openat을 강제로 찍어버리는 걸 kustomize build로
   # 실사 확인(ClusterRole 등 built-in 종류는 안 찍히지만 CRD는 찍힘). k8s/bootstrap/40-cert-issuer.yaml로

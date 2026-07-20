@@ -26,6 +26,38 @@ for key in DB_USER DB_PASSWORD JWT_KEY_ID JWT_PRIVATE_KEY JWT_PUBLIC_KEY PG_CLIE
   [ -n "${!key:-}" ] || { echo "ERROR: $ENV_FILE 에 $key 없음/빈값 — 실패를 조용히 넘기지 않는다" >&2; exit 1; }
 done
 
+# --- 도메인별 Secret 분리 (7/18 env 주입 전환) ---
+# 공용 DB (단일 postgres·단일 role이라 공유 합리)
+"$KUBECTL" create secret generic db-secrets -n "$NS" \
+  --from-literal=DB_USER="$DB_USER" \
+  --from-literal=DB_PASSWORD="$DB_PASSWORD" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: db-secrets 적용 완료"
+
+# member 전용 — JWT 발급/서명 주체
+"$KUBECTL" create secret generic member-secrets -n "$NS" \
+  --from-literal=JWT_KEY_ID="$JWT_KEY_ID" \
+  --from-literal=JWT_PRIVATE_KEY="$JWT_PRIVATE_KEY" \
+  --from-literal=JWT_PUBLIC_KEY="$JWT_PUBLIC_KEY" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: member-secrets 적용 완료"
+
+# payment 전용
+"$KUBECTL" create secret generic payment-secrets -n "$NS" \
+  --from-literal=PG_SECRET_KEY="$PG_SECRET_KEY" \
+  --from-literal=PAYMENT_FIELD_ENCRYPTION_KEY="$PAYMENT_FIELD_ENCRYPTION_KEY" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: payment-secrets 적용 완료"
+
+# search 전용
+"$KUBECTL" create secret generic search-secrets -n "$NS" \
+  --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+echo "OK: search-secrets 적용 완료"
+
+# (전환기 한정) 레거시 app-secrets 병행 생성 — 매니페스트 revert 롤백 지렛대.
+# 안정 확인 후 후속 커밋에서 이 블록과 위 필수 키 목록의 PG_CLIENT_KEY를 함께 제거하고
+# `kubectl delete secret app-secrets -n openat` 1회 수동 실행으로 마감한다.
 "$KUBECTL" create secret generic app-secrets -n "$NS" \
   --from-literal=DB_USER="$DB_USER" \
   --from-literal=DB_PASSWORD="$DB_PASSWORD" \
@@ -69,9 +101,26 @@ DB_PASSWORD_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(
 echo "OK: pg-exporter-secret 적용 완료 (namespace=observability)"
 
 # WS-D — Grafana admin 자격증명. 미지정 시 랜덤 생성(하드코딩 금지 — 실패는 시끄럽게).
-GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-$(openssl rand -base64 18)}"
-"$KUBECTL" create secret generic grafana-admin -n observability \
-  --from-literal=admin-user="${GRAFANA_ADMIN_USER:-admin}" \
-  --from-literal=admin-password="$GRAFANA_ADMIN_PASSWORD" \
-  --dry-run=client -o yaml | "$KUBECTL" apply -f -
-echo "OK: grafana-admin 적용 완료 (namespace=observability, admin-user=${GRAFANA_ADMIN_USER:-admin})"
+# 멱등 처리 근거: 과거엔 미지정 시 매 실행마다 openssl rand로 새 비밀번호를 생성해 Secret을
+# 덮어썼는데, CD가 돌 때마다 Secret이 회전되어 이미 기동된 grafana 파드의 env(기동 시점 주입)와
+# 어긋나 admin 로그인이 계속 깨졌다(2026-07-20 실측: Secret 해시와 파드 env 해시 불일치).
+# 따라서 명시 지정이 없고 Secret이 이미 있으면 회전하지 않고 그대로 둔다.
+if [ -n "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
+  # 명시 지정 — 의도적 회전 허용(현행대로 apply).
+  "$KUBECTL" create secret generic grafana-admin -n observability \
+    --from-literal=admin-user="${GRAFANA_ADMIN_USER:-admin}" \
+    --from-literal=admin-password="$GRAFANA_ADMIN_PASSWORD" \
+    --dry-run=client -o yaml | "$KUBECTL" apply -f -
+  echo "OK: grafana-admin 적용 완료 (namespace=observability, admin-user=${GRAFANA_ADMIN_USER:-admin})"
+elif "$KUBECTL" get secret grafana-admin -n observability >/dev/null 2>&1; then
+  # 미지정 + 이미 존재 — 회전 금지(파드 env와의 불일치 방지).
+  echo "SKIP: grafana-admin 이미 존재 — 회전 안 함(명시 회전은 GRAFANA_ADMIN_PASSWORD 지정)"
+else
+  # 미지정 + 부재 — 최초 랜덤 생성.
+  GRAFANA_ADMIN_PASSWORD="$(openssl rand -base64 18)"
+  "$KUBECTL" create secret generic grafana-admin -n observability \
+    --from-literal=admin-user="${GRAFANA_ADMIN_USER:-admin}" \
+    --from-literal=admin-password="$GRAFANA_ADMIN_PASSWORD" \
+    --dry-run=client -o yaml | "$KUBECTL" apply -f -
+  echo "OK: grafana-admin 최초 생성 완료 (namespace=observability, admin-user=${GRAFANA_ADMIN_USER:-admin})"
+fi

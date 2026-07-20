@@ -168,6 +168,7 @@ class WalletChargeServiceTest {
             .idempotencyKey(idempotencyKey)
             .build();
     when(walletChargeRepository.findById(chargeId)).thenReturn(Optional.of(pending));
+    when(walletChargeRepository.reservePgPaymentKeyIfPending(chargeId, paymentKey)).thenReturn(1);
     when(tossPaymentClient.confirmCharge(paymentKey, chargeId, amount, idempotencyKey))
         .thenReturn(TossConfirmResult.approved("toss-tx-1"));
     when(walletChargeFinalizer.finalizePending(chargeId, WalletCharge.Status.APPROVED, "toss-tx-1"))
@@ -178,7 +179,7 @@ class WalletChargeServiceTest {
     WalletChargeResult result = walletChargeService.confirmCharge(command);
 
     assertThat(result.status()).isEqualTo("APPROVED");
-    verify(walletChargeRepository).updatePgPaymentKey(chargeId, paymentKey);
+    verify(walletChargeRepository).reservePgPaymentKeyIfPending(chargeId, paymentKey);
     verify(walletChargeFinalizer)
         .finalizePending(chargeId, WalletCharge.Status.APPROVED, "toss-tx-1");
   }
@@ -206,6 +207,7 @@ class WalletChargeServiceTest {
             .idempotencyKey(idempotencyKey)
             .build();
     when(walletChargeRepository.findById(chargeId)).thenReturn(Optional.of(pending));
+    when(walletChargeRepository.reservePgPaymentKeyIfPending(chargeId, paymentKey)).thenReturn(1);
     when(tossPaymentClient.confirmCharge(paymentKey, chargeId, amount, idempotencyKey))
         .thenReturn(TossConfirmResult.rejected("PG_REJECTED"));
     when(walletChargeFinalizer.finalizePending(chargeId, WalletCharge.Status.FAILED, null))
@@ -238,7 +240,7 @@ class WalletChargeServiceTest {
 
     assertThat(result.status()).isEqualTo("APPROVED");
     verifyNoInteractions(tossPaymentClient, walletChargeFinalizer);
-    verify(walletChargeRepository, never()).updatePgPaymentKey(any(), any());
+    verify(walletChargeRepository, never()).reservePgPaymentKeyIfPending(any(), any());
   }
 
   @Test
@@ -301,6 +303,7 @@ class WalletChargeServiceTest {
             .build();
     when(walletChargeRepository.findById(chargeId))
         .thenReturn(Optional.of(pending), Optional.of(finalizedByOther));
+    when(walletChargeRepository.reservePgPaymentKeyIfPending(chargeId, paymentKey)).thenReturn(1);
     when(tossPaymentClient.confirmCharge(paymentKey, chargeId, amount, idempotencyKey))
         .thenReturn(TossConfirmResult.approved("toss-tx-1"));
     when(walletChargeFinalizer.finalizePending(chargeId, WalletCharge.Status.APPROVED, "toss-tx-1"))
@@ -311,5 +314,40 @@ class WalletChargeServiceTest {
     WalletChargeResult result = walletChargeService.confirmCharge(command);
 
     assertThat(result.status()).isEqualTo("FAILED");
+  }
+
+  @Test
+  void confirmCharge_예약_선점에_실패하면_PG를_호출하지_않고_현재_상태를_반환한다() {
+    UUID chargeId = UUID.randomUUID();
+    String paymentKey = "toss-payment-key";
+    WalletCharge pending =
+        WalletCharge.builder()
+            .id(chargeId)
+            .memberId(memberId)
+            .amount(amount)
+            .method(WalletCharge.Method.PG)
+            .status(WalletCharge.Status.PENDING)
+            .idempotencyKey(idempotencyKey)
+            .build();
+    // 읽기 시점엔 PENDING이었으나 예약 UPDATE 직전에 다른 경로(보조 웹훅 등)가 먼저 확정한 경우.
+    WalletCharge approvedByOther =
+        WalletCharge.builder()
+            .id(chargeId)
+            .memberId(memberId)
+            .amount(amount)
+            .method(WalletCharge.Method.PG)
+            .status(WalletCharge.Status.APPROVED)
+            .idempotencyKey(idempotencyKey)
+            .build();
+    when(walletChargeRepository.findById(chargeId))
+        .thenReturn(Optional.of(pending), Optional.of(approvedByOther));
+    when(walletChargeRepository.reservePgPaymentKeyIfPending(chargeId, paymentKey)).thenReturn(0);
+
+    ChargeConfirmCommand command =
+        new ChargeConfirmCommand(chargeId, memberId, amount, paymentKey, idempotencyKey);
+    WalletChargeResult result = walletChargeService.confirmCharge(command);
+
+    assertThat(result.status()).isEqualTo("APPROVED");
+    verifyNoInteractions(tossPaymentClient, walletChargeFinalizer);
   }
 }

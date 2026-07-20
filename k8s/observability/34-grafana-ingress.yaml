@@ -1,0 +1,23 @@
+# Grafana 외부 노출 Ingress — host grafana.openat.duckdns.org.
+# TLS/발급은 base/31-ingress.yaml 방식 복제(cert-manager letsencrypt-prod).
+# 미들웨어 체인(순서: rate-limit -> inflight -> https-redirect) 바인딩은 어노테이션으로 명시 연결해야
+# 적용된다(Middleware CRD는 배포만으로 라우터에 붙지 않음). 형식: <namespace>-<name>@kubernetescrd.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: observability
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: "observability-grafana-ratelimit@kubernetescrd,observability-grafana-inflight@kubernetescrd,observability-https-redirect@kubernetescrd"
+spec:
+  tls:
+    - hosts: [grafana.openat.duckdns.org]
+      secretName: grafana-tls
+  rules:
+    - host: grafana.openat.duckdns.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: grafana, port: { number: 3000 } } }
