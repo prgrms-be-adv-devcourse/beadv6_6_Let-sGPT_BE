@@ -11,6 +11,9 @@ dependencies {
     // Boot 4.x에서 분리된 RestClient 자동설정 — 없으면 RestClient.Builder 주입 실패로 기동 불가
     implementation("org.springframework.boot:spring-boot-restclient")
     implementation("io.github.resilience4j:resilience4j-circuitbreaker:2.3.0")
+    // flyway — Spring Boot 4.x는 Flyway 자동설정이 별도 모듈로 분리되어, DB 드라이버만으론 부트 시점에 실행되지 않음
+    implementation("org.springframework.boot:spring-boot-flyway")
+    implementation("org.flywaydb:flyway-database-postgresql")
 
     // 리포지토리 JPQL 통합 테스트용
     testImplementation("org.springframework.boot:spring-boot-data-jpa-test")
