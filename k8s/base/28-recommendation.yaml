@@ -29,7 +29,7 @@ spec:
           ports: [{ containerPort: 9220 }]
           envFrom:
             - configMapRef: { name: app-config }
-            - secretRef: { name: app-secrets }
+            - secretRef: { name: db-secrets }
           env:
             # MaxMetaspaceSize 캡 없음(qna.md Q116) — 서브리밋 안 걸고 pod limit 하나로 통제.
             # 캡이 있으면 메타스페이스만 먼저 자기 상한에 부딪혀 OutOfMemoryError: Metaspace를

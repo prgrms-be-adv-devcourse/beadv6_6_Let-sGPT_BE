@@ -1,0 +1,70 @@
+# 데이터 tier(postgres/kafka/redis/elasticsearch) ingress-only 격리.
+# NetworkPolicy는 선택된 파드에 정책이 하나라도 붙으면 그 파드는 명시 허용 외 전부 차단하므로,
+# 이 4개 정책만으로 데이터 tier가 잠긴다. 앱 파드에는 정책을 걸지 않아(무정책=전면 허용)
+# traefik->apigateway->서비스 경로와 관측 스택의 앱 스크레이프 경로는 그대로 통과한다.
+# 신규 리소스 추가만 — 기존 워크로드 selector는 절대 변경하지 않는다(라이브 데드락 전례).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+  namespace: openat
+spec:
+  podSelector:
+    matchLabels: { app: postgres }
+  policyTypes: [Ingress]
+  ingress:
+    # openat 전체 파드(앱) + observability ns(postgres-exporter)만 5432 허용.
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: observability }
+      ports:
+        - { port: 5432, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka-ingress
+  namespace: openat
+spec:
+  podSelector:
+    matchLabels: { app: kafka }
+  policyTypes: [Ingress]
+  ingress:
+    # openat 내부 파드만 9092 허용.
+    - from:
+        - podSelector: {}
+      ports:
+        - { port: 9092, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ingress
+  namespace: openat
+spec:
+  podSelector:
+    matchLabels: { app: redis }
+  policyTypes: [Ingress]
+  ingress:
+    # openat 내부 파드만 6379 허용.
+    - from:
+        - podSelector: {}
+      ports:
+        - { port: 6379, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elasticsearch-ingress
+  namespace: openat
+spec:
+  podSelector:
+    matchLabels: { app: elasticsearch }
+  policyTypes: [Ingress]
+  ingress:
+    # openat 내부 파드만 9200 허용.
+    - from:
+        - podSelector: {}
+      ports:
+        - { port: 9200, protocol: TCP }

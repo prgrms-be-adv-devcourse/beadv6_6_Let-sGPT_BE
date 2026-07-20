@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -22,28 +21,24 @@ import com.openat.payment.application.exception.PaymentErrorCode;
 import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.domain.model.Payment;
 import com.openat.payment.domain.model.Refund;
-import com.openat.payment.domain.model.Wallet;
 import com.openat.payment.domain.repository.PaymentRepository;
 import com.openat.payment.domain.repository.RefundRepository;
-import com.openat.payment.domain.repository.WalletRepository;
-import com.openat.payment.domain.repository.WalletTransactionRepository;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-// 순수 Mockito 단위테스트(A13 목표) — plan.md E2. 확정(complete/fail)은 RefundFinalizer로 위임되므로
-// (7-12 plan WS-D) 이 테스트는 접수 흐름과 Finalizer 호출 위임만 검증 — 확정 세부 로직은 RefundFinalizerTest.
+// 순수 Mockito 단위테스트(A13 목표). 접수(환불액 선증가 + PENDING 저장)는 RefundAccepter로, 확정(complete/fail)은
+// RefundFinalizer로 위임되므로 이 테스트는 requestRefund의 오케스트레이션(멱등/소유자/PG 분기 위임)만 검증한다 —
+// 접수 원자성은 RefundAccepterTest, 확정 세부는 RefundFinalizerTest.
 class RefundServiceTest {
 
   private final RefundRepository refundRepository = mock(RefundRepository.class);
   private final PaymentRepository paymentRepository = mock(PaymentRepository.class);
-  private final WalletRepository walletRepository = mock(WalletRepository.class);
-  private final WalletTransactionRepository walletTransactionRepository =
-      mock(WalletTransactionRepository.class);
   private final TossPaymentClient tossPaymentClient = mock(TossPaymentClient.class);
   private final RefundFinalizer refundFinalizer = mock(RefundFinalizer.class);
+  private final RefundAccepter refundAccepter = mock(RefundAccepter.class);
 
   private RefundService refundService;
 
@@ -56,149 +51,127 @@ class RefundServiceTest {
   void setUp() {
     refundService =
         new RefundService(
-            refundRepository,
-            paymentRepository,
-            walletRepository,
-            walletTransactionRepository,
-            tossPaymentClient,
-            refundFinalizer);
+            refundRepository, paymentRepository, tossPaymentClient, refundFinalizer, refundAccepter);
 
     paymentId = UUID.randomUUID();
     memberId = UUID.randomUUID();
     amount = 3_000L;
     idempotencyKey = "refund-idem-" + UUID.randomUUID();
 
-    when(refundRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-    when(walletRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-    when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     when(refundRepository.findByIdempotencyKey(idempotencyKey)).thenReturn(Optional.empty());
   }
 
+  private Payment pgPayment() {
+    return Payment.builder()
+        .id(paymentId)
+        .memberId(memberId)
+        .orderId(UUID.randomUUID())
+        .amount(10_000L)
+        .method(Payment.Method.PG)
+        .pgPaymentKey("toss-payment-key")
+        .status(Payment.Status.APPROVED)
+        .refundedAmount(0L)
+        .build();
+  }
+
+  private Refund pendingRefund(UUID refundId) {
+    return Refund.builder()
+        .id(refundId)
+        .paymentId(paymentId)
+        .amount(amount)
+        .status(Refund.Status.PENDING)
+        .idempotencyKey(idempotencyKey)
+        .build();
+  }
+
   @Test
-  void WALLET_결제_환불은_PG를_호출하지_않고_지갑에_즉시_반영한_뒤_Finalizer_complete에_위임한다() {
+  void 접수가_즉시_완료를_반환하면_그대로_반환하고_PG를_호출하지_않는다() {
+    UUID refundId = UUID.randomUUID();
     Payment payment =
         Payment.builder()
             .id(paymentId)
             .memberId(memberId)
-            .orderId(UUID.randomUUID())
-            .amount(10_000L)
             .method(Payment.Method.WALLET)
             .status(Payment.Status.APPROVED)
             .refundedAmount(0L)
             .build();
     when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment));
-    when(paymentRepository.tryIncreaseRefundedAmount(paymentId, amount)).thenReturn(1);
-    when(walletRepository.findByMemberId(memberId))
-        .thenReturn(Optional.of(Wallet.builder().memberId(memberId).balance(5_000L).build()));
-    when(refundFinalizer.complete(any(), eq(payment), isNull()))
-        .thenAnswer(
-            inv ->
-                Optional.of(
-                    Refund.builder()
-                        .id(inv.getArgument(0))
-                        .paymentId(paymentId)
-                        .amount(amount)
-                        .status(Refund.Status.COMPLETE)
-                        .build()));
+    when(refundAccepter.accept(any(), any(), any()))
+        .thenReturn(
+            RefundAccepter.Acceptance.terminal(
+                new RefundResult(refundId, paymentId, amount, "COMPLETE")));
 
     RefundCommand command = new RefundCommand(paymentId, memberId, amount, "단순변심", idempotencyKey);
     RefundResult result = refundService.requestRefund(command);
 
     assertThat(result.status()).isEqualTo("COMPLETE");
-    verifyNoInteractions(tossPaymentClient);
-    verify(walletRepository).charge(any(), eq(amount));
-    verify(walletTransactionRepository).save(any());
-    verify(refundFinalizer).complete(any(), eq(payment), isNull());
+    verifyNoInteractions(tossPaymentClient, refundFinalizer);
   }
 
   @Test
   void PG_결제_환불이_승인되면_Finalizer_complete에_pgRefundKey와_함께_위임한다() {
-    Payment payment =
-        Payment.builder()
-            .id(paymentId)
-            .memberId(memberId)
-            .orderId(UUID.randomUUID())
-            .amount(10_000L)
-            .method(Payment.Method.PG)
-            .pgPaymentKey("toss-payment-key")
-            .status(Payment.Status.APPROVED)
-            .refundedAmount(0L)
-            .build();
+    UUID refundId = UUID.randomUUID();
+    Payment payment = pgPayment();
+    Refund pending = pendingRefund(refundId);
     when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment));
-    when(paymentRepository.tryIncreaseRefundedAmount(paymentId, amount)).thenReturn(1);
+    when(refundAccepter.accept(any(), any(), any()))
+        .thenReturn(RefundAccepter.Acceptance.pendingPg(pending));
     when(tossPaymentClient.refundPayment("toss-payment-key", amount, idempotencyKey))
         .thenReturn(TossRefundResult.complete("toss-refund-1"));
-    when(refundFinalizer.complete(any(), eq(payment), eq("toss-refund-1")))
-        .thenAnswer(
-            inv ->
-                Optional.of(
-                    Refund.builder()
-                        .id(inv.getArgument(0))
-                        .paymentId(paymentId)
-                        .amount(amount)
-                        .status(Refund.Status.COMPLETE)
-                        .build()));
+    when(refundFinalizer.complete(eq(refundId), eq(payment), eq("toss-refund-1")))
+        .thenReturn(
+            Optional.of(
+                Refund.builder()
+                    .id(refundId)
+                    .paymentId(paymentId)
+                    .amount(amount)
+                    .status(Refund.Status.COMPLETE)
+                    .build()));
 
     RefundCommand command = new RefundCommand(paymentId, memberId, amount, "단순변심", idempotencyKey);
     RefundResult result = refundService.requestRefund(command);
 
     assertThat(result.status()).isEqualTo("COMPLETE");
-    verifyNoInteractions(walletRepository);
-    verify(refundFinalizer).complete(any(), eq(payment), eq("toss-refund-1"));
+    verify(refundFinalizer).complete(eq(refundId), eq(payment), eq("toss-refund-1"));
     verify(refundFinalizer, never()).fail(any(), any(), any());
   }
 
   @Test
   void PG_결제_환불이_거절되면_Finalizer_fail에_사유와_함께_위임한다() {
-    Payment payment =
-        Payment.builder()
-            .id(paymentId)
-            .memberId(memberId)
-            .orderId(UUID.randomUUID())
-            .amount(10_000L)
-            .method(Payment.Method.PG)
-            .pgPaymentKey("toss-payment-key")
-            .status(Payment.Status.APPROVED)
-            .refundedAmount(0L)
-            .build();
+    UUID refundId = UUID.randomUUID();
+    Payment payment = pgPayment();
+    Refund pending = pendingRefund(refundId);
     when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment));
-    when(paymentRepository.tryIncreaseRefundedAmount(paymentId, amount)).thenReturn(1);
+    when(refundAccepter.accept(any(), any(), any()))
+        .thenReturn(RefundAccepter.Acceptance.pendingPg(pending));
     when(tossPaymentClient.refundPayment("toss-payment-key", amount, idempotencyKey))
         .thenReturn(TossRefundResult.failed("PG_REJECTED"));
-    when(refundFinalizer.fail(any(), eq(payment), eq("PG_REJECTED")))
-        .thenAnswer(
-            inv ->
-                Optional.of(
-                    Refund.builder()
-                        .id(inv.getArgument(0))
-                        .paymentId(paymentId)
-                        .amount(amount)
-                        .status(Refund.Status.FAILED)
-                        .build()));
+    when(refundFinalizer.fail(eq(refundId), eq(payment), eq("PG_REJECTED")))
+        .thenReturn(
+            Optional.of(
+                Refund.builder()
+                    .id(refundId)
+                    .paymentId(paymentId)
+                    .amount(amount)
+                    .status(Refund.Status.FAILED)
+                    .build()));
 
     RefundCommand command = new RefundCommand(paymentId, memberId, amount, "단순변심", idempotencyKey);
     RefundResult result = refundService.requestRefund(command);
 
     assertThat(result.status()).isEqualTo("FAILED");
-    verify(refundFinalizer).fail(any(), eq(payment), eq("PG_REJECTED"));
+    verify(refundFinalizer).fail(eq(refundId), eq(payment), eq("PG_REJECTED"));
     verify(refundFinalizer, never()).complete(any(), any(), any());
   }
 
   @Test
   void PG_결제_환불_응답이_불확실하면_PENDING_그대로_두고_Finalizer를_호출하지_않는다() {
-    Payment payment =
-        Payment.builder()
-            .id(paymentId)
-            .memberId(memberId)
-            .orderId(UUID.randomUUID())
-            .amount(10_000L)
-            .method(Payment.Method.PG)
-            .pgPaymentKey("toss-payment-key")
-            .status(Payment.Status.APPROVED)
-            .refundedAmount(0L)
-            .build();
+    UUID refundId = UUID.randomUUID();
+    Payment payment = pgPayment();
+    Refund pending = pendingRefund(refundId);
     when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment));
-    when(paymentRepository.tryIncreaseRefundedAmount(paymentId, amount)).thenReturn(1);
+    when(refundAccepter.accept(any(), any(), any()))
+        .thenReturn(RefundAccepter.Acceptance.pendingPg(pending));
     when(tossPaymentClient.refundPayment("toss-payment-key", amount, idempotencyKey))
         .thenReturn(TossRefundResult.unknown());
 
@@ -210,18 +183,11 @@ class RefundServiceTest {
   }
 
   @Test
-  void 환불가능액을_초과하면_EXCEED_REFUNDABLE_AMOUNT_예외가_발생하고_Refund를_저장하지_않는다() {
-    Payment payment =
-        Payment.builder()
-            .id(paymentId)
-            .memberId(memberId)
-            .amount(10_000L)
-            .method(Payment.Method.PG)
-            .status(Payment.Status.APPROVED)
-            .refundedAmount(9_000L)
-            .build();
+  void 접수에서_환불가능액을_초과하면_예외가_그대로_전파되고_PG를_호출하지_않는다() {
+    Payment payment = pgPayment();
     when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment));
-    when(paymentRepository.tryIncreaseRefundedAmount(paymentId, amount)).thenReturn(0);
+    when(refundAccepter.accept(any(), any(), any()))
+        .thenThrow(new BusinessException(PaymentErrorCode.EXCEED_REFUNDABLE_AMOUNT));
 
     RefundCommand command = new RefundCommand(paymentId, memberId, amount, "단순변심", idempotencyKey);
 
@@ -230,12 +196,11 @@ class RefundServiceTest {
         .extracting(e -> ((BusinessException) e).getErrorCode())
         .isEqualTo(PaymentErrorCode.EXCEED_REFUNDABLE_AMOUNT);
 
-    verify(refundRepository, never()).save(any());
     verifyNoInteractions(tossPaymentClient);
   }
 
   @Test
-  void 결제_소유자가_다르면_FORBIDDEN_예외가_발생하고_환불가능액_검증을_시도하지_않는다() {
+  void 결제_소유자가_다르면_FORBIDDEN_예외가_발생하고_접수를_시도하지_않는다() {
     Payment payment =
         Payment.builder()
             .id(paymentId)
@@ -254,7 +219,7 @@ class RefundServiceTest {
         .extracting(e -> ((BusinessException) e).getErrorCode())
         .isEqualTo(PaymentErrorCode.FORBIDDEN);
 
-    verify(paymentRepository, never()).tryIncreaseRefundedAmount(any(), any());
+    verifyNoInteractions(refundAccepter, tossPaymentClient);
   }
 
   @Test
@@ -287,7 +252,7 @@ class RefundServiceTest {
 
     assertThat(result.refundId()).isEqualTo(existing.getId());
     assertThat(result.status()).isEqualTo("COMPLETE");
-    verifyNoInteractions(paymentRepository);
+    verifyNoInteractions(paymentRepository, refundAccepter);
   }
 
   @Test

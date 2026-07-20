@@ -17,6 +17,7 @@ import com.openat.settlement.domain.model.SettlementBatchStatus;
 import com.openat.settlement.domain.model.SettlementBatchType;
 import com.openat.settlement.domain.repository.SellerSettlementRepository;
 import com.openat.settlement.domain.repository.SettlementBatchRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -33,6 +34,7 @@ public class FailedSellerSettlementRetryService implements FailedSellerSettlemen
     private final SettlementBatchRepository settlementBatchRepository;
     private final SettlementBatchUseCase settlementBatchUseCase;
     private final SellerSettlementWorkerUseCase sellerSettlementWorkerUseCase;
+    private final MeterRegistry meterRegistry;
 
     @Override
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -58,6 +60,8 @@ public class FailedSellerSettlementRetryService implements FailedSellerSettlemen
                     null
             );
         }
+
+        meterRegistry.counter("settlement.retry.count").increment(failedSellerIds.size());
 
         SettlementBatch batch = settlementBatchUseCase.createAndStartBatch(
                 new CreateSettlementBatchCommand(

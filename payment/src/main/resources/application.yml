@@ -25,6 +25,20 @@ payment:
 pg:
   secret-key: ${PG_SECRET_KEY} # 토스 API Basic Auth용 시크릿 키(TossClientConfig) — 웹훅 서명검증은 2026-06-24 제거됨
 
+# 아웃바운드 회복탄력성 튜닝값(ResilienceConfig) — env 외부화 + 코드 기본값(재컴파일 없는 rollout).
+# 윈도우 크기(10)·최소호출수(5) 같은 구조 파라미터는 코드 고정(튜닝 대상 아님).
+toss:
+  cb:
+    failure-rate: ${TOSS_CB_FAILURE_RATE:50} # 실패율 임계치(%)
+    slow-call-ms: ${TOSS_CB_SLOW_CALL_MS:3000} # 느린 호출 판정 시간
+    wait-open-s: ${TOSS_CB_WAIT_OPEN_S:10} # open 유지 시간
+  rl:
+    permits-per-sec: ${TOSS_RL_PERMITS_PER_SEC:10} # 초당 허용 호출 수(인스턴스별 정적 분할)
+    timeout-ms: ${TOSS_RL_TIMEOUT_MS:500} # 허가 대기 타임아웃
+order:
+  cb:
+    slow-call-ms: ${ORDER_CB_SLOW_CALL_MS:1500} # 주문검증 read 2s에 맞춘 느린 호출 판정 시간
+
 
 springdoc:
   api-docs:
