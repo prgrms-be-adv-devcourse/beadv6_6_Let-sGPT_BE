@@ -37,78 +37,99 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class OrderController implements OrderApiSpec {
 
-    private final OrderUseCase orderUseCase;
+  private final OrderUseCase orderUseCase;
 
-    @Override
-    @PostMapping("/api/v1/orders")
-    public ResponseEntity<CreateOrderResponse> createOrder(
-            @CurrentUser UserContext userContext,
-            @Valid @RequestBody CreateOrderRequest request
-    ) {
-        CreateOrderResponse response = CreateOrderResponse.from(
-                orderUseCase.createOrder(memberId(userContext), request.toCommand()));
-        if (response.created()) {
-            return ResponseEntity.created(Locations.fromCurrentRequest(response.orderId()))
-                    .body(response);
-        }
-        return ResponseEntity.ok()
-                .header(HttpHeaders.LOCATION, Locations.fromCurrentRequest(response.orderId()).toString())
-                .body(response);
+  @Override
+  @PostMapping("/api/v1/orders")
+  public ResponseEntity<CreateOrderResponse> createOrder(
+      @CurrentUser UserContext userContext, @Valid @RequestBody CreateOrderRequest request) {
+    CreateOrderResponse response =
+        CreateOrderResponse.from(
+            orderUseCase.createOrder(memberId(userContext), request.toCommand()));
+    if (response.created()) {
+      return ResponseEntity.created(Locations.fromCurrentRequest(response.orderId()))
+          .body(response);
     }
+    return ResponseEntity.ok()
+        .header(HttpHeaders.LOCATION, Locations.fromCurrentRequest(response.orderId()).toString())
+        .body(response);
+  }
 
-    @Override
-    @GetMapping("/api/v1/orders/{orderId}")
-    public ResponseEntity<OrderResponse> getOrder(
-            @CurrentUser UserContext userContext,
-            @PathVariable UUID orderId
-    ) {
-        OrderDetailInfo detail = orderUseCase.getMyOrder(memberId(userContext), orderId);
-        return ResponseEntity.ok(OrderResponse.from(detail));
-    }
+  @Override
+  @GetMapping("/api/v1/orders/{orderId}")
+  public ResponseEntity<OrderResponse> getOrder(
+      @CurrentUser UserContext userContext, @PathVariable UUID orderId) {
+    OrderDetailInfo detail = orderUseCase.getMyOrder(memberId(userContext), orderId);
+    return ResponseEntity.ok(OrderResponse.from(detail));
+  }
 
-    @Override
-    @GetMapping("/api/v1/orders")
-    public ResponseEntity<PageResponse<OrderSummaryResponse>> getMyOrders(
-            @CurrentUser UserContext userContext,
-            @RequestParam(required = false) OrderStatus status,
-            Pageable pageable
-    ) {
-        Page<OrderSummaryResponse> page =
-                orderUseCase.getMyOrders(memberId(userContext), status, pageable).map(OrderSummaryResponse::from);
-        return ResponseEntity.ok(PageResponse.of(page));
-    }
+  @Override
+  @GetMapping("/api/v1/orders")
+  public ResponseEntity<PageResponse<OrderSummaryResponse>> getMyOrders(
+      @CurrentUser UserContext userContext,
+      @RequestParam(required = false) OrderStatus status,
+      Pageable pageable) {
+    Page<OrderSummaryResponse> page =
+        orderUseCase
+            .getMyOrders(memberId(userContext), status, pageable)
+            .map(OrderSummaryResponse::from);
+    return ResponseEntity.ok(PageResponse.of(page));
+  }
 
-    @Override
-    @PostMapping("/api/v1/orders/{orderId}/cancel")
-    public ResponseEntity<OrderCancelResponse> cancelOrder(
-            @CurrentUser UserContext userContext,
-            @PathVariable UUID orderId
-    ) {
-        return ResponseEntity.ok(OrderCancelResponse.from(orderUseCase.cancelOrder(memberId(userContext), orderId)));
-    }
+  @Override
+  @PostMapping("/api/v1/orders/{orderId}/cancel")
+  public ResponseEntity<OrderCancelResponse> cancelOrder(
+      @CurrentUser UserContext userContext, @PathVariable UUID orderId) {
+    return ResponseEntity.ok(
+        OrderCancelResponse.from(orderUseCase.cancelOrder(memberId(userContext), orderId)));
+  }
 
-    @Override
-    @GetMapping("/internal/v1/orders/{orderId}")
-    public ResponseEntity<InternalOrderValidationResponse> getOrderForPayment(
-            @PathVariable UUID orderId,
-            @RequestParam UUID memberId
-    ) {
-        return ResponseEntity.ok(
-                InternalOrderValidationResponse.from(orderUseCase.getPaymentValidationInfo(memberId, orderId)));
-    }
+  @Override
+  @PostMapping("/api/v1/orders/{orderId}/refund-requests")
+  public ResponseEntity<OrderCancelResponse> requestRefund(
+      @CurrentUser UserContext userContext, @PathVariable UUID orderId) {
+    return ResponseEntity.ok(
+        OrderCancelResponse.from(orderUseCase.requestRefund(memberId(userContext), orderId)));
+  }
 
-    @Override
-    @GetMapping("/internal/v1/orders/purchase-signals")
-    public ResponseEntity<List<InternalPurchaseSignalResponse>> getPurchaseSignals(
-            @RequestParam UUID memberId,
-            @RequestParam(defaultValue = "20") int limit
-    ) {
-        return ResponseEntity.ok(orderUseCase.getPurchaseSignals(memberId, limit).stream()
-                .map(InternalPurchaseSignalResponse::from)
-                .toList());
-    }
+  @Override
+  @PostMapping("/internal/v1/orders/{orderId}/refund-retries")
+  public ResponseEntity<OrderCancelResponse> retryRefund(@PathVariable UUID orderId) {
+    return ResponseEntity.ok(OrderCancelResponse.from(orderUseCase.retryRefund(orderId)));
+  }
 
-    private UUID memberId(UserContext userContext) {
-        return UUID.fromString(userContext.userId());
-    }
+  @Override
+  @PostMapping("/internal/v1/orders/{orderId}/refund-confirmations")
+  public ResponseEntity<OrderCancelResponse> confirmRefund(@PathVariable UUID orderId) {
+    return ResponseEntity.ok(OrderCancelResponse.from(orderUseCase.confirmRefund(orderId)));
+  }
+
+  @Override
+  @PostMapping("/internal/v1/orders/{orderId}/stock-rollback-retries")
+  public ResponseEntity<OrderCancelResponse> retryStockRollback(@PathVariable UUID orderId) {
+    return ResponseEntity.ok(OrderCancelResponse.from(orderUseCase.retryStockRollback(orderId)));
+  }
+
+  @Override
+  @GetMapping("/internal/v1/orders/{orderId}")
+  public ResponseEntity<InternalOrderValidationResponse> getOrderForPayment(
+      @PathVariable UUID orderId, @RequestParam UUID memberId) {
+    return ResponseEntity.ok(
+        InternalOrderValidationResponse.from(
+            orderUseCase.getPaymentValidationInfo(memberId, orderId)));
+  }
+
+  @Override
+  @GetMapping("/internal/v1/orders/purchase-signals")
+  public ResponseEntity<List<InternalPurchaseSignalResponse>> getPurchaseSignals(
+      @RequestParam UUID memberId, @RequestParam(defaultValue = "20") int limit) {
+    return ResponseEntity.ok(
+        orderUseCase.getPurchaseSignals(memberId, limit).stream()
+            .map(InternalPurchaseSignalResponse::from)
+            .toList());
+  }
+
+  private UUID memberId(UserContext userContext) {
+    return UUID.fromString(userContext.userId());
+  }
 }

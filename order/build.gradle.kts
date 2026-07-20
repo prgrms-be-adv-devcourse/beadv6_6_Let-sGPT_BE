@@ -10,6 +10,7 @@ dependencies {
     testImplementation("org.springframework.kafka:spring-kafka-test")
     // Boot 4.x에서 분리된 RestClient 자동설정 — 없으면 RestClient.Builder 주입 실패로 기동 불가
     implementation("org.springframework.boot:spring-boot-restclient")
+    implementation("io.github.resilience4j:resilience4j-circuitbreaker:2.3.0")
 
     // 리포지토리 JPQL 통합 테스트용
     testImplementation("org.springframework.boot:spring-boot-data-jpa-test")

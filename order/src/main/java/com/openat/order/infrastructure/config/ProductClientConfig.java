@@ -11,23 +11,17 @@ import org.springframework.web.client.RestClient;
 @Configuration
 public class ProductClientConfig {
 
-    private static final Duration CONNECTION_TIMEOUT = Duration.ofSeconds(2);
-    private static final Duration READ_TIMEOUT = Duration.ofSeconds(2);
+  private static final Duration CONNECTION_TIMEOUT = Duration.ofSeconds(1);
+  private static final Duration READ_TIMEOUT = Duration.ofSeconds(3);
 
-    @Bean
-    public RestClient productRestClient(
-            RestClient.Builder restClientBuilder,
-            @Value("${services.product.url}") String productBaseUrl
-    ) {
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(CONNECTION_TIMEOUT)
-                .build();
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(READ_TIMEOUT);
+  @Bean
+  public RestClient productRestClient(
+      RestClient.Builder restClientBuilder,
+      @Value("${services.product.url}") String productBaseUrl) {
+    HttpClient httpClient = HttpClient.newBuilder().connectTimeout(CONNECTION_TIMEOUT).build();
+    JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+    requestFactory.setReadTimeout(READ_TIMEOUT);
 
-        return restClientBuilder
-                .baseUrl(productBaseUrl)
-                .requestFactory(requestFactory)
-                .build();
-    }
+    return restClientBuilder.baseUrl(productBaseUrl).requestFactory(requestFactory).build();
+  }
 }
