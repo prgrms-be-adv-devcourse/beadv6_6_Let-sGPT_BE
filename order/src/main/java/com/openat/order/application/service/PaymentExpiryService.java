@@ -64,10 +64,20 @@ public class PaymentExpiryService {
       }
       return;
     }
+    if (payment.status() == PaymentStatus.REFUNDED) {
+      transitionService
+          .expireAlreadySettled(orderId, "결제 후 전액 환불 처리된 주문입니다.")
+          .ifPresent(this::restoreStock);
+      return;
+    }
+    if (payment.status() == PaymentStatus.PARTIALLY_REFUNDED) {
+      transitionService
+          .expireAlreadySettled(orderId, "결제 후 일부 환불 처리된 주문입니다.")
+          .ifPresent(this::restoreStock);
+      return;
+    }
     if (payment.status() == PaymentStatus.FAILED
         || payment.status() == PaymentStatus.CANCELED
-        || payment.status() == PaymentStatus.REFUNDED
-        || payment.status() == PaymentStatus.PARTIALLY_REFUNDED
         || payment.status() == PaymentStatus.NO_PAYMENT) {
       transitionService.expire(orderId).ifPresent(this::restoreStock);
       return;

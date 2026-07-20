@@ -15,4 +15,8 @@ public class PaymentRefundApiException extends RestClientException {
   public boolean isServerError() {
     return statusCode.is5xxServerError();
   }
+
+  public boolean isConflict() {
+    return statusCode.value() == 409;
+  }
 }

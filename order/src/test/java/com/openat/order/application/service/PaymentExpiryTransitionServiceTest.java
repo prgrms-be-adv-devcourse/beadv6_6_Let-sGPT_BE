@@ -89,6 +89,28 @@ class PaymentExpiryTransitionServiceTest {
     assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
   }
 
+  @Test
+  void should_store_already_refunded_fail_code_for_full_refund() {
+    Order order = order();
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+
+    service.expireAlreadySettled(order.getId(), "결제 후 전액 환불 처리된 주문입니다.");
+
+    assertThat(order.getFailCode()).isEqualTo(OrderFailCode.PAYMENT_ALREADY_REFUNDED);
+    assertThat(order.getFailMessage()).isEqualTo("결제 후 전액 환불 처리된 주문입니다.");
+  }
+
+  @Test
+  void should_store_already_refunded_fail_code_for_partial_refund() {
+    Order order = order();
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+
+    service.expireAlreadySettled(order.getId(), "결제 후 일부 환불 처리된 주문입니다.");
+
+    assertThat(order.getFailCode()).isEqualTo(OrderFailCode.PAYMENT_ALREADY_REFUNDED);
+    assertThat(order.getFailMessage()).isEqualTo("결제 후 일부 환불 처리된 주문입니다.");
+  }
+
   private Order order() {
     Order order =
         Order.create()

@@ -29,11 +29,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
 @Import(OrderRepositoryAdaptor.class)
-@TestPropertySource(
-        properties = {
-            "spring.jpa.properties.hibernate.hbm2ddl.create_namespaces=true",
-            "spring.sql.init.mode=never"
-        })
+@TestPropertySource(properties = "spring.sql.init.mode=never")
 @DisplayName("주문 영속성 - 구매 신호 집계")
 class OrderRepositoryAdaptorTest {
 
