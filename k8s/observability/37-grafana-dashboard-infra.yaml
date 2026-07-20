@@ -488,7 +488,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(jvm_memory_used_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\",area=\"heap\"})",
+              "expr": "sum by (app)(jvm_memory_used_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\",area=\"heap\"})",
               "legendFormat": "{{app}}",
               "refId": "A"
             }
@@ -543,7 +543,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "avg by (app)(process_cpu_usage{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "expr": "avg by (app)(process_cpu_usage{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
               "legendFormat": "{{app}}",
               "refId": "A"
             }
@@ -598,7 +598,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(process_memory_rss_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "expr": "sum by (app)(process_memory_rss_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
               "legendFormat": "{{app}}",
               "refId": "A"
             }
@@ -653,7 +653,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(process_open_fds{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "expr": "sum by (app)(process_open_fds{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
               "legendFormat": "{{app}}",
               "refId": "A"
             }

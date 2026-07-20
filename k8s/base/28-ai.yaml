@@ -1,8 +1,8 @@
-# 추천(recommendation) — MVC/JPA 스택, DB 사용. queue 패턴 복제(경량, default 노드).
+# AI(recommendation, chatbot 서브도메인) — MVC/JPA 스택, DB 사용. queue 패턴 복제(경량, default 노드).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: recommendation
+  name: ai
   namespace: openat
   annotations:
     argocd.argoproj.io/sync-wave: "9"
@@ -12,21 +12,21 @@ spec:
     type: RollingUpdate
     rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
   selector:
-    matchLabels: { app: recommendation }
+    matchLabels: { app: ai }
   template:
     metadata:
-      labels: { app: recommendation }
+      labels: { app: ai }
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9220"
+        prometheus.io/port: "9160"
         prometheus.io/path: "/actuator/prometheus"
     spec:
       imagePullSecrets:
         - name: ghcr-pull
       containers:
-        - name: recommendation
-          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/recommendation:latest
-          ports: [{ containerPort: 9220 }]
+        - name: ai
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/ai:latest
+          ports: [{ containerPort: 9160 }]
           envFrom:
             - configMapRef: { name: app-config }
             - secretRef: { name: db-secrets }
@@ -39,15 +39,15 @@ spec:
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
           startupProbe:
-            httpGet: { path: /actuator/health/liveness, port: 9220 }
+            httpGet: { path: /actuator/health/liveness, port: 9160 }
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
-            httpGet: { path: /actuator/health/readiness, port: 9220 }
+            httpGet: { path: /actuator/health/readiness, port: 9160 }
             periodSeconds: 5
             failureThreshold: 3
           livenessProbe:
-            httpGet: { path: /actuator/health/liveness, port: 9220 }
+            httpGet: { path: /actuator/health/liveness, port: 9160 }
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 5
@@ -58,8 +58,8 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: recommendation
+  name: ai
   namespace: openat
 spec:
-  selector: { app: recommendation }
-  ports: [{ port: 9220, targetPort: 9220 }]
+  selector: { app: ai }
+  ports: [{ port: 9160, targetPort: 9160 }]
