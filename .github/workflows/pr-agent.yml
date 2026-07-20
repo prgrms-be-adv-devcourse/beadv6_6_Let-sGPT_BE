@@ -43,3 +43,6 @@ jobs:
           # ⚠️ 추론 서버 관리자에게 발급받은 활성 키여야 함. 시크릿 값이 비어 있으면
           #    pr-agent가 placeholder dummy_key로 폴백해 401이 난다.
           OPENAI__KEY: ${{ secrets.INFERENCE_API_KEY }}
+          # (임시 디버그) LLM 호출 실패가 로그에 안 남아 원인 확인용 — 원인 파악 후 제거
+          CONFIG__VERBOSITY_LEVEL: "2"
+          LITELLM__DEBUG: "true"
