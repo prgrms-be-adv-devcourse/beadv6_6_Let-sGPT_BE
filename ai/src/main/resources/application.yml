@@ -1,17 +1,17 @@
 server:
-  port: 9220
+  port: 9160
 
 spring:
   profiles:
     active: local
   application:
-    name: recommendation-service
+    name: ai-service
   jpa:
     hibernate:
       ddl-auto: update
     properties:
       hibernate:
-        default_schema: recommendation
+        default_schema: ai
         format_sql: false
         show_sql: false
         jdbc:

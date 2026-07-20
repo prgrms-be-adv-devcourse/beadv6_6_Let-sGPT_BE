@@ -29,7 +29,7 @@ jobs:
             product: ['**/product/**']
             settlement: ['**/settlement/**']
             search: ['**/search/**']
-            recommendation: ['**/recommendation/**']
+            ai: ['**/ai/**']
             queue: ['**/queue/**']
 
       # 매니페스트(k8s/**) 변경은 "빌드 매트릭스"와 분리해 감지한다 — 이건 빌드 대상이 아니라
@@ -51,7 +51,7 @@ jobs:
         id: set-matrix
         run: |
           if [ "${{ steps.filter.outputs.common }}" = "true" ]; then
-            echo 'matrix=["apigateway","member","order","payment","product","settlement","search","queue","recommendation"]' >> "$GITHUB_OUTPUT"
+            echo 'matrix=["apigateway","member","order","payment","product","settlement","search","queue","ai"]' >> "$GITHUB_OUTPUT"
           else
             echo 'matrix=${{ steps.filter.outputs.changes }}' >> "$GITHUB_OUTPUT"
           fi
