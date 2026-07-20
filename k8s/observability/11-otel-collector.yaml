@@ -18,6 +18,10 @@ rules:
   - apiGroups: [""]
     resources: [nodes, services, endpoints, pods]
     verbs: [get, list, watch]
+  # kubelet 내장 cAdvisor(/metrics/cadvisor) 프록시 스크레이프용
+  - apiGroups: [""]
+    resources: [nodes/metrics]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -71,6 +75,30 @@ data:
                   target_label: namespace
                 - source_labels: [__meta_kubernetes_pod_label_app]
                   target_label: app
+            # k3s kubelet 내장 cAdvisor — 별도 파드 없이 컨테이너별 메모리/CPU 확보.
+            # Prometheus 288Mi 보호를 위해 keep 필터로 시리즈 최소화.
+            - job_name: kubernetes-cadvisor
+              scheme: https
+              tls_config:
+                insecure_skip_verify: true
+              authorization:
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              kubernetes_sd_configs:
+                - role: node
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_node_name]
+                  target_label: node
+                - target_label: __metrics_path__
+                  replacement: /metrics/cadvisor
+              metric_relabel_configs:
+                # 카디널리티 방어 — 필요한 시리즈만 keep
+                - source_labels: [__name__]
+                  regex: container_memory_working_set_bytes|container_cpu_usage_seconds_total|container_spec_memory_limit_bytes|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total|machine_memory_bytes
+                  action: keep
+                # 파드 아닌 cgroup 중간노드(빈 pod 라벨) 제거. 단 machine_*는 pod 라벨이 없으므로 예외 통과.
+                - source_labels: [__name__, pod]
+                  regex: "machine_.*;|[^;]*;.+"
+                  action: keep
     processors:
       memory_limiter:
         check_interval: 1s
