@@ -45,7 +45,7 @@ drop:
 
 product:
   image:
-    local-dir: ${PRODUCT_IMAGE_DIR:${user.home}/.openat/product-images} # 부팅 서버 로컬 저장 (TODO final: AWS S3 전환)
+    local-dir: ${PRODUCT_IMAGE_DIR:${user.home}/.openat/product-images} # storage=local(기본)일 때 로컬 어댑터 저장 경로 — 배포는 S3 어댑터 사용
   kafka:
     topic:
       product-created: product.created.events

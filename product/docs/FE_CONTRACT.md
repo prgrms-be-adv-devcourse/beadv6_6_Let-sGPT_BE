@@ -71,7 +71,7 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 
 ### 1.5 이미지 업로드 — `POST /api/v1/products/images` (**구현 완료**)
 
-- multipart, part 명 `file`. 서버 로컬 파일시스템에 저장(`LocalImageStorageAdaptor`, TODO final: S3 전환).
+- multipart, part 명 `file`. 서버를 경유해 환경별 저장소 어댑터에 저장한다(로컬은 파일시스템, 배포는 S3).
 - **응답: `201` + 본문 `{ key, url }`** + `Location` 헤더(= url과 동일 조회 경로). FE가 본문 `{ key, url }`을 파싱하므로 **본문 반환으로 확정**(헤더 단독 ✕).
   - `key`: 저장 키 → 상품 write 의 `thumbnailKey`·`imageKeys` 로 사용.
   - `url`: 조회 경로(`/api/v1/products/images/{key}`) → 업로드 직후 미리보기.
@@ -189,6 +189,6 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 
 1. **`DropResponse` 신설 시 FE 필드명 그대로** — `id`(not `dropId`), `remainingQuantity`(not `remaining`). 안 맞추면 codegen 후 FE rename 발생.
 2. **`sellerName` 노출 여부 결정** — product/drop 응답에 추가할지. 추가 시 member `SellerInfo.storeName`을 어떻게 끌어올지(도메인 경계·N+1) 합의.
-3. **`thumbnailKey` URL 전략** — 결정: 응답은 **key**로 주고(실 업로드 = `LocalImageStorageAdaptor` 키), FE `resolveImageSrc`가 `GET /api/v1/products/images/{key}`로 해석(seed/목은 picsum 풀 URL 패스스루). 업로드 응답이 `key`와 `url`을 함께 반환(§1.5)하므로 즉시 미리보기도 가능. presigned·CDN URL은 S3 전환 시 재논의.
+3. **`thumbnailKey` URL 전략** — 결정: 응답은 **key**로 주고(환경에 따라 로컬 파일시스템 또는 S3에 저장), FE `resolveImageSrc`가 `GET /api/v1/products/images/{key}`로 해석(seed/목은 picsum 풀 URL 패스스루). 업로드 응답이 `key`와 `url`을 함께 반환(§1.5)하므로 즉시 미리보기도 가능. presigned·CDN URL은 별도 트랙으로 재논의.
 4. **조회 API 현황** — `/drops`·`/drops/{id}`·`/drops/me`·`/products/me`·`/categories` **구현 완료**. 남은 미구현은 `/wallet`(결제 도메인)뿐 → [`FE_API_REQUESTS.md`](./FE_API_REQUESTS.md).
 5. **`sellerId` = 스토어 `sellerInfoId`** — 판매자 인증이 스토어 단위로 변경(회원 1:N 스토어). 상품/드롭 write·`/me`의 소유·필터와 `ProductResponse.sellerId`를 활성 스토어 `sellerInfoId` 기준으로(게이트웨이가 판매자 토큰 스코프 주입). [`FE_API_REQUESTS.md` 인증 모델 변경 절]
