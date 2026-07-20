@@ -35,19 +35,44 @@ jobs:
         env:
           INFERENCE_API_KEY: ${{ secrets.INFERENCE_API_KEY }}
         run: |
-          echo "key length: ${#INFERENCE_API_KEY}"
-          echo "--- GET /health ---"
-          curl -sS -o /tmp/health.out -w "http_code=%{http_code}\n" \
-            -H "Authorization: Bearer ${INFERENCE_API_KEY}" \
-            https://api.inferway.xyz/health || true
-          head -c 300 /tmp/health.out; echo
-          echo "--- POST /v1/chat/completions (chat 별칭, 짧은 프롬프트) ---"
-          curl -sS -o /tmp/chat.out -w "http_code=%{http_code}\n" \
-            -H "Authorization: Bearer ${INFERENCE_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d '{"model":"chat","messages":[{"role":"user","content":"ping"}]}' \
-            https://api.inferway.xyz/v1/chat/completions || true
-          head -c 300 /tmp/chat.out; echo
+          # 케이스 매트릭스: litellm 요청과 curl 요청의 차이(UA, SDK 헤더, body 필드, 프롬프트 길이/내용)를
+          # 하나씩 재현해 어떤 요소가 "Your request was blocked."를 유발하는지 이분탐색.
+          URL=https://api.inferway.xyz/v1/chat/completions
+          AUTH="Authorization: Bearer ${INFERENCE_API_KEY}"
+          run_case() {
+            local name="$1"; shift
+            local body="$1"; shift
+            echo "=== CASE: $name ==="
+            curl -sS -o /tmp/case.out -w "http_code=%{http_code}\n" \
+              -H "$AUTH" -H "Content-Type: application/json" "$@" \
+              -d "$body" "$URL" || true
+            head -c 200 /tmp/case.out; echo
+          }
+          MIN='{"model":"chat","messages":[{"role":"user","content":"ping"}]}'
+          run_case "baseline(curl UA, 최소 body)" "$MIN"
+          run_case "UA=python-httpx" "$MIN" -A "python-httpx/0.27.2"
+          run_case "UA=OpenAI SDK + x-stainless 헤더" "$MIN" \
+            -A "OpenAI/Python 1.40.0" \
+            -H "x-stainless-lang: python" -H "x-stainless-package-version: 1.40.0" \
+            -H "x-stainless-os: Linux" -H "x-stainless-arch: x64" \
+            -H "x-stainless-runtime: CPython" -H "x-stainless-runtime-version: 3.12.0"
+          run_case "body에 temperature 추가" '{"model":"chat","messages":[{"role":"user","content":"ping"}],"temperature":0.2}'
+          run_case "body에 stream:false 추가" '{"model":"chat","messages":[{"role":"user","content":"ping"}],"stream":false}'
+          python3 - <<'EOF'
+          import json
+          long_text = "lorem ipsum " * 2000
+          body = {"model":"chat","messages":[{"role":"system","content":long_text},{"role":"user","content":"ping"}]}
+          open("/tmp/long.json","w").write(json.dumps(body))
+          diff_text = "## File: 'a.java'\n@@ -1,3 +1,3 @@\n+String q = \"SELECT * FROM users WHERE id=\" + id;\n" * 50
+          body2 = {"model":"chat","messages":[{"role":"system","content":"You are PR-Reviewer."},{"role":"user","content":diff_text}],"temperature":0.2}
+          open("/tmp/diffish.json","w").write(json.dumps(body2))
+          EOF
+          echo "=== CASE: 긴 프롬프트(~24KB) ==="
+          curl -sS -o /tmp/case.out -w "http_code=%{http_code}\n" -H "$AUTH" -H "Content-Type: application/json" --data @/tmp/long.json "$URL" || true
+          head -c 200 /tmp/case.out; echo
+          echo "=== CASE: diff 유사 내용(SQL 문자열 포함) + temperature ==="
+          curl -sS -o /tmp/case.out -w "http_code=%{http_code}\n" -H "$AUTH" -H "Content-Type: application/json" --data @/tmp/diffish.json "$URL" || true
+          head -c 200 /tmp/case.out; echo
 
       - uses: qodo-ai/pr-agent@main
         env:
