@@ -39,6 +39,8 @@ jobs:
           CONFIG__FALLBACK_MODELS: '["openai/chat"]'
           # litellm 미등록 모델은 토큰 한도를 모른다 — 명시 안 하면 pr-agent가 기동 실패.
           CONFIG__CUSTOM_MODEL_MAX_TOKENS: "32000"
+          # 12B 모델의 긴 생성(코드 제안)은 기본 120초 안에 안 끝난다 — 클라이언트 타임아웃을 넉넉히.
+          CONFIG__AI_TIMEOUT: "600"
           OPENAI__API_BASE: "https://api.inferway.xyz/v1"     # 자체 서버 OpenAI호환 엔드포인트 (/v1 포함, INFERENCE_SERVER.md §3)
           # ⚠️ 추론 서버 관리자에게 발급받은 활성 키여야 함. 시크릿 값이 비어 있으면
           #    pr-agent가 placeholder dummy_key로 폴백해 401이 난다.
