@@ -11,6 +11,7 @@ import com.openat.common.exception.BusinessException;
 import com.openat.order.application.dto.OrderCancelInfo;
 import com.openat.order.application.dto.PaymentRefundResult;
 import com.openat.order.application.dto.StockRestoreCommand;
+import com.openat.order.application.port.PaymentPendingException;
 import com.openat.order.application.port.PaymentRefundPort;
 import com.openat.order.application.port.PaymentRefundPortException;
 import com.openat.order.application.port.ProductIntegrationPort;
@@ -93,6 +94,27 @@ class OrderCancellationServiceTest {
 
     assertThat(result.status()).isEqualTo(OrderStatus.CANCELLED);
     verify(productIntegrationPort).restoreStock(any(), any());
+  }
+
+  @Test
+  void should_reject_cancel_without_state_or_stock_change_when_payment_is_pending() {
+    UUID memberId = UUID.randomUUID();
+    Order order = order(memberId);
+    stubOwned(order);
+    when(paymentRefundPort.requestRefund(any(), any()))
+        .thenThrow(new PaymentPendingException("pending", new RuntimeException()));
+
+    assertThatThrownBy(() -> service.cancel(memberId, order.getId()))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            exception ->
+                assertThat(exception.getErrorCode())
+                    .isEqualTo(OrderErrorCode.PAYMENT_IN_PROGRESS));
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+    verify(transitionService, never()).cancelPaymentPending(any(), any(), any());
+    verify(transitionService, never()).requestRefund(any(), any(), any(), any(Boolean.class));
+    verify(productIntegrationPort, never()).restoreStock(any(), any());
+    verify(orderSagaRecorder, never()).recordCompensationCompleted(any());
   }
 
   @Test

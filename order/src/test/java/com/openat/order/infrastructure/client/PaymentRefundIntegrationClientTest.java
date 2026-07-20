@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.openat.order.application.dto.PaymentRefundResult;
+import com.openat.order.application.port.PaymentPendingException;
 import com.openat.order.application.port.PaymentRefundPortException;
 import com.openat.order.infrastructure.client.PaymentRefundPortDtos.RefundResponse;
 import com.openat.order.infrastructure.client.PaymentRefundPortDtos.RefundResult;
@@ -58,14 +59,27 @@ class PaymentRefundIntegrationClientTest {
   }
 
   @Test
-  void should_not_retry_when_client_error() throws InterruptedException {
+  void should_throw_payment_pending_when_conflict_remains_after_retries() throws InterruptedException {
     UUID orderId = UUID.randomUUID();
     when(internalApiClient.requestRefund(orderId, "key"))
         .thenThrow(new PaymentRefundApiException(HttpStatus.CONFLICT, "conflict"));
 
     assertThatThrownBy(() -> client.requestRefund(orderId, "key"))
-        .isInstanceOf(PaymentRefundPortException.class);
-    verify(retrySleeper, times(0)).sleep(500L);
-    verify(internalApiClient).requestRefund(orderId, "key");
+        .isInstanceOf(PaymentPendingException.class);
+    verify(retrySleeper).sleep(500L);
+    verify(retrySleeper).sleep(1_000L);
+    verify(internalApiClient, times(3)).requestRefund(orderId, "key");
+  }
+
+  @Test
+  void should_not_retry_when_client_error_is_not_conflict() {
+    UUID orderId = UUID.randomUUID();
+    when(internalApiClient.requestRefund(orderId, "key"))
+        .thenThrow(new PaymentRefundApiException(HttpStatus.BAD_REQUEST, "bad request"));
+
+    assertThatThrownBy(() -> client.requestRefund(orderId, "key"))
+        .isInstanceOf(PaymentRefundPortException.class)
+        .isNotInstanceOf(PaymentPendingException.class);
+    verify(internalApiClient, times(1)).requestRefund(orderId, "key");
   }
 }

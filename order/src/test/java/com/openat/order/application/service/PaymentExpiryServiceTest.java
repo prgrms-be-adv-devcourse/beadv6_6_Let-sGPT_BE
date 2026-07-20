@@ -120,23 +120,37 @@ class PaymentExpiryServiceTest {
     verify(orderSagaRecorder).recordCompensationCompleted(orderId);
   }
 
-  @ParameterizedTest
-  @EnumSource(
-      value = PaymentStatus.class,
-      names = {"REFUNDED", "PARTIALLY_REFUNDED"})
-  void should_expire_and_restore_stock_when_payment_is_already_refunded(PaymentStatus status) {
+  @Test
+  void should_record_already_refunded_reason_and_restore_stock_when_payment_is_refunded() {
     UUID orderId = UUID.randomUUID();
     StockRollbackTarget target = target(orderId);
     when(paymentStatusPort.findByOrderId(orderId))
-        .thenReturn(new PaymentStatusInfo(UUID.randomUUID(), status, null));
-    when(transitionService.expire(orderId)).thenReturn(Optional.of(target));
+        .thenReturn(new PaymentStatusInfo(UUID.randomUUID(), PaymentStatus.REFUNDED, null));
+    when(transitionService.expireAlreadySettled(orderId, "결제 후 전액 환불 처리된 주문입니다."))
+        .thenReturn(Optional.of(target));
 
     service.process(orderId);
 
-    verify(transitionService).expire(orderId);
+    verify(transitionService).expireAlreadySettled(orderId, "결제 후 전액 환불 처리된 주문입니다.");
     verify(productIntegrationPort).restoreStock(any(), any());
     verify(orderSagaRecorder).recordCompensationCompleted(orderId);
-    verify(transitionService, never()).resetLookupFailures(orderId);
+  }
+
+  @Test
+  void should_record_already_refunded_reason_and_restore_stock_when_payment_is_partially_refunded() {
+    UUID orderId = UUID.randomUUID();
+    StockRollbackTarget target = target(orderId);
+    when(paymentStatusPort.findByOrderId(orderId))
+        .thenReturn(
+            new PaymentStatusInfo(UUID.randomUUID(), PaymentStatus.PARTIALLY_REFUNDED, null));
+    when(transitionService.expireAlreadySettled(orderId, "결제 후 일부 환불 처리된 주문입니다."))
+        .thenReturn(Optional.of(target));
+
+    service.process(orderId);
+
+    verify(transitionService).expireAlreadySettled(orderId, "결제 후 일부 환불 처리된 주문입니다.");
+    verify(productIntegrationPort).restoreStock(any(), any());
+    verify(orderSagaRecorder).recordCompensationCompleted(orderId);
   }
 
   @ParameterizedTest

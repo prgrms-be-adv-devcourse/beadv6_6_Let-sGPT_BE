@@ -1,6 +1,7 @@
 package com.openat.order.infrastructure.client;
 
 import com.openat.order.application.dto.PaymentRefundResult;
+import com.openat.order.application.port.PaymentPendingException;
 import com.openat.order.application.port.PaymentRefundPort;
 import com.openat.order.application.port.PaymentRefundPortException;
 import com.openat.order.infrastructure.client.PaymentRefundPortDtos.RefundResponse;
@@ -52,6 +53,10 @@ public class PaymentRefundIntegrationClient implements PaymentRefundPort {
         sleep(BACKOFF_MILLIS[attempt], orderId, exception);
       }
     }
+    if (lastFailure instanceof PaymentRefundApiException apiException && apiException.isConflict()) {
+      throw new PaymentPendingException(
+          "Payment refund still pending after retries: orderId=" + orderId, lastFailure);
+    }
     throw new PaymentRefundPortException(
         "Payment refund request failed after retries: orderId=" + orderId, lastFailure);
   }
@@ -65,7 +70,7 @@ public class PaymentRefundIntegrationClient implements PaymentRefundPort {
 
   private boolean isRetryable(RestClientException exception) {
     if (exception instanceof PaymentRefundApiException apiException) {
-      return apiException.isServerError();
+      return apiException.isServerError() || apiException.isConflict();
     }
     if (!(exception instanceof ResourceAccessException)) {
       return false;
