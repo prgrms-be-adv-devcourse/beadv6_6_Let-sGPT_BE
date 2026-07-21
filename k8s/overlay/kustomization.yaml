@@ -16,13 +16,13 @@ images:
   newTag: 8e3e630da494b6c04da0219dce8bb8877d8b6552
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order
-  newTag: bcff3a33ab9fa64f5a8c76581d71998d423f20f5
+  newTag: 0309b5c771d9e9103f4836ad5100bb2e3dce5e24
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
   newTag: 24dab0ef875562e95224014bdf88acd9180ef52d
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
-  newTag: bcff3a33ab9fa64f5a8c76581d71998d423f20f5
+  newTag: 0309b5c771d9e9103f4836ad5100bb2e3dce5e24
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
   newTag: 8e3e630da494b6c04da0219dce8bb8877d8b6552
@@ -34,7 +34,7 @@ images:
   newTag: d4898728f101615f492de26965a32d54072a1c56
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
-  newTag: 8703b4a1325788b095d6f58851342ec75be86b57
+  newTag: 0309b5c771d9e9103f4836ad5100bb2e3dce5e24
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
   newTag: 85904bdef992c29acf949642181d3df8b2c52f85
