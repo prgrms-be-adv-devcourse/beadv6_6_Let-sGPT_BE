@@ -62,7 +62,7 @@ spec:
             failureThreshold: 5
           resources:
             limits: { memory: "700Mi" }
-            requests: { cpu: "100m", memory: "520Mi" }
+            requests: { cpu: "50m", memory: "520Mi" }
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }
