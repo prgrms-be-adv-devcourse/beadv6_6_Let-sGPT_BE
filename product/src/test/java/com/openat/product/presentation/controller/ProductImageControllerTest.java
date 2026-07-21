@@ -4,16 +4,19 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openat.common.exception.BusinessException;
 import com.openat.common.exception.GlobalExceptionHandler;
 import com.openat.config.WebConfig;
 import com.openat.product.application.dto.ImagePresignInfo;
 import com.openat.product.application.usecase.ImageStorageUseCase;
+import com.openat.product.domain.error.ProductErrorCode;
 import com.openat.product.presentation.dto.ImagePresignRequest;
+import java.net.URI;
 import java.time.Instant;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -21,6 +24,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -79,16 +83,32 @@ class ProductImageControllerTest {
   }
 
   @Test
-  @DisplayName("키로 이미지를 조회하면 200과 추론된 콘텐츠 타입으로 바이트를 반환한다")
-  void getImage_returns200WithBytes() throws Exception {
+  @DisplayName("키로 이미지를 조회하면 presigned GET URL로 302 리다이렉트한다")
+  void getImage_returns302WithPresignedLocation() throws Exception {
     // given
     String key = "550e8400-e29b-41d4-a716-446655440000.png";
-    given(imageStorageUseCase.load(key)).willReturn("bytes".getBytes());
+    String downloadUrl = "https://example.com/download";
+    given(imageStorageUseCase.presignDownload(key)).willReturn(URI.create(downloadUrl));
 
     // when & then
     mockMvc
         .perform(get("/api/v1/products/images/{key}", key))
-        .andExpect(status().isOk())
-        .andExpect(content().contentType(MediaType.IMAGE_PNG));
+        .andExpect(status().isFound())
+        .andExpect(header().string(HttpHeaders.LOCATION, downloadUrl));
+  }
+
+  @Test
+  @DisplayName("final 키 형식이 아니면 400 PRODUCT_IMAGE_INVALID를 반환한다")
+  void getImage_invalidKey_returns400() throws Exception {
+    // given
+    String key = "not-a-uuid.png";
+    given(imageStorageUseCase.presignDownload(key))
+        .willThrow(new BusinessException(ProductErrorCode.IMAGE_INVALID));
+
+    // when & then
+    mockMvc
+        .perform(get("/api/v1/products/images/{key}", key))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("PRODUCT_IMAGE_INVALID"));
   }
 }
