@@ -91,7 +91,7 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 4. 상품 등록·수정 바디의 `thumbnailKey`·`imageKeys`에는 `stagingKey`를 넣는다. BE는 승격 전에 업로드된 실제 객체를 검증한다 — 크기(최대 5MB), 저장된 콘텐츠 타입이 허용 목록·키 확장자와 일치하는지, 앞부분 바이트가 해당 이미지 포맷의 시그니처인지. 통과하면 단일 버킷의 final prefix로 승격해 prefix 없는 final 키를 저장하고, 실패하면 `PRODUCT_IMAGE_INVALID`(400)를 반환한다. 수정 시 기존 final 키를 다시 보내도 그대로 유지된다.
 
 - staging 키는 승격 전 조회 경로에서 읽을 수 없으므로 업로드 직후 미리보기는 FE의 blob URL을 사용한다.
-- 조회 계약은 `GET /api/v1/products/images/{key}` → 이미지 바이트로 유지한다.
+- 조회 계약은 `GET /api/v1/products/images/{key}` 경로를 유지하되, 응답은 이미지 바이트가 아니라 presigned GET URL로의 `302` 리다이렉트다. `<img src>`는 리다이렉트를 자동으로 따라가므로 FE 변경은 없다. final 키 형식이 아니면 BE가 `PRODUCT_IMAGE_INVALID`(400)를 반환한다. 형식은 맞지만 객체가 없으면 BE를 거치지 않고 스토리지가 직접 오류를 응답하며, 운영 IAM은 ListBucket을 부여하지 않으므로 404가 아니라 403이 온다.
 
 ---
 
@@ -201,6 +201,6 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 
 1. **`DropResponse` 신설 시 FE 필드명 그대로** — `id`(not `dropId`), `remainingQuantity`(not `remaining`). 안 맞추면 codegen 후 FE rename 발생.
 2. **`sellerName` 노출 여부 결정** — product/drop 응답에 추가할지. 추가 시 member `SellerInfo.storeName`을 어떻게 끌어올지(도메인 경계·N+1) 합의.
-3. **`thumbnailKey` URL 전략** — 결정: 신규 이미지는 presigned PUT으로 staging에 직접 업로드하고, 상품 등록·수정 시 BE가 final로 승격한다. 상품 응답은 **final key**를 주며 FE `resolveImageSrc`가 `GET /api/v1/products/images/{key}`로 해석한다(seed/목의 풀 URL은 패스스루). staging 이미지는 blob URL로 즉시 미리보기하고, presigned GET·CDN은 별도 과제로 둔다.
+3. **`thumbnailKey` URL 전략** — 결정: 신규 이미지는 presigned PUT으로 staging에 직접 업로드하고, 상품 등록·수정 시 BE가 final로 승격한다. 상품 응답은 **final key**를 주며 FE `resolveImageSrc`가 `GET /api/v1/products/images/{key}`로 해석한다(seed/목의 풀 URL은 패스스루). staging 이미지는 blob URL로 즉시 미리보기한다. 조회는 §1.5대로 presigned GET 리다이렉트로 전환했고, CDN은 별도 과제로 둔다.
 4. **조회 API 현황** — `/drops`·`/drops/{id}`·`/drops/me`·`/products/me`·`/categories` **구현 완료**. 남은 미구현은 `/wallet`(결제 도메인)뿐 → [`FE_API_REQUESTS.md`](./FE_API_REQUESTS.md).
 5. **`sellerId` = 스토어 `sellerInfoId`** — 판매자 인증이 스토어 단위로 변경(회원 1:N 스토어). 상품/드롭 write·`/me`의 소유·필터와 `ProductResponse.sellerId`를 활성 스토어 `sellerInfoId` 기준으로(게이트웨이가 판매자 토큰 스코프 주입). [`FE_API_REQUESTS.md` 인증 모델 변경 절]

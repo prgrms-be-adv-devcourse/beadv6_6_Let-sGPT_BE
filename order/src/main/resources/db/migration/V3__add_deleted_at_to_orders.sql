@@ -1,0 +1,2 @@
+ALTER TABLE orders.orders
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP(6) WITH TIME ZONE;

@@ -5,6 +5,7 @@ import com.openat.config.S3StorageProperties;
 import com.openat.product.application.dto.ImagePresignInfo;
 import com.openat.product.application.usecase.ImageStorageUseCase;
 import com.openat.product.domain.error.ProductErrorCode;
+import java.net.URI;
 import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,8 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
@@ -114,32 +117,25 @@ public class S3ImageStorageAdaptor implements ImageStorageUseCase {
   }
 
   @Override
-  public byte[] load(String key) {
+  public URI presignDownload(String key) {
+    if (!ImageStorageKeys.isFinalKey(key)) {
+      throw new BusinessException(ProductErrorCode.IMAGE_INVALID);
+    }
+
     String objectKey = ImageStorageKeys.toFinalObjectKey(key, properties.finalPrefix());
-    GetObjectRequest request =
+    GetObjectRequest getObjectRequest =
         GetObjectRequest.builder().bucket(properties.bucket()).key(objectKey).build();
+    GetObjectPresignRequest presignRequest =
+        GetObjectPresignRequest.builder()
+            .signatureDuration(properties.presignExpiry())
+            .getObjectRequest(getObjectRequest)
+            .build();
 
     try {
-      return s3Client.getObjectAsBytes(request).asByteArray();
-    } catch (NoSuchKeyException exception) {
-      throw new BusinessException(ProductErrorCode.IMAGE_NOT_FOUND);
-    } catch (S3Exception exception) {
-      if (exception.statusCode() == 404) {
-        throw new BusinessException(ProductErrorCode.IMAGE_NOT_FOUND);
-      }
-      // ListBucket 미부여 IAM에서는 없는 키 조회가 403으로 온다 — 권한 오류와 구분 불가라 warn만 남기고 404 계약 유지
-      if (exception.statusCode() == 403) {
-        log.warn(
-            "S3 image load returned 403. bucket={}, key={}, requestId={}",
-            properties.bucket(),
-            objectKey,
-            exception.requestId());
-        throw new BusinessException(ProductErrorCode.IMAGE_NOT_FOUND);
-      }
-      logFailure("load", properties.bucket(), objectKey, exception);
-      throw new BusinessException(ProductErrorCode.IMAGE_STORAGE_FAILED);
+      PresignedGetObjectRequest presignedRequest = s3Presigner.presignGetObject(presignRequest);
+      return URI.create(presignedRequest.url().toString());
     } catch (SdkException exception) {
-      logFailure("load", properties.bucket(), objectKey, exception);
+      logFailure("presignDownload", properties.bucket(), objectKey, exception);
       throw new BusinessException(ProductErrorCode.IMAGE_STORAGE_FAILED);
     }
   }
