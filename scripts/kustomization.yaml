@@ -1,0 +1,18 @@
+# warmup.sh를 ConfigMap으로 실어 나르기 위한 서브 kustomization.
+#
+# 여기에 두는 이유: kustomize load restrictor가 kustomization 루트 밖의 파일을
+# generator로 읽는 것을 막는다(k8s/base에서 ../../scripts/warmup.sh 직접 참조 = 빌드 거부).
+# scripts/ 를 자기 루트로 만들면 warmup.sh를 정상적으로 읽으면서, 사람이 손으로 돌리는
+# scripts/warmup.sh 경로도 그대로 유지된다. base/kustomization.yaml 은 이 디렉터리를
+# resources: - ../../scripts 로 참조한다(상위 참조는 resources 에서는 허용).
+#
+# 해시 접미사(기본 활성) 유지: 스크립트가 바뀌면 ConfigMap 이름이 바뀌어 변경이 눈에 보이고,
+# Job 볼륨 참조도 kustomize nameReference 트랜스포머가 자동 치환한다. 구 ConfigMap은
+# ArgoCD prune 이 정리한다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+configMapGenerator:
+  - name: warmup-script
+    files:
+      - warmup.sh

@@ -1,0 +1,95 @@
+# 배포 직후 JVM 웜업 — ArgoCD PostSync 훅 Job.
+#
+# 이 인프라는 SSM 전용 접근이라 로컬 kubectl/port-forward가 불가능하다. 그래서
+# scripts/warmup.sh를 사람이 밖에서 돌리는 대신, 클러스터 안에서 apigateway를
+# 직접 호출하는 Job으로 실행한다(BASE_URL=http://apigateway.openat:8000).
+#
+# 이미지는 apigateway 것을 그대로 재사용한다. 노드에 이미 pull돼 있어 추가 pull이
+# 없고, temurin(Ubuntu) 베이스라 bash/curl/awk/coreutils가 전부 들어있다. 이미지
+# 이름 기준으로 overlay의 images 트랜스포머가 배포 태그를 자동 치환한다.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: warmup-config
+data:
+  # 클러스터 내부에서는 Service DNS 직접 호출 — port-forward 불필요.
+  BASE_URL: "http://apigateway.openat:8000"
+  ITERATIONS: "150"
+  CONCURRENCY: "4"
+  WINDOW: "20"
+  # 단계적 활성화: 테스트 계정 시드 + warmup-secrets 준비 확인 후 "1"로 바꾼다(이미지 재빌드 없음).
+  # 0인 동안은 AUTH_TOKEN이 비면 order-list를 SKIP(경고만) — 배포는 성공.
+  REQUIRE_AUTH: "0"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: warmup
+  annotations:
+    # Sync 단계의 모든 리소스가 Healthy(=rollout 완료, ready)가 된 뒤 실행된다.
+    # ready한 JVM이 곧 warm한 JVM은 아니라는 간극이 이 웜업이 노리는 지점.
+    argocd.argoproj.io/hook: PostSync
+    # 이 방식의 산출물은 로그의 plateau 숫자(초기 p95 → 마지막 p95)다. HookSucceeded면
+    # 성공하는 순간 파드가 지워져 로그도 사라진다. BeforeHookCreation은 다음 sync가
+    # 새 훅을 만들 때 직전 것을 지우므로 직전 배포의 웜업 로그가 항상 남는다.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  # 첫 실행이 이미 JVM을 데워놓아 재시도는 거의 항상 통과 = plateau 신호를 무의미하게 만들고
+  # 첫 실행의 실패 사실만 가린다. 재시도하지 않는다.
+  backoffLimit: 0
+  # 기대 소요 2~4분. 멈춘 웜업이 Application을 Progressing으로 무한정 붙잡는 것을 막는다.
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels: { app: warmup }
+    spec:
+      restartPolicy: Never   # OnFailure는 같은 파드에서 재시작해 이전 로그를 덮는다 — 진단 목적이라 Never.
+      imagePullSecrets:
+        - name: ghcr-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: warmup
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -eu
+              # 로그인은 웜업 루프가 아니라 여기서 1회만 — 매 실행 신선한 토큰이라 만료 문제가
+              # 구조적으로 사라진다. 비밀번호를 다루므로 set -x 는 절대 켜지 않는다.
+              if [ -n "${WARMUP_EMAIL:-}" ] && [ -n "${WARMUP_PASSWORD:-}" ]; then
+                BODY=$(printf '{"email":"%s","password":"%s"}' "$WARMUP_EMAIL" "$WARMUP_PASSWORD")
+                AUTH_TOKEN=$(curl -sf -X POST "$BASE_URL/api/v1/members/login" \
+                               -H 'Content-Type: application/json' -d "$BODY" \
+                             | grep -o '"accessToken":"[^"]*"' | head -1 | cut -d'"' -f4)
+                if [ -z "$AUTH_TOKEN" ]; then
+                  echo "ERROR: 웜업 토큰 발급 실패 — 테스트 계정/로그인 라우트를 확인하세요." >&2
+                  exit 1
+                fi
+                export AUTH_TOKEN
+              fi
+              exec bash /warmup/warmup.sh
+          envFrom:
+            - configMapRef: { name: warmup-config }
+            - secretRef: { name: warmup-secrets, optional: true }   # 미준비 상태 배포 허용(단계적 활성화)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+          resources:
+            requests: { cpu: "50m", memory: "32Mi" }
+            limits: { memory: "96Mi" }   # CPU limit 미설정 — 전 서비스 공통 정책.
+          volumeMounts:
+            - { name: script, mountPath: /warmup, readOnly: true }
+            - { name: tmp, mountPath: /tmp }   # readOnlyRootFilesystem 하에서 mktemp -d 대상.
+      volumes:
+        - name: script
+          configMap:
+            name: warmup-script   # 해시 접미사 이름은 kustomize가 치환.
+            defaultMode: 0444      # 실행 비트에 의존하지 않고 bash 로 명시 호출.
+        - name: tmp
+          emptyDir: {}
