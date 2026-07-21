@@ -168,21 +168,157 @@ jobs:
       # CD 1회차에서 재현 확인 — payment 파드가 갱신 안 된 채 convergence 스텝만 성공 처리됨),
       # ① hard refresh로 즉시 재조회를 강제하고 ② status.sync.revision이 이번에 push한
       # 커밋과 정확히 일치할 때만 수렴으로 인정한다.
+      # 수렴 대기는 "성공 확인"만이 아니라 "실패 조기 감지"도 한다. 아래 5가지를 매 폴링
+      # 검사하고, 감지 즉시 진단을 덤프(::group::)한 뒤 exit 1 한다 — 600초 blind wait 제거:
+      #  ① sync 작업 실패: operationState.phase=Failed/Error (단, 이번 revision과 일치할 때만 —
+      #     이전 sync의 잔존 Failed를 오인하지 않도록 revision 일치가 필수 조건)
+      #  ② CrashLoopBackOff: openat 파드가 CrashLoopBackOff & restartCount>=3
+      #  ③ 이미지 풀 실패: ImagePullBackOff/ErrImagePull이 2회 연속 폴링 관측(일시 GHCR 히컵 오탐 방지)
+      #  ④ OOMKilled: lastState.terminated=OOMKilled & 현재 waiting
+      #  ⑤ Unschedulable: PodScheduled=False가 90초 이상 지속(PostSync warmup Job stuck 등)
+      # 성공/타임아웃/조기감지 모두 공통 dump_diagnostics로 원인을 Actions 로그에 남긴다.
       - name: Wait for ArgoCD convergence
         if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != ''
         env:
           TARGET_REV: ${{ steps.pin.outputs.revision }}
         run: |
-          kubectl -n argocd annotate application openat argocd.argoproj.io/refresh=hard --overwrite
-          for i in $(seq 1 120); do   # 최대 10분
+          # 진단 덤프: 조기감지·타임아웃 공통 호출. 실패 사유를 ::error:: 로 Actions UI 상단에 띄우고
+          # 섹션별로 ::group:: 접는다. -e/pipefail 아래에서 조회 실패에 죽지 않도록 전부 || true 감쌈.
+          dump_diagnostics() {
+            local reason="$1"
+            echo "::error::${reason}"
+
+            echo "::group::ArgoCD application openat (sync/health/operationState/conditions)"
+            kubectl -n argocd get application openat -o jsonpath='sync={.status.sync.status} health={.status.health.status} rev={.status.sync.revision}{"\n"}' 2>&1 || true
+            echo "-- operationState --"
+            kubectl -n argocd get application openat -o jsonpath='phase={.status.operationState.phase}{"\n"}syncRev={.status.operationState.operation.sync.revision}{"\n"}message={.status.operationState.message}{"\n"}' 2>&1 || true
+            echo "-- conditions --"
+            kubectl -n argocd get application openat -o jsonpath='{range .status.conditions[*]}{.type}={.status}: {.message}{"\n"}{end}' 2>&1 || true
+            echo "::endgroup::"
+
+            echo "::group::Pods (get -o wide)"
+            kubectl get pods -n openat -o wide 2>&1 || true
+            echo "::endgroup::"
+
+            echo "::group::Warning events (last 30)"
+            kubectl get events -n openat --field-selector type=Warning --sort-by=.lastTimestamp 2>&1 | tail -30 || true
+            echo "::endgroup::"
+
+            echo "::group::Abnormal pods (describe tail + logs)"
+            # 비정상 = Ready!=True 이거나 restartCount>0(최근 재시작)인 파드
+            while IFS=$'\t' read -r pname phase readyst restarts; do
+              [ -z "$pname" ] && continue
+              abn=0
+              [ "$readyst" != "True" ] && abn=1
+              case "$restarts" in *[1-9]*) abn=1 ;; esac
+              [ "$abn" = 0 ] && continue
+              echo "---- $pname (phase=$phase ready=$readyst restarts=[$restarts]) ----"
+              kubectl describe pod "$pname" -n openat 2>&1 | tail -40 || true
+              echo "-- logs (tail 50) --"
+              kubectl logs "$pname" -n openat --all-containers --tail=50 2>&1 || true
+              echo "-- logs --previous (tail 50) --"
+              kubectl logs "$pname" -n openat --all-containers --previous --tail=50 2>&1 || true
+            done < <(kubectl get pods -n openat -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\t"}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\t"}{range .status.containerStatuses[*]}{.restartCount}{","}{end}{"\n"}{end}' 2>/dev/null)
+            echo "::endgroup::"
+
+            echo "::group::Node allocated resources"
+            kubectl describe nodes 2>&1 | grep -A 12 'Allocated resources' || true
+            echo "::endgroup::"
+
+            echo "::group::PostSync hook jobs (warmup)"
+            kubectl get jobs -n openat 2>&1 || true
+            for j in $(kubectl get jobs -n openat -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true); do
+              case "$j" in
+                *warmup*)
+                  echo "-- describe job/$j (tail 20) --"
+                  kubectl describe job "$j" -n openat 2>&1 | tail -20 || true
+                  ;;
+              esac
+            done
+            echo "::endgroup::"
+          }
+
+          kubectl -n argocd annotate application openat argocd.argoproj.io/refresh=hard --overwrite || true
+
+          declare -A img_count      # 이미지 풀 실패 연속 관측 카운터 (키: "pod|reason")
+          declare -A sched_first    # Unschedulable 최초 관측 시각 (키: pod, 값: SECONDS)
+
+          deadline=$(( SECONDS + 600 ))   # 총 타임아웃 600초
+          while [ "$SECONDS" -lt "$deadline" ]; do
             REV=$(kubectl -n argocd get application openat -o jsonpath='{.status.sync.revision}' 2>/dev/null || echo "?")
-            S=$(kubectl -n argocd get application openat \
-                -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "?")
+            S=$(kubectl -n argocd get application openat -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "?")
+
+            # ── 성공: 이번에 push한 revision으로 Synced/Healthy 수렴 ──
             if [ "$REV" = "$TARGET_REV" ] && [ "$S" = "Synced/Healthy" ]; then
               echo "ArgoCD converged at $REV."; exit 0
             fi
-            echo "waiting... (rev=$REV, want=$TARGET_REV, status=$S)"; sleep 5
+
+            # ── ① sync 작업 실패 (반드시 이번 revision일 때만 — 잔존 Failed 오인 방지) ──
+            OPINFO=$(kubectl -n argocd get application openat -o jsonpath='{.status.operationState.operation.sync.revision}|{.status.operationState.phase}' 2>/dev/null || echo "|")
+            OPREV="${OPINFO%%|*}"; OPPHASE="${OPINFO##*|}"
+            if [ "$OPREV" = "$TARGET_REV" ] && { [ "$OPPHASE" = "Failed" ] || [ "$OPPHASE" = "Error" ]; }; then
+              OPMSG=$(kubectl -n argocd get application openat -o jsonpath='{.status.operationState.message}' 2>/dev/null || echo "")
+              echo "operationState.message: $OPMSG"
+              dump_diagnostics "ArgoCD sync operation ${OPPHASE} for ${TARGET_REV}: ${OPMSG}"
+              exit 1
+            fi
+
+            # ── ②④ 컨테이너 상태 스캔(CrashLoopBackOff / OOMKilled) + ③ 이미지풀 관측 마킹 ──
+            # tuple = "restartCount,waiting.reason,lastState.terminated.reason"; 파드당 컨테이너들을 ';'로 연결.
+            declare -A img_now; img_now=()
+            while IFS=$'\t' read -r pod tuples; do
+              [ -z "$pod" ] && continue
+              IFS=';' read -ra carr <<<"$tuples"
+              for t in "${carr[@]}"; do
+                [ -z "$t" ] && continue
+                IFS=',' read -r rc wreason lterm <<<"$t"
+                if [ "$wreason" = "CrashLoopBackOff" ] && [ "${rc:-0}" -ge 3 ]; then
+                  dump_diagnostics "CrashLoopBackOff: pod ${pod} (restartCount=${rc})"
+                  exit 1
+                fi
+                if [ "$lterm" = "OOMKilled" ] && [ -n "$wreason" ]; then
+                  dump_diagnostics "OOMKilled: pod ${pod} (재기동 대기 중, waiting=${wreason})"
+                  exit 1
+                fi
+                if [ "$wreason" = "ImagePullBackOff" ] || [ "$wreason" = "ErrImagePull" ]; then
+                  img_now["$pod|$wreason"]=1
+                fi
+              done
+            done < <(kubectl get pods -n openat -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.containerStatuses[*]}{.restartCount}{","}{.state.waiting.reason}{","}{.lastState.terminated.reason}{";"}{end}{"\n"}{end}' 2>/dev/null)
+
+            # ── ③ 이미지 풀 실패: 2회 연속 폴링 관측 시 실패(일시 GHCR 히컵 오탐 방지) ──
+            for k in "${!img_now[@]}"; do
+              img_count["$k"]=$(( ${img_count["$k"]:-0} + 1 ))
+              if [ "${img_count["$k"]}" -ge 2 ]; then
+                dump_diagnostics "ImagePull 실패 (2회 연속 관측): ${k}"
+                exit 1
+              fi
+            done
+            # 이번 폴링에서 관측 안 된 키는 카운터 리셋(연속성 요건)
+            for k in "${!img_count[@]}"; do
+              [ -z "${img_now[$k]:-}" ] && unset 'img_count[$k]'
+            done
+
+            # ── ⑤ Unschedulable: PodScheduled=False가 90초 이상 지속 ──
+            while IFS=$'\t' read -r pod cond; do
+              [ -z "$pod" ] && continue
+              IFS=',' read -r st rsn <<<"$cond"
+              if [ "$st" = "False" ]; then
+                : "${sched_first[$pod]:=$SECONDS}"
+                dur=$(( SECONDS - ${sched_first[$pod]} ))
+                if [ "$dur" -ge 90 ]; then
+                  dump_diagnostics "Unschedulable 90초+ 지속: pod ${pod} (reason=${rsn:-?}, ${dur}s)"
+                  exit 1
+                fi
+              else
+                unset 'sched_first[$pod]'
+              fi
+            done < <(kubectl get pods -n openat -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.conditions[?(@.type=="PodScheduled")]}{.status}{","}{.reason}{end}{"\n"}{end}' 2>/dev/null)
+
+            echo "waiting... (rev=$REV, want=$TARGET_REV, status=$S)"
+            sleep 5
           done
-          echo "ERROR: ArgoCD did not converge to $TARGET_REV in 600s (last rev=$REV status=$S)" >&2   # 실패는 시끄럽게
-          kubectl -n argocd get application openat -o yaml | tail -40 >&2
+
+          # ── 타임아웃: 600초 내 미수렴 ── (실패는 시끄럽게)
+          dump_diagnostics "ArgoCD가 600초 내 ${TARGET_REV}로 수렴하지 못함 (last rev=${REV} status=${S})"
           exit 1
