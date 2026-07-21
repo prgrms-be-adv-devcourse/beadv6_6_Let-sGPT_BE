@@ -69,17 +69,29 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 }
 ```
 
-### 1.5 이미지 업로드 — `POST /api/v1/products/images` (**구현 완료**)
+### 1.5 이미지 업로드 — `POST /api/v1/products/images/presign` (**구현 완료**)
 
-- multipart, part 명 `file`. 서버를 경유해 환경별 저장소 어댑터에 저장한다(로컬은 파일시스템, 배포는 S3).
-- **응답: `201` + 본문 `{ key, url }`** + `Location` 헤더(= url과 동일 조회 경로). FE가 본문 `{ key, url }`을 파싱하므로 **본문 반환으로 확정**(헤더 단독 ✕).
-  - `key`: 저장 키 → 상품 write 의 `thumbnailKey`·`imageKeys` 로 사용.
-  - `url`: 조회 경로(`/api/v1/products/images/{key}`) → 업로드 직후 미리보기.
-- 조회: `GET /api/v1/products/images/{key}` → 이미지 바이트.
+1. FE가 MIME 타입으로 업로드 URL을 요청한다. 허용 타입은 `image/jpeg`·`image/png`·`image/webp`다. staging 키 확장자는 MIME 타입에 따라 각각 `jpg`·`png`·`webp`로 결정된다.
 
-```json
-{ "key": "abc.png", "url": "/api/v1/products/images/abc.png" }
-```
+   ```json
+   { "contentType": "image/png" }
+   ```
+
+2. BE는 `200`과 staging 키·presigned PUT URL·만료 시각을 반환한다. 서명 유효시간은 10분이다.
+
+   ```json
+   {
+     "stagingKey": "staging/550e8400-e29b-41d4-a716-446655440000.png",
+     "uploadUrl": "http://localhost:9000/openat-images/images/staging/...",
+     "expiresAt": "2026-07-20T03:10:00Z"
+   }
+   ```
+
+3. FE가 `uploadUrl`에 원본 파일 바이트를 `PUT`한다. `Content-Type`은 presign 요청과 같아야 한다.
+4. 상품 등록·수정 바디의 `thumbnailKey`·`imageKeys`에는 `stagingKey`를 넣는다. BE는 승격 전에 업로드된 실제 객체를 검증한다 — 크기(최대 5MB), 저장된 콘텐츠 타입이 허용 목록·키 확장자와 일치하는지, 앞부분 바이트가 해당 이미지 포맷의 시그니처인지. 통과하면 단일 버킷의 final prefix로 승격해 prefix 없는 final 키를 저장하고, 실패하면 `PRODUCT_IMAGE_INVALID`(400)를 반환한다. 수정 시 기존 final 키를 다시 보내도 그대로 유지된다.
+
+- staging 키는 승격 전 조회 경로에서 읽을 수 없으므로 업로드 직후 미리보기는 FE의 blob URL을 사용한다.
+- 조회 계약은 `GET /api/v1/products/images/{key}` → 이미지 바이트로 유지한다.
 
 ---
 
@@ -189,6 +201,6 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 
 1. **`DropResponse` 신설 시 FE 필드명 그대로** — `id`(not `dropId`), `remainingQuantity`(not `remaining`). 안 맞추면 codegen 후 FE rename 발생.
 2. **`sellerName` 노출 여부 결정** — product/drop 응답에 추가할지. 추가 시 member `SellerInfo.storeName`을 어떻게 끌어올지(도메인 경계·N+1) 합의.
-3. **`thumbnailKey` URL 전략** — 결정: 응답은 **key**로 주고(환경에 따라 로컬 파일시스템 또는 S3에 저장), FE `resolveImageSrc`가 `GET /api/v1/products/images/{key}`로 해석(seed/목은 picsum 풀 URL 패스스루). 업로드 응답이 `key`와 `url`을 함께 반환(§1.5)하므로 즉시 미리보기도 가능. presigned·CDN URL은 별도 트랙으로 재논의.
+3. **`thumbnailKey` URL 전략** — 결정: 신규 이미지는 presigned PUT으로 staging에 직접 업로드하고, 상품 등록·수정 시 BE가 final로 승격한다. 상품 응답은 **final key**를 주며 FE `resolveImageSrc`가 `GET /api/v1/products/images/{key}`로 해석한다(seed/목의 풀 URL은 패스스루). staging 이미지는 blob URL로 즉시 미리보기하고, presigned GET·CDN은 별도 과제로 둔다.
 4. **조회 API 현황** — `/drops`·`/drops/{id}`·`/drops/me`·`/products/me`·`/categories` **구현 완료**. 남은 미구현은 `/wallet`(결제 도메인)뿐 → [`FE_API_REQUESTS.md`](./FE_API_REQUESTS.md).
 5. **`sellerId` = 스토어 `sellerInfoId`** — 판매자 인증이 스토어 단위로 변경(회원 1:N 스토어). 상품/드롭 write·`/me`의 소유·필터와 `ProductResponse.sellerId`를 활성 스토어 `sellerInfoId` 기준으로(게이트웨이가 판매자 토큰 스코프 주입). [`FE_API_REQUESTS.md` 인증 모델 변경 절]

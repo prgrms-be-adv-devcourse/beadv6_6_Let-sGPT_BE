@@ -17,7 +17,12 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
       "spring.jpa.properties.hibernate.hbm2ddl.create_namespaces=true",
       "spring.kafka.bootstrap-servers=localhost:9092",
       "spring.kafka.listener.auto-startup=false",
-      "product.image.local-dir=${java.io.tmpdir}/openat-test-images"
+      "product.image.s3.bucket=test-image-bucket",
+      "product.image.s3.staging-prefix=images/staging/",
+      "product.image.s3.final-prefix=images/final/",
+      "product.image.s3.endpoint-override=http://localhost:9000",
+      "product.image.s3.access-key=test-access-key",
+      "product.image.s3.secret-key=test-secret-key"
     })
 @Testcontainers
 @DisplayName("애플리케이션 컨텍스트")

@@ -48,6 +48,7 @@ spec:
           env:
             # 이미지 S3 — 단일 버킷 + prefix 2개(버킷 통합, 7/21). 키 네이밍은 product 모듈
             # 관례(PRODUCT_IMAGE_S3_*)로 담당자와 합의 — 어댑터가 key 생성 시 prefix 합성.
+            # endpoint override는 주입하지 않는다 — OIDC가 제공하는 AWS 기본 체인을 쓴다.
             - { name: PRODUCT_IMAGE_S3_BUCKET, value: "team02-letsgpt-bucket" }
             - { name: PRODUCT_IMAGE_S3_STAGING_PREFIX, value: "images/staging/" }
             - { name: PRODUCT_IMAGE_S3_FINAL_PREFIX, value: "images/final/" }
@@ -66,9 +67,6 @@ spec:
             - { name: AWS_WEB_IDENTITY_TOKEN_FILE, value: "/var/run/secrets/aws/token" }
             - { name: AWS_REGION, value: "ap-northeast-2" }
             - { name: AWS_STS_REGIONAL_ENDPOINTS, value: "regional" }
-            # §5-3 어댑터 스위치. S3 어댑터는 아직 구현 전(현재 빈은 LocalImageStorageAdaptor 하나뿐,
-            # 이 값을 읽는 코드가 없음)이라 지금은 무동작 — 어댑터가 들어오는 순간 S3로 전환된다.
-            - { name: PRODUCT_IMAGE_STORAGE, value: "s3" }
           volumeMounts:
             - { name: aws-token, mountPath: /var/run/secrets/aws, readOnly: true }
           # 기동 완료까지 최대 300초 유예(2vCPU에서 6개 JVM 동시 부팅 + kubelet/kube 예약 감안, 실측 최악 251s) — 이후 liveness로 전환. k3s_node_coldboot_contention_plan §2-B/§2-A 동시 적용 전제

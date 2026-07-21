@@ -43,28 +43,27 @@ class OrderServiceTest {
     Order order = createOrder(memberId);
     when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
 
-    var result = orderService.getPaymentValidationInfo(memberId, order.getId());
+    var result = orderService.getPaymentValidationInfo(order.getId());
 
     assertThat(result.orderId()).isEqualTo(order.getId());
     assertThat(result.memberId()).isEqualTo(memberId);
     assertThat(result.amount()).isEqualTo(order.getTotalPrice());
     assertThat(result.status()).isEqualTo(OrderStatus.PAYMENT_PENDING);
     assertThat(result.paymentExpiresAt()).isEqualTo(order.getPaymentExpiresAt());
-    verify(orderCreationService).rejectUnstockedOrderForPaymentValidation(order);
   }
 
   @Test
-  @DisplayName("결제 검증 조회는 주문 소유자가 아니면 거부한다")
-  void getPaymentValidationInfo_rejectsNonOwner() {
-    Order order = createOrder(UUID.randomUUID());
-    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+  @DisplayName("결제 검증 조회는 주문이 없으면 거부한다")
+  void getPaymentValidationInfo_rejectsMissingOrder() {
+    UUID orderId = UUID.randomUUID();
+    when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
 
     BusinessException exception =
         assertThrows(
             BusinessException.class,
-            () -> orderService.getPaymentValidationInfo(UUID.randomUUID(), order.getId()));
+            () -> orderService.getPaymentValidationInfo(orderId));
 
-    assertThat(exception.getErrorCode()).isEqualTo(OrderErrorCode.NOT_OWNER);
+    assertThat(exception.getErrorCode()).isEqualTo(OrderErrorCode.NOT_FOUND);
   }
 
   @Test

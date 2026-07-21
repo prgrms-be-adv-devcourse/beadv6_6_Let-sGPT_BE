@@ -62,7 +62,8 @@ public interface ProductApiSpec {
   //   (seller 서브도메인 SellerStore)에서 배치 해석한다 — N+1·런타임 결합 없음. member 가 seller_registered/updated
   //   이벤트(payload: sellerInfoId, storeName)를 발행해야 실제로 채워짐(로컬은 시드로 표시). 상세: DECISIONS.md.
   //
-  // NOTE(image): 이미지 업로드/조회는 ProductImageController(POST·GET /api/v1/products/images)로 구현됨.
-  //   imageKeys·thumbnailKey 에 반환 키를 사용한다. ImageStorageUseCase 구현은 환경에 따라
-  //   로컬 파일시스템 또는 AWS S3로 선택된다. [screens/14]
+  // NOTE(image): ProductImageController가 presigned PUT URL 발급과 final 이미지 조회를 제공한다
+  //   (POST /api/v1/products/images/presign · GET /api/v1/products/images/{key}). 발급받은
+  //   stagingKey를 thumbnailKey·imageKeys로 넘기면 상품 등록·수정 시 final 키로 승격한다.
+  //   S3와 로컬 MinIO는 같은 어댑터를 쓴다. [screens/14]
 }
