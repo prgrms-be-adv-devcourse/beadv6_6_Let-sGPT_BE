@@ -24,7 +24,7 @@ spec:
           # FE 리포(beadv6_6_Let-sGPT_FE) 소문자 경로. 과거 문서의 "lets-gpt_fe" 표기는
           # 리포명(let-sgpt)과 불일치 — PAT 확보 후 실제 패키지 경로 재확인할 것.
           # FE는 :latest 태그를 안 올린다 — CI가 커밋 SHA로만 태깅. GitOps 전까진 SHA 핀 고정.
-          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend:83e7fc622038902393b67ac50e8ecbbf37a25f28
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend:edfc50f360ccbc7ce96dd556814a750678fc9dac
           ports: [{ containerPort: 80 }]
           readinessProbe:
             httpGet: { path: /, port: 80 }
@@ -32,6 +32,25 @@ spec:
           resources:
             limits: { memory: "128Mi" }
             requests: { cpu: "50m", memory: "48Mi" }
+          volumeMounts:
+            # k3s SA 토큰 issuer discovery(oidc-discovery ConfigMap)를 nginx 정적 루트로 서빙 —
+            # STS가 https://openat.duckdns.org/.well-known/openid-configuration, /openid/v1/jwks 로 검증 요청.
+            # 정적 루트는 nginx 기본값 /usr/share/nginx/html 가정 — FE 이미지가 root를 바꿨다면 조정 필요(현 매니페스트로는 미확인).
+            - { name: oidc-discovery, mountPath: /usr/share/nginx/html/.well-known, readOnly: true }
+            - { name: oidc-jwks, mountPath: /usr/share/nginx/html/openid/v1, readOnly: true }
+      volumes:
+        # 동일 ConfigMap(oidc-discovery)을 두 경로로 분리 노출 — items로 키별 파일명 고정.
+        # 키 로테이션 시 ConfigMap 갱신 + 이 Deployment rollout 필요.
+        - name: oidc-discovery
+          configMap:
+            name: oidc-discovery
+            items:
+              - { key: openid-configuration, path: openid-configuration }
+        - name: oidc-jwks
+          configMap:
+            name: oidc-discovery
+            items:
+              - { key: jwks, path: jwks }
 ---
 apiVersion: v1
 kind: Service
