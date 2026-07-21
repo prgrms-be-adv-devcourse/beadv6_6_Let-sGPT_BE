@@ -87,6 +87,20 @@ else
   echo "SKIP: GHCR_PAT 미지정 — ghcr-pull 시크릿은 생성하지 않음 (앱 이미지 pull 불가 상태)"
 fi
 
+# 웜업 전용 — PostSync Job이 로그인해 임시 토큰을 발급받는 테스트 계정.
+# 미지정이면 생성하지 않는다(웜업 Job은 REQUIRE_AUTH=0 으로 인증 대상만 스킵). 필수 키
+# 검증 루프에 넣지 않는다 — 기존 운영자 .env가 즉시 실패하지 않도록 GHCR/Grafana와 동일한
+# 선택적 분기로 둔다.
+if [ -n "${WARMUP_EMAIL:-}" ] && [ -n "${WARMUP_PASSWORD:-}" ]; then
+  "$KUBECTL" create secret generic warmup-secrets -n "$NS" \
+    --from-literal=WARMUP_EMAIL="$WARMUP_EMAIL" \
+    --from-literal=WARMUP_PASSWORD="$WARMUP_PASSWORD" \
+    --dry-run=client -o yaml | "$KUBECTL" apply -f -
+  echo "OK: warmup-secrets 적용 완료 (namespace=$NS)"
+else
+  echo "SKIP: WARMUP_EMAIL/WARMUP_PASSWORD 미지정 — 웜업 인증 대상은 스킵됨"
+fi
+
 # WS-C(7/10 observability plan) — postgres_exporter용 Secret. openat의 app-secrets는
 # cross-namespace 참조가 안 되므로 observability 네임스페이스에 동일 값으로 복제.
 # DB_USER/DB_PASSWORD를 URI에 그대로 넣으면 '%' 등 특수문자가 있을 때 postgres_exporter의

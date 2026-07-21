@@ -1,0 +1,44 @@
+{
+  "name": "toss-query-payment",
+  "priority": 10,
+  "metadata": {
+    "comment": [
+      "GET /v1/payments/{paymentKey}. Serves three backend call sites with one shape:",
+      "  queryPaymentStatus -> {status, lastTransactionKey}",
+      "  queryPaymentDetail -> + totalAmount (PG reconciliation amount compare)",
+      "  queryRefundStatus  -> + cancels[] {transactionKey, cancelStatus, cancelAmount}",
+      "status DONE is what the backend maps to APPROVED; anything else maps to FAILED.",
+      "totalAmount/cancelAmount cannot be echoed here (GET has no body), so they are fixed",
+      "at 10000 - matching the smoke-test drop price. Change both if your seeded drop price differs.",
+      "urlPathPattern excludes /confirm so this can never shadow the confirm stub."
+    ]
+  },
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/v1/payments/(?!confirm$)[^/]+"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "transformers": ["response-template"],
+    "delayDistribution": { "type": "lognormal", "median": 150, "sigma": 0.3 },
+    "jsonBody": {
+      "mId": "loadtest_mid",
+      "paymentKey": "{{request.pathSegments.[2]}}",
+      "orderId": "loadtest-order",
+      "status": "DONE",
+      "totalAmount": 10000,
+      "balanceAmount": 10000,
+      "approvedAt": "{{now}}",
+      "lastTransactionKey": "wiremock_txn_{{request.pathSegments.[2]}}",
+      "cancels": [
+        {
+          "transactionKey": "wiremock_cancel_{{request.pathSegments.[2]}}",
+          "cancelStatus": "DONE",
+          "cancelAmount": 10000,
+          "canceledAt": "{{now}}"
+        }
+      ]
+    }
+  }
+}

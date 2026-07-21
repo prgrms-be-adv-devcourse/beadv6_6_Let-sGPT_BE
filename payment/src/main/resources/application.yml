@@ -24,6 +24,9 @@ payment:
     key: ${PAYMENT_FIELD_ENCRYPTION_KEY} # pgPaymentKey/pgRefundKey AES-GCM 키(Base64, 32바이트) — .env/docker-compose 쪽 값 추가 필요(dev-infra)
 pg:
   secret-key: ${PG_SECRET_KEY} # 토스 API Basic Auth용 시크릿 키(TossClientConfig) — 웹훅 서명검증은 2026-06-24 제거됨
+  # 부하테스트 전용 오버라이드. 프로덕션은 미설정(기본값 = 실 토스)이 정상이며 ENV_SECRETS에 넣지 않는다.
+  # 주입은 loadtest/scripts/pg-mock-on.sh 의 kubectl set env 만이 유일 경로, off.sh 가 제거.
+  base-url: ${PG_BASE_URL:https://api.tosspayments.com}
 
 # 아웃바운드 회복탄력성 튜닝값(ResilienceConfig) — env 외부화 + 코드 기본값(재컴파일 없는 rollout).
 # 윈도우 크기(10)·최소호출수(5) 같은 구조 파라미터는 코드 고정(튜닝 대상 아님).

@@ -121,6 +121,12 @@ variable "images_final_bucket_name" {
   default     = "team02-letsgpt-images-final"
 }
 
+variable "oidc_issuer_host" {
+  description = "k3s SA OIDC issuer 호스트(프론트 인그레스 host와 단일 소스). https:// 없이 host만."
+  type        = string
+  default     = "openat.duckdns.org"
+}
+
 variable "oidc_jwks_bucket_name" {
   description = <<-EOT
     k3s ServiceAccount OIDC issuer의 discovery/JWKS 공개 미러 버킷 이름 (전역적으로 유일해야 함).

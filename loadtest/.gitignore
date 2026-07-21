@@ -1,0 +1,6 @@
+# seeded accounts/target + k6 output are per-run artifacts, not source
+k6/users.json
+k6/target.json
+loadtest-summary.json
+# pg-mock-on.sh가 저장하는 ArgoCD syncPolicy 원본값 — 런타임 상태, 소스 아님
+.pg-mock-state.json

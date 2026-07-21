@@ -89,8 +89,3 @@ output "product_s3_role_arn" {
   description = "product Deployment env AWS_ROLE_ARN 에 설정할 Role ARN (staging/final RW)"
   value       = aws_iam_role.product_s3.arn
 }
-
-output "search_s3_role_arn" {
-  description = "search Deployment env AWS_ROLE_ARN 에 설정할 Role ARN (final read-only)"
-  value       = aws_iam_role.search_s3.arn
-}
