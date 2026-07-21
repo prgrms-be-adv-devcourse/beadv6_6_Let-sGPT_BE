@@ -15,10 +15,14 @@
 #   ./scripts/warmup.sh [--wait]
 #
 # 환경변수:
-#   BASE_URL     게이트웨이 주소 (기본 http://localhost:8000; kubectl port-forward 전제)
+#   BASE_URL     게이트웨이 주소.
+#                - 로컬 수동 실행: http://localhost:8000 (기본, kubectl port-forward 전제).
+#                - 클러스터 내부(PostSync Job): http://apigateway.openat:8000 (Service DNS 직접).
 #   ITERATIONS   대상별 요청 횟수 (기본 150)
 #   CONCURRENCY  동시 요청 수 (기본 4)
 #   AUTH_TOKEN   order 등 인증 GET용 Bearer 토큰 (미지정 시 인증 대상 스킵 + 경고)
+#   REQUIRE_AUTH 1이면 AUTH_TOKEN 미지정을 스킵이 아닌 즉시 실패로 처리 (기본 0).
+#                자동화(PostSync Job)에서 인증 대상이 조용히 빠지는 것을 막는다.
 #   WINDOW       p95 비교 구간 크기 (기본 20)
 #
 # 옵션:
@@ -26,8 +30,11 @@
 #                kubectl 이 없으면 조용히 스킵한다.
 #
 # 예:
+#   # 로컬 수동:
 #   kubectl -n openat port-forward svc/apigateway 8000:8000 &
 #   AUTH_TOKEN="$(cat /path/to/test-token)" ./scripts/warmup.sh --wait
+#   # 클러스터 내부(참고 — 보통 PostSync Job이 대신 실행):
+#   BASE_URL=http://apigateway.openat:8000 REQUIRE_AUTH=1 ./scripts/warmup.sh
 #
 set -euo pipefail
 
@@ -38,6 +45,7 @@ BASE_URL="${BASE_URL:-http://localhost:8000}"
 ITERATIONS="${ITERATIONS:-150}"
 CONCURRENCY="${CONCURRENCY:-4}"
 AUTH_TOKEN="${AUTH_TOKEN:-}"
+REQUIRE_AUTH="${REQUIRE_AUTH:-0}"
 WINDOW="${WINDOW:-20}"
 
 # k8s (선택) — --wait 시에만 사용
@@ -204,6 +212,9 @@ analyze_endpoint() {
     local dist
     dist="$(awk '$1 !~ /^2/ {c[$1]++} END{for(k in c) printf "%s×%d ", k, c[k]}' "$out")"
     warn "[$name] 비정상 응답 ${errors}/${total}건: ${dist}"
+    if awk '$1 == "401" || $1 == "403" { found=1 } END { exit !found }' "$out"; then
+      err "[$name] 401/403 응답 포함 — AUTH_TOKEN 만료/무효 가능성. 토큰 발급 경로를 확인하세요."
+    fi
   fi
 
   if [ "$ok" -eq 0 ]; then
@@ -246,6 +257,10 @@ log "웜업 시작 — BASE_URL=$BASE_URL ITERATIONS=$ITERATIONS CONCURRENCY=$CO
 wait_for_rollout
 
 if [ -z "$AUTH_TOKEN" ]; then
+  if [ "$REQUIRE_AUTH" = "1" ]; then
+    err "REQUIRE_AUTH=1 인데 AUTH_TOKEN 이 비어 있습니다 — 인증 대상을 조용히 건너뛰지 않고 실패합니다."
+    exit 1
+  fi
   warn "AUTH_TOKEN 미지정 — 인증 필요 대상(order-list)은 스킵합니다."
 fi
 
