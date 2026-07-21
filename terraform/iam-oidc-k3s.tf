@@ -121,60 +121,7 @@ resource "aws_iam_role_policy" "product_s3" {
 }
 
 # ---------------------------------------------------------------------
-# search-s3 Role — final 읽기 전용(AI 이미지 분석용 GetObject만)
+# search — S3 Role 미부여
 # ---------------------------------------------------------------------
-data "aws_iam_policy_document" "search_s3_assume" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.k3s.arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${local.k3s_oidc_host}:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${local.k3s_oidc_host}:sub"
-      values   = ["system:serviceaccount:openat:search-sa"]
-    }
-  }
-}
-
-resource "aws_iam_role" "search_s3" {
-  name               = "${var.project_name}-search-s3"
-  assume_role_policy = data.aws_iam_policy_document.search_s3_assume.json
-
-  tags = { Name = "${var.project_name}-search-s3" }
-}
-
-# 최소권한(§3-4): final 버킷 GetObject만. ListBucket 미부여.
-# 없는 key GetObject는 403(404 아님) → search가 "없음/스킵"으로 처리(§6).
-data "aws_iam_policy_document" "search_s3" {
-  statement {
-    sid       = "FinalObjectReadOnly"
-    effect    = "Allow"
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.this.arn}/images/final/*"]
-  }
-
-  # tfstate 동거 이중 방어 — prefix allow 실수에도 tfstate 도달 차단.
-  statement {
-    sid       = "DenyTfstateAccess"
-    effect    = "Deny"
-    actions   = ["s3:*"]
-    resources = ["${aws_s3_bucket.this.arn}/tfstate/*"]
-  }
-}
-
-resource "aws_iam_role_policy" "search_s3" {
-  name   = "${var.project_name}-search-s3-access"
-  role   = aws_iam_role.search_s3.id
-  policy = data.aws_iam_policy_document.search_s3.json
-}
+# search는 product 이미지 API(HTTP) 경유로 이미지를 받고 S3에 직접 접근하지 않는다.
+# 따라서 별도 IAM Role/SA OIDC 배선을 두지 않는다.
