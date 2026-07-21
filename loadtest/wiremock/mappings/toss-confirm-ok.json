@@ -1,0 +1,41 @@
+{
+  "name": "toss-confirm-happy",
+  "priority": 10,
+  "metadata": {
+    "comment": [
+      "POST /v1/payments/confirm — req {paymentKey, orderId, amount} + Idempotency-Key header.",
+      "Backend parses only lastTransactionKey out of a 2xx; everything else here is",
+      "harmless realism (@JsonIgnoreProperties(ignoreUnknown=true) on all response records).",
+      "The lognormal delay is the point of this mock: it reproduces the outbound-call",
+      "latency that puts pressure on the payment service's threads and connection pool.",
+      "median is rewritten at container start from LT_PG_DELAY_MEDIAN_MS (see",
+      "docker-compose.loadtest.yml) - keep the literal `\"median\": 300` intact for that sed."
+    ]
+  },
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/payments/confirm"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "transformers": ["response-template"],
+    "delayDistribution": { "type": "lognormal", "median": 300, "sigma": 0.35 },
+    "jsonBody": {
+      "mId": "loadtest_mid",
+      "version": "2022-11-16",
+      "paymentKey": "{{jsonPath request.body '$.paymentKey'}}",
+      "orderId": "{{jsonPath request.body '$.orderId'}}",
+      "orderName": "loadtest-order",
+      "status": "DONE",
+      "totalAmount": "{{jsonPath request.body '$.amount'}}",
+      "balanceAmount": "{{jsonPath request.body '$.amount'}}",
+      "method": "CARD",
+      "currency": "KRW",
+      "requestedAt": "{{now}}",
+      "approvedAt": "{{now}}",
+      "lastTransactionKey": "wiremock_txn_{{jsonPath request.body '$.paymentKey'}}",
+      "cancels": null
+    }
+  }
+}
