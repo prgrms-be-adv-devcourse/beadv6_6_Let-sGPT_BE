@@ -66,8 +66,9 @@ search:
   elasticsearch:
     index-name: products
   batch:
-    chunk-size: 100
-    thread-pool-size: 2
+    page-size: 50
+    chunk-size: 50
+    thread-pool-size: 5
   kafka:
     topic:
       product-created: product.created.events
