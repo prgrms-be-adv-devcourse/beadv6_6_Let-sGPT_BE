@@ -56,3 +56,14 @@ services:
 inference:
   base-url: ${INFERENCE_BASE_URL:https://api.inferway.xyz/v1}
   timeout: ${INFERENCE_LLM_TIMEOUT:5000ms}
+
+recommendation:
+  weights:
+    partial-ttl: ${RECOMMENDATION_WEIGHTS_PARTIAL_TTL:10m}
+    current-product-score: ${RECOMMENDATION_CURRENT_PRODUCT_SCORE:0.9}
+    wishlist-score: ${RECOMMENDATION_WISHLIST_SCORE:0.3}
+    purchase-base-score: ${RECOMMENDATION_PURCHASE_BASE_SCORE:0.5}
+    purchase-increment: ${RECOMMENDATION_PURCHASE_INCREMENT:0.1}
+    purchase-max-score: ${RECOMMENDATION_PURCHASE_MAX_SCORE:0.85}
+    purchase-limit: ${RECOMMENDATION_PURCHASE_LIMIT:20}
+    wishlist-limit: ${RECOMMENDATION_WISHLIST_LIMIT:20}
