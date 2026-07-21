@@ -27,14 +27,13 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class AiImageService {
 
-  //private final OpenAiImageClient openAiImageClient; // openai
+  // private final OpenAiImageClient openAiImageClient; // openai
   private final InferenceServerImageClient inferenceServerImageClient;
 
   private final RestClient restClient;
 
   // local
   private final String imgUrlHost = "http://localhost:8000/api/v1/products/images/";
-
 
   @Transactional(readOnly = true)
   public AiImageAnalyzeResponse analyze(MultipartFile image, String prompt) {
@@ -114,7 +113,7 @@ public class AiImageService {
 
   private String normalizeAnalyzePrompt(String prompt) {
     return (prompt == null || prompt.isBlank())
-        ? "너는 직업이 MD 야. 벡터 검색으로 사용하기 위해 최적화된 이미지 분석 해줘."
+        ? "너는 고도의 기술을 가진 상품 MD 직업을 가졌어. 임베딩 검색에 최적화된 이미지 설명 해줘. 배경 설명 제외.색상을 여러 동의어로 같이 (,) 구분으로 표현해줘"
         : prompt.trim();
   }
 
