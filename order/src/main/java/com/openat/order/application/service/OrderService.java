@@ -26,58 +26,80 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class OrderService implements OrderUseCase {
 
-    private final OrderRepository orderRepository;
-    private final OrderCreationService orderCreationService;
-    private final OrderCancellationService orderCancellationService;
+  private final OrderRepository orderRepository;
+  private final OrderCreationService orderCreationService;
+  private final OrderCancellationService orderCancellationService;
+  private final OrderCompensationService orderCompensationService;
 
-    @Override
-    public CreateOrderResult createOrder(UUID memberId, CreateOrderCommand command) {
-        return orderCreationService.create(memberId, command);
+  @Override
+  public CreateOrderResult createOrder(UUID memberId, CreateOrderCommand command) {
+    return orderCreationService.create(memberId, command);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public OrderDetailInfo getMyOrder(UUID memberId, UUID orderId) {
+    Order order = getOwnedOrder(memberId, orderId);
+    return OrderDetailInfo.from(order);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Page<OrderSummaryInfo> getMyOrders(UUID memberId, OrderStatus status, Pageable pageable) {
+    return orderRepository.findByMemberId(memberId, status, pageable).map(OrderSummaryInfo::from);
+  }
+
+  @Override
+  public OrderCancelInfo cancelOrder(UUID memberId, UUID orderId) {
+    return orderCancellationService.cancel(memberId, orderId);
+  }
+
+  @Override
+  public OrderCancelInfo requestRefund(UUID memberId, UUID orderId) {
+    return orderCancellationService.requestRefund(memberId, orderId);
+  }
+
+  @Override
+  public OrderCancelInfo retryRefund(UUID orderId) {
+    return orderCompensationService.retryRefund(orderId);
+  }
+
+  @Override
+  public OrderCancelInfo confirmRefund(UUID orderId) {
+    return orderCompensationService.confirmRefund(orderId);
+  }
+
+  @Override
+  public OrderCancelInfo retryStockRollback(UUID orderId) {
+    return orderCompensationService.retryStockRollback(orderId);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public PaymentValidationInfo getPaymentValidationInfo(UUID memberId, UUID orderId) {
+    Order order = getOwnedOrder(memberId, orderId);
+    orderCreationService.rejectUnstockedOrderForPaymentValidation(order);
+    return PaymentValidationInfo.from(order);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<PurchaseSignalInfo> getPurchaseSignals(UUID memberId, int limit) {
+    return orderRepository
+        .findPurchaseSignals(memberId, OrderStatus.COMPLETED, PageRequest.of(0, limit))
+        .stream()
+        .map(PurchaseSignalInfo::from)
+        .toList();
+  }
+
+  private Order getOwnedOrder(UUID memberId, UUID orderId) {
+    Order order =
+        orderRepository
+            .findById(orderId)
+            .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
+    if (!order.isOwnedBy(memberId)) {
+      throw new BusinessException(OrderErrorCode.NOT_OWNER);
     }
-
-    @Override
-    @Transactional(readOnly = true)
-    public OrderDetailInfo getMyOrder(UUID memberId, UUID orderId) {
-        Order order = getOwnedOrder(memberId, orderId);
-        return OrderDetailInfo.from(order);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public Page<OrderSummaryInfo> getMyOrders(UUID memberId, OrderStatus status, Pageable pageable) {
-        return orderRepository.findByMemberId(memberId, status, pageable)
-                .map(OrderSummaryInfo::from);
-    }
-
-    @Override
-    public OrderCancelInfo cancelOrder(UUID memberId, UUID orderId) {
-        return orderCancellationService.cancel(memberId, orderId);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public PaymentValidationInfo getPaymentValidationInfo(UUID memberId, UUID orderId) {
-        Order order = getOwnedOrder(memberId, orderId);
-        return PaymentValidationInfo.from(order);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<PurchaseSignalInfo> getPurchaseSignals(UUID memberId, int limit) {
-        return orderRepository.findPurchaseSignals(
-                        memberId, OrderStatus.COMPLETED, PageRequest.of(0, limit))
-                .stream()
-                .map(PurchaseSignalInfo::from)
-                .toList();
-    }
-
-    private Order getOwnedOrder(UUID memberId, UUID orderId) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
-        if (!order.isOwnedBy(memberId)) {
-            throw new BusinessException(OrderErrorCode.NOT_OWNER);
-        }
-        return order;
-    }
-
+    return order;
+  }
 }

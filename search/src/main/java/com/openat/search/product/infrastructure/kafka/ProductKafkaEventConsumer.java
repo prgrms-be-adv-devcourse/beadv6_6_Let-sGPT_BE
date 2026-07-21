@@ -3,11 +3,9 @@ package com.openat.search.product.infrastructure.kafka;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.openat.search.product.application.service.AiImageService;
 import com.openat.search.product.application.service.ProductEmbeddingService;
 import com.openat.search.product.infrastructure.elasticsearch.ProductDocument;
 import com.openat.search.product.infrastructure.elasticsearch.ProductSearchDocumentRepository;
-import com.openat.search.product.presentation.dto.AiImageAnalyzeResponse;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.Optional;
@@ -25,7 +23,6 @@ public class ProductKafkaEventConsumer {
   private final ObjectMapper objectMapper;
   private final ProductSearchDocumentRepository productSearchDocumentRepository;
   private final ProductEmbeddingService productEmbeddingService;
-  private final AiImageService aiImageService;
 
   @KafkaListener(
       topics = "${search.kafka.topic.product-created}",
@@ -231,13 +228,7 @@ public class ProductKafkaEventConsumer {
   private ProductDocument applyEmbeddingOrOriginal(
       String eventType, ProductDocument productDocument) {
     try {
-
-      AiImageAnalyzeResponse aiImageAnalyzeResponse =
-          aiImageService.analyzeImageUrl(productDocument.thumbnailKey(), "");
-      ProductDocument analyzedProductDocument =
-          productDocument.withImgDescription(aiImageAnalyzeResponse.answer());
-
-      return productEmbeddingService.applyEmbedding(analyzedProductDocument);
+      return productEmbeddingService.applyEmbedding(productDocument);
     } catch (RuntimeException e) {
       log.warn(
           "Search product Kafka event embedding failed. eventType={}, productId={}, name={}, description={}",

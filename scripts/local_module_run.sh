@@ -41,7 +41,7 @@ docker compose -f "$BE_DIR/docker-compose.yml" up -d
 cd "$BE_DIR"
 ./gradlew :member:bootJar :product:bootJar :order:bootJar \
           :payment:bootJar :settlement:bootJar :apigateway:bootJar \
-          :queue:bootJar :recommendation:bootJar \
+          :queue:bootJar :ai:bootJar \
           -x test
 
 # ── 환경변수 로드 ─────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ JAVA_PIDS=()
 "$JAVA21" -jar "$BE_DIR/settlement/build/libs/settlement-0.0.1-SNAPSHOT.jar" --spring.profiles.active=local > "$LOG_DIR/settlement.log" 2>&1 & JAVA_PIDS+=($!)
 "$JAVA21" -jar "$BE_DIR/apigateway/build/libs/apigateway-0.0.1-SNAPSHOT.jar" --spring.profiles.active=local > "$LOG_DIR/apigateway.log" 2>&1 & JAVA_PIDS+=($!)
 "$JAVA21" -jar "$BE_DIR/queue/build/libs/queue-0.0.1-SNAPSHOT.jar"           --spring.profiles.active=local > "$LOG_DIR/queue.log"      2>&1 & JAVA_PIDS+=($!)
-"$JAVA21" -jar "$BE_DIR/recommendation/build/libs/recommendation-0.0.1-SNAPSHOT.jar" --spring.profiles.active=local > "$LOG_DIR/recommendation.log" 2>&1 & JAVA_PIDS+=($!)
+"$JAVA21" -jar "$BE_DIR/ai/build/libs/ai-0.0.1-SNAPSHOT.jar"                 --spring.profiles.active=local > "$LOG_DIR/ai.log"          2>&1 & JAVA_PIDS+=($!)
 
 cleanup() {
     echo ""

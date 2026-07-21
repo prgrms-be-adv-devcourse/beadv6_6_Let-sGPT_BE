@@ -17,7 +17,7 @@ CREATE SCHEMA IF NOT EXISTS product;
 CREATE SCHEMA IF NOT EXISTS orders;
 CREATE SCHEMA IF NOT EXISTS payment;
 CREATE SCHEMA IF NOT EXISTS settlement;
-CREATE SCHEMA IF NOT EXISTS recommendation;
+CREATE SCHEMA IF NOT EXISTS ai;
 SQL
 
-echo "6개 스키마 생성 완료 (member, product, orders, payment, settlement, recommendation) @ $CONTAINER/$DB_NAME"
+echo "6개 스키마 생성 완료 (member, product, orders, payment, settlement, ai) @ $CONTAINER/$DB_NAME"

@@ -1,0 +1,65 @@
+# AI(recommendation, chatbot 서브도메인) — MVC/JPA 스택, DB 사용. queue 패턴 복제(경량, default 노드).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai
+  namespace: openat
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: ai }
+  template:
+    metadata:
+      labels: { app: ai }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9160"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: ai
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/ai:latest
+          ports: [{ containerPort: 9160 }]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: db-secrets }
+          env:
+            # MaxMetaspaceSize 캡 없음(qna.md Q116) — 서브리밋 안 걸고 pod limit 하나로 통제.
+            # 캡이 있으면 메타스페이스만 먼저 자기 상한에 부딪혀 OutOfMemoryError: Metaspace를
+            # 스레드 단위로 던지는데, 이건 JVM도 컨테이너도 안 죽여서 파드가 좀비로 남는다.
+            # 캡을 빼면 합계가 limit를 넘는 순간 OOMKilled로 죽고 kubelet이 재시작한다.
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:+UseSerialGC -XX:MaxRAMPercentage=55.0 -XX:InitialRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m" }
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+            - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9160 }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 9160 }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 9160 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+          resources:
+            limits: { memory: "300Mi" }
+            requests: { cpu: "100m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai
+  namespace: openat
+spec:
+  selector: { app: ai }
+  ports: [{ port: 9160, targetPort: 9160 }]

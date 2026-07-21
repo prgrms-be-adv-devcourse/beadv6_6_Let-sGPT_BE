@@ -1,7 +1,10 @@
 package com.openat.order.infrastructure.persistence;
 
 import com.openat.order.domain.model.OrderSagaState;
+import com.openat.order.domain.model.OrderSagaStep;
 import com.openat.order.domain.repository.OrderSagaStateRepository;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -11,15 +14,21 @@ import org.springframework.stereotype.Repository;
 @RequiredArgsConstructor
 public class OrderSagaStateRepositoryAdaptor implements OrderSagaStateRepository {
 
-    private final OrderSagaStateJpaRepository orderSagaStateJpaRepository;
+  private final OrderSagaStateJpaRepository orderSagaStateJpaRepository;
 
-    @Override
-    public OrderSagaState save(OrderSagaState orderSagaState) {
-        return orderSagaStateJpaRepository.save(orderSagaState);
-    }
+  @Override
+  public OrderSagaState save(OrderSagaState orderSagaState) {
+    return orderSagaStateJpaRepository.save(orderSagaState);
+  }
 
-    @Override
-    public Optional<OrderSagaState> findByOrderId(UUID orderId) {
-        return orderSagaStateJpaRepository.findByOrderId(orderId);
-    }
+  @Override
+  public Optional<OrderSagaState> findByOrderId(UUID orderId) {
+    return orderSagaStateJpaRepository.findByOrderId(orderId);
+  }
+
+  @Override
+  public List<OrderSagaState> findCompensatingBefore(Instant cutoff) {
+    return orderSagaStateJpaRepository.findByCurrentStepAndCompensatingSinceBefore(
+        OrderSagaStep.COMPENSATING, cutoff);
+  }
 }

@@ -59,11 +59,11 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
             "index": true,
             "similarity": "cosine",
             "index_options": {
-              "type": "bbq_hnsw",
-              "m": 16,
-              "ef_construction": 100,
+              "type": "int8_hnsw",
+              "m": 32,
+              "ef_construction": 200,
               "rescore_vector": {
-                "oversample": 3
+                "oversample": 5
               }
             }
           },
@@ -93,11 +93,11 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
             "index": true,
             "similarity": "cosine",
             "index_options": {
-              "type": "bbq_hnsw",
-              "m": 16,
-              "ef_construction": 100,
+              "type": "int8_hnsw",
+              "m": 32,
+              "ef_construction": 200,
               "rescore_vector": {
-                "oversample": 3
+                "oversample": 5
               }
             }
           }
@@ -147,9 +147,17 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
 
     putMissingProductFieldMappings(indexOperations);
 
-    if (hasOptimizedEmbeddingMapping(indexOperations.getMapping())) {
+    Map<String, Object> mapping = indexOperations.getMapping();
+    if (hasOptimizedEmbeddingMapping(mapping)) {
       log.info(
           "[product-index] products index already has optimized embedding dense_vector mapping");
+      return;
+    }
+
+    if (hasEmbeddingMapping(mapping)) {
+      log.warn(
+          "[product-index] Existing embedding mapping cannot be changed safely in place. "
+              + "Recreate and reindex products to apply int8_hnsw(m=32, ef_construction=200).");
       return;
     }
 
@@ -179,10 +187,14 @@ public class ProductElasticsearchIndexConfig implements ApplicationRunner {
         && numberEquals(embeddingMap.get("dims"), 1536)
         && Boolean.TRUE.equals(embeddingMap.get("index"))
         && "cosine".equals(embeddingMap.get("similarity"))
-        && "bbq_hnsw".equals(indexOptionsMap.get("type"))
-        && numberEquals(indexOptionsMap.get("m"), 16)
-        && numberEquals(indexOptionsMap.get("ef_construction"), 100)
-        && numberEquals(rescoreVectorMap.get("oversample"), 3);
+        && "int8_hnsw".equals(indexOptionsMap.get("type"))
+        && numberEquals(indexOptionsMap.get("m"), 32)
+        && numberEquals(indexOptionsMap.get("ef_construction"), 200)
+        && numberEquals(rescoreVectorMap.get("oversample"), 5);
+  }
+
+  private boolean hasEmbeddingMapping(Map<String, Object> mapping) {
+    return propertiesMap(mapping).containsKey("embedding");
   }
 
   private boolean numberEquals(Object value, int expected) {

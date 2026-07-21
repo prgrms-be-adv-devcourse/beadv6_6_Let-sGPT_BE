@@ -27,6 +27,12 @@ extra_instructions = """
 """
 
 [pr_code_suggestions]
+# 자체 추론 서버는 12B 모델 1대라 동시 요청을 감당 못 한다.
+# 기본값(max_number_of_calls=3, parallel_calls=true)은 diff 청크를 동시에 3콜 쏘기 때문에
+# 큐잉으로 각 호출이 ai_timeout을 넘겨 "Failed to generate code suggestions"로 끝났다.
+# 호출을 1개로 줄이고 순차 실행해 서버 부하를 1/3로 낮춘다.
+max_number_of_calls = 1
+parallel_calls = false
 extra_instructions = """
 최소 diff를 선호하라. 결제 무결성에 영향 주는 변경은 테스트 동반을 제안하라.
 """

@@ -2,7 +2,6 @@ package com.openat.search.product.infrastructure.kafka;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -11,11 +10,9 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openat.search.config.JacksonConfig;
-import com.openat.search.product.application.service.AiImageService;
 import com.openat.search.product.application.service.ProductEmbeddingService;
 import com.openat.search.product.infrastructure.elasticsearch.ProductDocument;
 import com.openat.search.product.infrastructure.elasticsearch.ProductSearchDocumentRepository;
-import com.openat.search.product.presentation.dto.AiImageAnalyzeResponse;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -30,15 +27,12 @@ class ProductKafkaEventConsumerTest {
   private final ProductSearchDocumentRepository repository =
       mock(ProductSearchDocumentRepository.class);
   private final ProductEmbeddingService embeddingService = mock(ProductEmbeddingService.class);
-  private final AiImageService aiImageService = mock(AiImageService.class);
   private final ObjectMapper objectMapper = new JacksonConfig().objectMapper();
   private final ProductKafkaEventConsumer consumer =
-      new ProductKafkaEventConsumer(objectMapper, repository, embeddingService, aiImageService);
+      new ProductKafkaEventConsumer(objectMapper, repository, embeddingService);
 
   @Test
   void createAndUpdateUseTheSameRealProductId() {
-    when(aiImageService.analyzeImageUrl(eq("https://example.com/product.jpg"), eq("")))
-        .thenReturn(new AiImageAnalyzeResponse("", "상품 이미지"));
     when(embeddingService.applyEmbedding(any(ProductDocument.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -79,7 +73,7 @@ class ProductKafkaEventConsumerTest {
         new ConsumerRecord<>("product.created.events", 0, 1L, null, payload));
 
     verify(repository, never()).save(any(ProductDocument.class));
-    verifyNoInteractions(embeddingService, aiImageService);
+    verifyNoInteractions(embeddingService);
   }
 
   @Test
@@ -109,7 +103,7 @@ class ProductKafkaEventConsumerTest {
     assertThat(savedDocument.price()).isEqualTo(existingDocument.price());
     assertThat(savedDocument.embedding()).isSameAs(existingDocument.embedding());
     assertThat(savedDocument.deletedAt()).isEqualTo(deletedAt);
-    verifyNoInteractions(embeddingService, aiImageService);
+    verifyNoInteractions(embeddingService);
   }
 
   @Test
@@ -128,7 +122,7 @@ class ProductKafkaEventConsumerTest {
                 .formatted(PRODUCT_ID)));
 
     verify(repository, never()).save(any(ProductDocument.class));
-    verifyNoInteractions(embeddingService, aiImageService);
+    verifyNoInteractions(embeddingService);
   }
 
   private ConsumerRecord<String, String> record(String topic, String payload) {

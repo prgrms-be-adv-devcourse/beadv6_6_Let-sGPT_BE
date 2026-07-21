@@ -1,28 +1,29 @@
 package com.openat.order.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.openat.common.exception.BusinessException;
 import com.openat.order.application.dto.OrderCancelInfo;
-import com.openat.order.application.dto.OrderSnapshotInfo;
+import com.openat.order.application.dto.PaymentRefundResult;
 import com.openat.order.application.dto.StockRestoreCommand;
+import com.openat.order.application.port.PaymentPendingException;
+import com.openat.order.application.port.PaymentRefundPort;
+import com.openat.order.application.port.PaymentRefundPortException;
 import com.openat.order.application.port.ProductIntegrationPort;
 import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
-import com.openat.order.domain.model.OrderStatus;
 import com.openat.order.domain.model.OrderFailCode;
+import com.openat.order.domain.model.OrderStatus;
 import com.openat.order.domain.repository.OrderRepository;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -34,107 +35,178 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class OrderCancellationServiceTest {
 
-    @Mock
-    private OrderRepository orderRepository;
+  @Mock OrderRepository orderRepository;
+  @Mock OrderCancellationTransitionService transitionService;
+  @Mock PaymentRefundPort paymentRefundPort;
+  @Mock ProductIntegrationPort productIntegrationPort;
+  @Mock OrderSagaRecorder orderSagaRecorder;
+  @Mock OrderCompensationFailureRecorder compensationFailureRecorder;
+  @InjectMocks OrderCancellationService service;
 
-    @Mock
-    private OrderHistoryRecorder orderHistoryRecorder;
+  @Test
+  void should_cancel_and_restore_stock_when_payment_not_completed() {
+    UUID memberId = UUID.randomUUID();
+    Order order = order(memberId);
+    stubOwned(order);
+    when(paymentRefundPort.requestRefund(order.getId(), "refund-order-" + order.getId()))
+        .thenReturn(PaymentRefundResult.PAYMENT_NOT_COMPLETED);
+    when(transitionService.cancelPaymentPending(memberId, order.getId(), "결제 전 주문 취소"))
+        .thenReturn(new OrderCancelInfo(order.getId(), OrderStatus.CANCELLED));
 
-    @Mock
-    private ProductIntegrationPort productIntegrationPort;
+    OrderCancelInfo result = service.cancel(memberId, order.getId());
 
-    @Mock
-    private OrderSagaRecorder orderSagaRecorder;
+    assertThat(result.status()).isEqualTo(OrderStatus.CANCELLED);
+    verify(orderSagaRecorder).recordCompensationCompleted(order.getId());
+    ArgumentCaptor<StockRestoreCommand> command =
+        ArgumentCaptor.forClass(StockRestoreCommand.class);
+    verify(productIntegrationPort).restoreStock(any(), command.capture());
+    assertThat(command.getValue().orderId()).isEqualTo(order.getId());
+  }
 
-    @Mock
-    private OrderCompensationFailureRecorder compensationFailureRecorder;
+  @Test
+  void should_wait_for_refund_event_when_refund_accepted() {
+    UUID memberId = UUID.randomUUID();
+    Order order = order(memberId);
+    stubOwned(order);
+    when(paymentRefundPort.requestRefund(any(), any()))
+        .thenReturn(PaymentRefundResult.REFUND_ACCEPTED);
+    when(transitionService.requestRefund(memberId, order.getId(), "cancel-refund-accepted-", false))
+        .thenReturn(new OrderCancelInfo(order.getId(), OrderStatus.CANCEL_REQUESTED));
 
-    @InjectMocks
-    private OrderCancellationService orderCancellationService;
+    OrderCancelInfo result = service.cancel(memberId, order.getId());
 
-    @Test
-    @DisplayName("결제 대기 주문 취소 시 재고를 복구하고 취소 이력을 남긴다")
-    void cancelPaymentPendingOrder_restoresStockAndRecordsHistory() {
-        UUID memberId = UUID.randomUUID();
-        Order order = createOrder(memberId);
-        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+    assertThat(result.status()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
+    verify(productIntegrationPort, never()).restoreStock(any(), any());
+    verify(orderSagaRecorder, never()).recordCompensationCompleted(any());
+  }
 
-        orderCancellationService.cancel(memberId, order.getId());
+  @Test
+  void should_optimistically_cancel_when_payment_call_fails() {
+    UUID memberId = UUID.randomUUID();
+    Order order = order(memberId);
+    stubOwned(order);
+    when(paymentRefundPort.requestRefund(any(), any()))
+        .thenThrow(new PaymentRefundPortException("timeout", new RuntimeException()));
+    when(transitionService.cancelPaymentPending(memberId, order.getId(), "환불 API 무응답으로 결제 전 낙관 확정"))
+        .thenReturn(new OrderCancelInfo(order.getId(), OrderStatus.CANCELLED));
 
-        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
-        ArgumentCaptor<StockRestoreCommand> command = ArgumentCaptor.forClass(StockRestoreCommand.class);
-        verify(productIntegrationPort).restoreStock(any(), command.capture());
-        assertThat(command.getValue().orderId()).isEqualTo(order.getId());
-        assertThat(command.getValue().buyerId()).isEqualTo(memberId);
-        assertThat(command.getValue().quantity()).isEqualTo(order.getQuantity());
-        verify(orderHistoryRecorder).record(any(), any(), any(), any(), any());
-        verify(orderSagaRecorder).recordCompensating(order.getId());
-        verify(orderSagaRecorder).recordCompensationCompleted(order.getId());
-    }
+    OrderCancelInfo result = service.cancel(memberId, order.getId());
 
-    @Test
-    @DisplayName("완료 주문 취소 요청은 환불 요청 상태로 바꾸고 재고를 즉시 복구하지 않는다")
-    void cancelCompletedOrder_requestsRefundWithoutRestoringStock() {
-        UUID memberId = UUID.randomUUID();
-        Order order = createOrder(memberId);
-        order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:01:00Z"));
-        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+    assertThat(result.status()).isEqualTo(OrderStatus.CANCELLED);
+    verify(productIntegrationPort).restoreStock(any(), any());
+  }
 
-        orderCancellationService.cancel(memberId, order.getId());
+  @Test
+  void should_reject_cancel_without_state_or_stock_change_when_payment_is_pending() {
+    UUID memberId = UUID.randomUUID();
+    Order order = order(memberId);
+    stubOwned(order);
+    when(paymentRefundPort.requestRefund(any(), any()))
+        .thenThrow(new PaymentPendingException("pending", new RuntimeException()));
 
-        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
-        verify(productIntegrationPort, never()).restoreStock(any(), any());
-        verify(orderHistoryRecorder).record(any(), any(), any(), any(), any());
-    }
+    assertThatThrownBy(() -> service.cancel(memberId, order.getId()))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            exception ->
+                assertThat(exception.getErrorCode())
+                    .isEqualTo(OrderErrorCode.PAYMENT_IN_PROGRESS));
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+    verify(transitionService, never()).cancelPaymentPending(any(), any(), any());
+    verify(transitionService, never()).requestRefund(any(), any(), any(), any(Boolean.class));
+    verify(productIntegrationPort, never()).restoreStock(any(), any());
+    verify(orderSagaRecorder, never()).recordCompensationCompleted(any());
+  }
 
-    @Test
-    @DisplayName("재고 롤백 실패 시 취소 성공을 반환하고 보상 실패를 기록한 채 사가를 COMPENSATING에 유지한다")
-    void cancelPaymentPendingOrder_whenStockRestoreFails_recordsCompensationFailure() {
-        UUID memberId = UUID.randomUUID();
-        Order order = createOrder(memberId);
-        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
-        doThrow(new ProductPortException(OrderFailCode.STOCK_ROLLBACK_FAILED, "rollback failed"))
-                .when(productIntegrationPort)
-                .restoreStock(any(), any());
+  @Test
+  void should_keep_cancelled_when_stock_rollback_fails() {
+    UUID memberId = UUID.randomUUID();
+    Order order = order(memberId);
+    stubOwned(order);
+    when(paymentRefundPort.requestRefund(any(), any()))
+        .thenReturn(PaymentRefundResult.PAYMENT_NOT_COMPLETED);
+    when(transitionService.cancelPaymentPending(any(), any(), any()))
+        .thenReturn(new OrderCancelInfo(order.getId(), OrderStatus.CANCELLED));
+    org.mockito.Mockito.doThrow(
+            new ProductPortException(OrderFailCode.STOCK_ROLLBACK_FAILED, "rollback failed"))
+        .when(productIntegrationPort)
+        .restoreStock(any(), any());
 
-        OrderCancelInfo result = orderCancellationService.cancel(memberId, order.getId());
+    OrderCancelInfo result = service.cancel(memberId, order.getId());
 
-        assertThat(result.status()).isEqualTo(OrderStatus.CANCELLED);
-        verify(orderSagaRecorder).recordCompensating(order.getId());
-        verify(orderSagaRecorder, never()).recordCompensationCompleted(order.getId());
-        verify(compensationFailureRecorder).recordStockRollbackFailure(order.getId(), "rollback failed");
-    }
+    assertThat(result.status()).isEqualTo(OrderStatus.CANCELLED);
+    verify(compensationFailureRecorder)
+        .recordStockRollbackFailure(order.getId(), "rollback failed");
+    verify(orderSagaRecorder, never()).recordCompensationCompleted(any());
+  }
 
-    @Test
-    @DisplayName("주문 소유자가 아니면 취소를 거부한다")
-    void cancelOrder_rejectsNonOwner() {
-        Order order = createOrder(UUID.randomUUID());
-        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+  @Test
+  void should_reject_cancel_when_order_completed() {
+    UUID memberId = UUID.randomUUID();
+    Order order = order(memberId);
+    order.complete(UUID.randomUUID(), Instant.now());
+    stubOwned(order);
 
-        BusinessException exception = assertThrows(
-                BusinessException.class,
-                () -> orderCancellationService.cancel(UUID.randomUUID(), order.getId()));
+    assertThatThrownBy(() -> service.cancel(memberId, order.getId()))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            exception ->
+                assertThat(exception.getErrorCode()).isEqualTo(OrderErrorCode.ALREADY_COMPLETED));
+    verify(paymentRefundPort, never()).requestRefund(any(), any());
+  }
 
-        assertThat(exception.getErrorCode()).isEqualTo(OrderErrorCode.NOT_OWNER);
-        verify(productIntegrationPort, never()).restoreStock(any(), any());
-    }
+  @Test
+  void should_return_cancel_requested_when_refund_call_fails_after_transition() {
+    UUID memberId = UUID.randomUUID();
+    Order order = order(memberId);
+    order.complete(UUID.randomUUID(), Instant.now());
+    stubOwned(order);
+    when(transitionService.requestRefund(memberId, order.getId(), "refund-request-", true))
+        .thenReturn(new OrderCancelInfo(order.getId(), OrderStatus.CANCEL_REQUESTED));
+    when(paymentRefundPort.requestRefund(any(), any()))
+        .thenThrow(new PaymentRefundPortException("timeout", new RuntimeException()));
 
-    private Order createOrder(UUID memberId) {
-        UUID dropId = UUID.randomUUID();
-        OrderSnapshotInfo snapshot = new OrderSnapshotInfo(UUID.randomUUID(), UUID.randomUUID(), 10_000L);
-        Order order = Order.create()
-                .orderNumber("ORD-20260626-0001")
-                .memberId(memberId)
-                .dropId(dropId)
-                .productId(snapshot.productId())
-                .sellerId(snapshot.sellerId())
-                .productName("테스트 상품")
-                .quantity(2)
-                .unitPrice(snapshot.unitPrice())
-                .idempotencyKey("idem-001")
-                .now(Instant.parse("2026-06-26T00:00:00Z"))
-                .build();
-        ReflectionTestUtils.setField(order, "id", UUID.randomUUID());
-        return order;
-    }
+    OrderCancelInfo result = service.requestRefund(memberId, order.getId());
+
+    assertThat(result.status()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
+    verify(compensationFailureRecorder).recordRefundRequestFailure(order.getId(), "timeout");
+  }
+
+  @Test
+  void should_clear_unconfirmed_marker_when_refund_is_accepted() {
+    UUID memberId = UUID.randomUUID();
+    Order order = order(memberId);
+    order.complete(UUID.randomUUID(), Instant.now());
+    stubOwned(order);
+    when(transitionService.requestRefund(memberId, order.getId(), "refund-request-", true))
+        .thenReturn(new OrderCancelInfo(order.getId(), OrderStatus.CANCEL_REQUESTED));
+    when(paymentRefundPort.requestRefund(any(), any()))
+        .thenReturn(PaymentRefundResult.REFUND_ACCEPTED);
+
+    service.requestRefund(memberId, order.getId());
+
+    verify(transitionService).clearRefundRequestFailure(order.getId());
+    verify(compensationFailureRecorder, never()).recordRefundRequestFailure(any(), any());
+  }
+
+  private void stubOwned(Order order) {
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+  }
+
+  private Order order(UUID memberId) {
+    Order order =
+        Order.create()
+            .orderNumber("ORD-1")
+            .memberId(memberId)
+            .dropId(UUID.randomUUID())
+            .productId(UUID.randomUUID())
+            .sellerId(UUID.randomUUID())
+            .productName("상품")
+            .quantity(2)
+            .unitPrice(10_000L)
+            .idempotencyKey("idem")
+            .now(Instant.now())
+            .build();
+    ReflectionTestUtils.setField(order, "id", UUID.randomUUID());
+    return order;
+  }
 }

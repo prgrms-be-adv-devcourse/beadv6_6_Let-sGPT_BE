@@ -29,8 +29,10 @@ public class ProductSearchService {
 
   private static final int DEFAULT_SIZE = 20;
   private static final int MAX_SIZE = 100;
-  private static final int KNN_CANDIDATE_MULTIPLIER = 5;
-  private static final int MIN_KNN_CANDIDATES = 100;
+  private static final int KNN_CANDIDATE_MULTIPLIER = 10;
+  private static final int MIN_RERANK_CANDIDATES = 500;
+  private static final int MAX_KNN_CANDIDATES = 10_000;
+  private static final float KNN_RESCORE_OVERSAMPLE = 5.0F;
   private static final float LEXICAL_SCORE_BOOST_WEIGHT = 0.30F;
   private static final String[] VECTOR_SEARCH_SOURCE_INCLUDES = {
     "id",
@@ -112,7 +114,8 @@ public class ProductSearchService {
             .withQuery(
                 queryBuilder ->
                     queryBuilder.bool(
-                        bool -> bool.filter(buildSearchFilters(categoryName, startPrice, endPrice))))
+                        bool ->
+                            bool.filter(buildSearchFilters(categoryName, startPrice, endPrice))))
             .withPageable(pageable)
             .build();
 
@@ -136,8 +139,12 @@ public class ProductSearchService {
                 () -> new IllegalStateException("Product search query embedding is empty."));
 
     int requestedWindow = Math.addExact((int) pageable.getOffset(), pageable.getPageSize());
-    int candidateWindow = Math.max(MIN_KNN_CANDIDATES, requestedWindow);
-    int numCandidates = Math.max(MIN_KNN_CANDIDATES, candidateWindow * KNN_CANDIDATE_MULTIPLIER);
+    int candidateWindow =
+        Math.min(MAX_KNN_CANDIDATES, Math.max(MIN_RERANK_CANDIDATES, requestedWindow));
+    int numCandidates =
+        Math.min(
+            MAX_KNN_CANDIDATES,
+            Math.max(candidateWindow, candidateWindow * KNN_CANDIDATE_MULTIPLIER));
     PageRequest candidatePageable = PageRequest.of(0, candidateWindow);
 
     NativeQuery query =
@@ -148,7 +155,7 @@ public class ProductSearchService {
                         .queryVector(toFloatList(queryVector))
                         .k(candidateWindow)
                         .numCandidates(numCandidates)
-                        .rescoreVector(rescore -> rescore.oversample(3.0f))
+                        .rescoreVector(rescore -> rescore.oversample(KNN_RESCORE_OVERSAMPLE))
                         .filter(buildSearchFilters(categoryName, startPrice, endPrice)))
             .withPageable(candidatePageable)
             .withSourceFilter(
@@ -166,7 +173,7 @@ public class ProductSearchService {
     var rankedResults =
         searchHits.stream()
             .map(searchHit -> toHybridResult(searchHit, queryVector, queryText))
-            .filter(result -> hasLexicalMatch(queryText, result.document()))
+            .filter(result -> matchesSearchTermsInProductContext(queryText, result.document()))
             .sorted(resultComparator)
             .toList();
 
@@ -277,24 +284,24 @@ public class ProductSearchService {
     String imgDescription = normalizeText(document.imgDescription());
 
     float score = 0.0F;
-    if (!normalizedQuery.isBlank() && name.contains(normalizedQuery)) {
+    if (!normalizedQuery.isBlank() && containsSearchExpression(name, normalizedQuery)) {
       score += 0.4F;
     }
-    if (!normalizedQuery.isBlank() && description.contains(normalizedQuery)) {
+    if (!normalizedQuery.isBlank() && containsSearchExpression(description, normalizedQuery)) {
       score += 0.2F;
     }
-    if (!normalizedQuery.isBlank() && imgDescription.contains(normalizedQuery)) {
+    if (!normalizedQuery.isBlank() && containsSearchExpression(imgDescription, normalizedQuery)) {
       score += 0.25F;
     }
 
     for (String term : terms) {
-      if (name.contains(term)) {
+      if (containsSearchTerm(name, term)) {
         score += 0.35F;
       }
-      if (description.contains(term)) {
+      if (containsSearchTerm(description, term)) {
         score += 0.12F;
       }
-      if (imgDescription.contains(term)) {
+      if (containsSearchTerm(imgDescription, term)) {
         score += 0.18F;
       }
     }
@@ -302,8 +309,122 @@ public class ProductSearchService {
     return Math.min(1.0F, score);
   }
 
-  private boolean hasLexicalMatch(String queryText, ProductDocument document) {
-    return lexicalScore(queryText, document) > 0.0F;
+  private boolean matchesSearchTermsInProductContext(String queryText, ProductDocument document) {
+    Set<String> terms = searchTerms(queryText);
+    if (terms.isEmpty()) {
+      return lexicalScore(queryText, document) > 0.0F;
+    }
+
+    if (attributeContexts(document).stream()
+        .anyMatch(context -> terms.stream().allMatch(term -> containsSearchTerm(context, term)))) {
+      return true;
+    }
+
+    return hasPrimaryStandaloneAttributeMatch(terms, document);
+  }
+
+  private boolean hasPrimaryStandaloneAttributeMatch(Set<String> terms, ProductDocument document) {
+    List<String> imageAttributes = splitAttributeContexts(document.imgDescription(), "[,;\\r\\n]+");
+    boolean queryMatchesPrimaryStandaloneAttribute =
+        imageAttributes.stream()
+            .filter(this::isStandalonePrimaryAttribute)
+            .anyMatch(
+                attribute -> terms.stream().anyMatch(term -> containsSearchTerm(attribute, term)));
+
+    if (!queryMatchesPrimaryStandaloneAttribute) {
+      return false;
+    }
+
+    String primaryProductDescription =
+        String.join(
+            " ",
+            normalizeText(document.name()),
+            normalizeText(document.categoryName()),
+            normalizeText(document.imgDescription()));
+    return terms.stream().allMatch(term -> containsSearchTerm(primaryProductDescription, term));
+  }
+
+  private boolean containsSearchExpression(String text, String expression) {
+    return isSingleHangulSyllable(expression)
+        ? containsSearchTerm(text, expression)
+        : text.contains(expression);
+  }
+
+  private boolean containsSearchTerm(String text, String term) {
+    if (!isHangulTerm(term)) {
+      return text.contains(term);
+    }
+
+    boolean requireEndBoundary = isSingleHangulSyllable(term);
+    int fromIndex = 0;
+    while (fromIndex < text.length()) {
+      int matchIndex = text.indexOf(term, fromIndex);
+      if (matchIndex < 0) {
+        return false;
+      }
+
+      int matchEnd = matchIndex + term.length();
+      boolean startsAtWordBoundary =
+          matchIndex == 0 || !Character.isLetterOrDigit(text.codePointBefore(matchIndex));
+      boolean endsAtWordBoundary =
+          matchEnd == text.length() || !Character.isLetterOrDigit(text.codePointAt(matchEnd));
+      if (startsAtWordBoundary && (!requireEndBoundary || endsAtWordBoundary)) {
+        return true;
+      }
+      fromIndex = matchEnd;
+    }
+    return false;
+  }
+
+  private boolean isSingleHangulSyllable(String value) {
+    return value.codePointCount(0, value.length()) == 1 && isHangulTerm(value);
+  }
+
+  private boolean isHangulTerm(String value) {
+    return !value.isBlank()
+        && value.codePoints().allMatch(codePoint -> codePoint >= 0xAC00 && codePoint <= 0xD7A3);
+  }
+
+  private List<String> attributeContexts(ProductDocument document) {
+    List<String> contexts = new ArrayList<>();
+    String name = normalizeText(document.name());
+    List<String> imageAttributes = splitAttributeContexts(document.imgDescription(), "[,;\\r\\n]+");
+
+    if (!name.isBlank()) {
+      contexts.add(name);
+    }
+    if (!imageAttributes.isEmpty()) {
+      List<String> primaryProductAttributes = new ArrayList<>();
+      if (!name.isBlank()) {
+        primaryProductAttributes.add(name);
+      }
+      primaryProductAttributes.add(imageAttributes.getFirst());
+      imageAttributes.stream()
+          .skip(1)
+          .filter(this::isStandalonePrimaryAttribute)
+          .forEach(primaryProductAttributes::add);
+      contexts.add(String.join(" ", primaryProductAttributes));
+      contexts.addAll(imageAttributes);
+    }
+
+    contexts.addAll(splitAttributeContexts(document.description(), "[.!?;\\r\\n]+"));
+    return contexts;
+  }
+
+  private boolean isStandalonePrimaryAttribute(String attribute) {
+    return !attribute.isBlank() && attribute.indexOf(' ') < 0;
+  }
+
+  private List<String> splitAttributeContexts(String value, String delimiterRegex) {
+    String normalizedValue = normalizeText(value);
+    if (normalizedValue.isBlank()) {
+      return List.of();
+    }
+
+    return List.of(normalizedValue.split(delimiterRegex)).stream()
+        .map(String::trim)
+        .filter(context -> !context.isBlank())
+        .toList();
   }
 
   private Set<String> searchTerms(String queryText) {
@@ -314,12 +435,19 @@ public class ProductSearchService {
     }
 
     for (String token : normalizedQuery.split("\\s+")) {
-      if (token.length() >= 2) {
+      if (isMeaningfulSearchTerm(token)) {
         terms.add(token);
       }
     }
 
     return terms;
+  }
+
+  private boolean isMeaningfulSearchTerm(String token) {
+    if (token.length() >= 2) {
+      return true;
+    }
+    return token.codePoints().anyMatch(codePoint -> codePoint >= 0xAC00 && codePoint <= 0xD7A3);
   }
 
   private String normalizeText(String value) {
