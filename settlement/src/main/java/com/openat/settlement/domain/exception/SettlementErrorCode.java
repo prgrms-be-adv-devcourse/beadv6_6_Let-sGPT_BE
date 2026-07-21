@@ -22,6 +22,9 @@ public enum SettlementErrorCode implements ErrorCode {
   BATCH_SETTLEMENT_NOT_FOUND(
       HttpStatus.NOT_FOUND, "BATCH_SETTLEMENT_NOT_FOUND", "정산 배치 정보를 찾을 수 없습니다."),
 
+  INVALID_SETTLEMENT_MONTH(
+      HttpStatus.BAD_REQUEST, "INVALID_SETTLEMENT_MONTH", "정산월 형식이 올바르지 않습니다."),
+
   BATCH_RECONCILIATION_BLOCKED(
       HttpStatus.CONFLICT,
       "BATCH_RECONCILIATION_BLOCKED",

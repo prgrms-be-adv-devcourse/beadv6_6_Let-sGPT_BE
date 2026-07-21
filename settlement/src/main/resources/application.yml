@@ -48,6 +48,8 @@ api:
   init: /api/v1
 
 settlement:
+  # 결제 건별 플랫폼 수수료율(%). 원 미만 금액은 버림 처리합니다.
+  fee-rate-percent: 3
   kafka:
     topic:
       payment-events: payment.settlement.events
