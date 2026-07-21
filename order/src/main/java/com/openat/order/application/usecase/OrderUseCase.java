@@ -30,7 +30,7 @@ public interface OrderUseCase {
 
   OrderCancelInfo retryStockRollback(UUID orderId);
 
-  PaymentValidationInfo getPaymentValidationInfo(UUID memberId, UUID orderId);
+  PaymentValidationInfo getPaymentValidationInfo(UUID orderId);
 
   List<PurchaseSignalInfo> getPurchaseSignals(UUID memberId, int limit);
 }
