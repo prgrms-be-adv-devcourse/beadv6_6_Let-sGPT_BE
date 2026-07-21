@@ -38,6 +38,8 @@ import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
@@ -60,6 +62,7 @@ class S3ImageStorageAdaptorTest {
   @Mock private S3Client s3Client;
   @Mock private S3Presigner s3Presigner;
   @Mock private PresignedPutObjectRequest presignedRequest;
+  @Mock private PresignedGetObjectRequest presignedDownloadRequest;
   private S3ImageStorageAdaptor adaptor;
 
   @BeforeEach
@@ -314,76 +317,55 @@ class S3ImageStorageAdaptorTest {
   }
 
   @Test
-  @DisplayName("존재하는 S3 객체를 조회하면 이미지 바이트를 반환한다")
-  void load_existingKey_returnsBytes() {
+  @DisplayName("final 키로 조회 서명을 요청하면 final prefix 객체의 presigned GET URL을 반환한다")
+  void presignDownload_finalKey_returnsPresignedUrl() throws Exception {
     // given
-    String key = FINAL_KEY;
-    byte[] content = "image-bytes".getBytes();
-    ResponseBytes<GetObjectResponse> response =
-        ResponseBytes.fromByteArray(GetObjectResponse.builder().build(), content);
-    given(s3Client.getObjectAsBytes(any(GetObjectRequest.class))).willReturn(response);
+    String downloadUrl = "https://example.com/download";
+    given(presignedDownloadRequest.url()).willReturn(URI.create(downloadUrl).toURL());
+    given(s3Presigner.presignGetObject(any(GetObjectPresignRequest.class)))
+        .willReturn(presignedDownloadRequest);
 
     // when
-    byte[] loaded = adaptor.load(key);
+    URI result = adaptor.presignDownload(FINAL_KEY);
 
     // then
-    ArgumentCaptor<GetObjectRequest> requestCaptor =
-        ArgumentCaptor.forClass(GetObjectRequest.class);
-    then(s3Client).should().getObjectAsBytes(requestCaptor.capture());
-    GetObjectRequest request = requestCaptor.getValue();
-    assertThat(request.bucket()).isEqualTo(BUCKET);
-    assertThat(request.key()).isEqualTo(FINAL_PREFIX + FINAL_KEY);
-    assertThat(loaded).isEqualTo(content);
+    ArgumentCaptor<GetObjectPresignRequest> requestCaptor =
+        ArgumentCaptor.forClass(GetObjectPresignRequest.class);
+    then(s3Presigner).should().presignGetObject(requestCaptor.capture());
+    GetObjectPresignRequest request = requestCaptor.getValue();
+    assertThat(request.signatureDuration()).isEqualTo(PRESIGN_EXPIRY);
+    assertThat(request.getObjectRequest().bucket()).isEqualTo(BUCKET);
+    assertThat(request.getObjectRequest().key()).isEqualTo(FINAL_PREFIX + FINAL_KEY);
+    assertThat(result).isEqualTo(URI.create(downloadUrl));
+    then(s3Client).shouldHaveNoInteractions();
   }
 
-  @Test
-  @DisplayName("NoSuchKey 응답이면 IMAGE_NOT_FOUND 예외를 던진다")
-  void load_noSuchKey_throwsNotFound() {
-    // given
-    NoSuchKeyException failure = NoSuchKeyException.builder().message("missing").build();
-    given(s3Client.getObjectAsBytes(any(GetObjectRequest.class))).willThrow(failure);
-
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "staging/550e8400-e29b-41d4-a716-446655440000.png",
+        "images/final/550e8400-e29b-41d4-a716-446655440000.png",
+        "not-a-uuid.png"
+      })
+  @DisplayName("final key 형식이 아니면 IMAGE_INVALID 예외를 던지고 서명하지 않는다")
+  void presignDownload_invalidFinalKey_throwsImageInvalid(String key) {
     // when & then
-    assertThatThrownBy(() -> adaptor.load(FINAL_KEY))
+    assertThatThrownBy(() -> adaptor.presignDownload(key))
         .isInstanceOf(BusinessException.class)
-        .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.IMAGE_NOT_FOUND);
+        .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.IMAGE_INVALID);
+    then(s3Presigner).shouldHaveNoInteractions();
+    then(s3Client).shouldHaveNoInteractions();
   }
 
   @Test
-  @DisplayName("S3가 404를 응답하면 IMAGE_NOT_FOUND 예외를 던진다")
-  void load_s3NotFound_throwsNotFound() {
+  @DisplayName("조회 서명이 실패하면 IMAGE_STORAGE_FAILED 예외를 던진다")
+  void presignDownload_sdkFailure_throwsStorageFailed() {
     // given
-    S3Exception failure = s3Exception(404, "missing");
-    given(s3Client.getObjectAsBytes(any(GetObjectRequest.class))).willThrow(failure);
+    SdkClientException failure = SdkClientException.create("presign failed");
+    given(s3Presigner.presignGetObject(any(GetObjectPresignRequest.class))).willThrow(failure);
 
     // when & then
-    assertThatThrownBy(() -> adaptor.load(FINAL_KEY))
-        .isInstanceOf(BusinessException.class)
-        .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.IMAGE_NOT_FOUND);
-  }
-
-  @Test
-  @DisplayName("ListBucket 없는 IAM의 없는 키 조회(403)면 IMAGE_NOT_FOUND 예외를 던진다")
-  void load_s3AccessDenied_throwsNotFound() {
-    // given
-    S3Exception failure = s3Exception(403, "access denied");
-    given(s3Client.getObjectAsBytes(any(GetObjectRequest.class))).willThrow(failure);
-
-    // when & then
-    assertThatThrownBy(() -> adaptor.load(FINAL_KEY))
-        .isInstanceOf(BusinessException.class)
-        .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.IMAGE_NOT_FOUND);
-  }
-
-  @Test
-  @DisplayName("404·403이 아닌 S3 조회 실패면 IMAGE_STORAGE_FAILED 예외를 던진다")
-  void load_sdkFailure_throwsStorageFailed() {
-    // given
-    SdkClientException failure = SdkClientException.create("get failed");
-    given(s3Client.getObjectAsBytes(any(GetObjectRequest.class))).willThrow(failure);
-
-    // when & then
-    assertThatThrownBy(() -> adaptor.load(FINAL_KEY))
+    assertThatThrownBy(() -> adaptor.presignDownload(FINAL_KEY))
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.IMAGE_STORAGE_FAILED);
   }

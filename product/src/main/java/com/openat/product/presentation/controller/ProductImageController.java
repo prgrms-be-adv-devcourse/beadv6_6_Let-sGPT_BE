@@ -5,9 +5,9 @@ import com.openat.product.application.usecase.ImageStorageUseCase;
 import com.openat.product.presentation.dto.ImagePresignRequest;
 import com.openat.product.presentation.dto.ImagePresignResponse;
 import jakarta.validation.Valid;
+import java.net.URI;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.MediaType;
-import org.springframework.http.MediaTypeFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -33,10 +33,8 @@ public class ProductImageController implements ProductImageApiSpec {
 
   @Override
   @GetMapping("/{key}")
-  public ResponseEntity<byte[]> getImage(@PathVariable String key) {
-    byte[] content = imageStorageUseCase.load(key);
-    MediaType contentType =
-        MediaTypeFactory.getMediaType(key).orElse(MediaType.APPLICATION_OCTET_STREAM);
-    return ResponseEntity.ok().contentType(contentType).body(content);
+  public ResponseEntity<Void> getImage(@PathVariable String key) {
+    URI downloadUrl = imageStorageUseCase.presignDownload(key);
+    return ResponseEntity.status(HttpStatus.FOUND).location(downloadUrl).build();
   }
 }
