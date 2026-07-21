@@ -19,7 +19,7 @@ images:
   newTag: 8703b4a1325788b095d6f58851342ec75be86b57
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
-  newTag: 507308b464f646dabc33dbfa5ae8cf6517c59452
+  newTag: 24dab0ef875562e95224014bdf88acd9180ef52d
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
   newTag: d4898728f101615f492de26965a32d54072a1c56
