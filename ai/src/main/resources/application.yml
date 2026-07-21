@@ -58,6 +58,8 @@ inference:
   timeout: ${INFERENCE_LLM_TIMEOUT:5000ms}
 
 recommendation:
+  drop-cache:
+    page-size: ${RECOMMENDATION_DROP_CACHE_PAGE_SIZE:100}
   weights:
     partial-ttl: ${RECOMMENDATION_WEIGHTS_PARTIAL_TTL:10m}
     current-product-score: ${RECOMMENDATION_CURRENT_PRODUCT_SCORE:0.9}
