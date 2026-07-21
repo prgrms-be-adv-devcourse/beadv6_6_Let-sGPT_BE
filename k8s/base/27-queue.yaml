@@ -52,7 +52,7 @@ spec:
             failureThreshold: 5
           resources:
             limits: { memory: "400Mi" }   # gate2 A-4: 실사용 289/300=96% OOM 방어
-            requests: { cpu: "100m", memory: "320Mi" }   # gate2 A-4: 실사용 289/300=96% OOM 방어
+            requests: { cpu: "50m", memory: "320Mi" }   # gate2 A-4: 실사용 289/300=96% OOM 방어
 ---
 apiVersion: v1
 kind: Service

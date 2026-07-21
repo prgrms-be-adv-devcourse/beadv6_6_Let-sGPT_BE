@@ -75,7 +75,7 @@ spec:
             # 7/21 실측 재조정: 압박기 SIGTERM 반복으로 기동 실패 → final 노드 여유 확보 위해 하향.
             # 힙 = limit×60% = 307m. 실측 사용량 기준 여유 확인 후 적용.
             limits: { memory: "512Mi" }
-            requests: { cpu: "100m", memory: "380Mi" }
+            requests: { cpu: "50m", memory: "380Mi" }
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }
