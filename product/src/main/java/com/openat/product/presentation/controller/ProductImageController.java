@@ -1,11 +1,10 @@
 package com.openat.product.presentation.controller;
 
-import com.openat.common.exception.BusinessException;
+import com.openat.product.application.dto.ImagePresignInfo;
 import com.openat.product.application.usecase.ImageStorageUseCase;
-import com.openat.product.domain.error.ProductErrorCode;
-import com.openat.product.presentation.dto.ImageUploadResponse;
-import java.io.IOException;
-import java.net.URI;
+import com.openat.product.presentation.dto.ImagePresignRequest;
+import com.openat.product.presentation.dto.ImagePresignResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.MediaTypeFactory;
@@ -13,11 +12,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 @RestController
 @RequestMapping("/products/images")
@@ -27,12 +24,11 @@ public class ProductImageController implements ProductImageApiSpec {
   private final ImageStorageUseCase imageStorageUseCase;
 
   @Override
-  @PostMapping
-  public ResponseEntity<ImageUploadResponse> upload(@RequestPart("file") MultipartFile file) {
-    String key = imageStorageUseCase.store(readBytes(file), file.getOriginalFilename());
-    URI location =
-        ServletUriComponentsBuilder.fromCurrentRequest().path("/{key}").buildAndExpand(key).toUri();
-    return ResponseEntity.created(location).body(new ImageUploadResponse(key, location.getPath()));
+  @PostMapping("/presign")
+  public ResponseEntity<ImagePresignResponse> presign(
+      @Valid @RequestBody ImagePresignRequest request) {
+    ImagePresignInfo upload = imageStorageUseCase.presignUpload(request.contentType());
+    return ResponseEntity.ok(ImagePresignResponse.from(upload));
   }
 
   @Override
@@ -42,13 +38,5 @@ public class ProductImageController implements ProductImageApiSpec {
     MediaType contentType =
         MediaTypeFactory.getMediaType(key).orElse(MediaType.APPLICATION_OCTET_STREAM);
     return ResponseEntity.ok().contentType(contentType).body(content);
-  }
-
-  private byte[] readBytes(MultipartFile file) {
-    try {
-      return file.getBytes();
-    } catch (IOException e) {
-      throw new BusinessException(ProductErrorCode.IMAGE_STORAGE_FAILED);
-    }
   }
 }

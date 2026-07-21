@@ -16,9 +16,10 @@
 특정 모듈 하나를 IntelliJ로 직접 실행하면서 개발할 때 사용.
 
 ```bash
-docker compose up -d postgres kafka redis
+docker compose up -d postgres kafka redis minio minio-init
 ```
 
+- 상품 이미지 기능은 MinIO가 필요하며, `minio-init`이 로컬 이미지 버킷을 생성한다.
 - `postgres`는 최초 기동(빈 볼륨) 시 `db/init/01-schemas.sql`이 자동 실행되어
   `openat` DB 안에 `member/product/orders/payment/settlement` 5개 스키마가 자동 생성됨.
 - 이미 떠 있던 볼륨이라 자동 생성이 안 됐다면:

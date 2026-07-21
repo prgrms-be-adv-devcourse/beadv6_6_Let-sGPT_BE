@@ -81,6 +81,44 @@ services:
           memory: 256M
     restart: always
 
+  minio:
+    image: minio/minio
+    container_name: dev-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data_dev:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: always
+
+  minio-init:
+    image: minio/mc
+    container_name: dev-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        until /usr/bin/mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
+          sleep 1
+        done
+        /usr/bin/mc mb --ignore-existing local/openat-images
+    restart: "no"
+
   # 외부 공개 진입점(80)은 더 이상 이 compose가 관리하지 않는다 — FE 레포의
   # 자체 self-hosted 러너(ec2-fe)가 GHCR 이미지를 pull해 `docker run --network openat`으로
   # 직접 띄운다(openat-nginx). 이 compose가 같은 호스트 포트(80)를 같이 잡으면
@@ -160,6 +198,13 @@ services:
       KAFKA_BROKER: ${KAFKA_BROKER}
       REDIS_HOST: ${REDIS_HOST}
       REDIS_PORT: ${REDIS_PORT}
+      PRODUCT_IMAGE_S3_BUCKET: openat-images
+      PRODUCT_IMAGE_S3_STAGING_PREFIX: images/staging/
+      PRODUCT_IMAGE_S3_FINAL_PREFIX: images/final/
+      PRODUCT_IMAGE_S3_ENDPOINT: http://minio:9000
+      PRODUCT_IMAGE_S3_PUBLIC_ENDPOINT: http://localhost:9000
+      PRODUCT_IMAGE_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      PRODUCT_IMAGE_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
     depends_on:
       postgres:
         condition: service_healthy
@@ -167,6 +212,8 @@ services:
         condition: service_started
       redis:
         condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -287,6 +334,7 @@ services:
 
 volumes:
   pgdata_dev:
+  minio_data_dev:
 
 networks:
   default:

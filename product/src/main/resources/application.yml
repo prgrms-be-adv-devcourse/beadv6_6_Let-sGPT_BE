@@ -26,10 +26,6 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         spring.json.trusted.packages: "*"
-  servlet:
-    multipart:
-      max-file-size: 5MB
-      max-request-size: 10MB
 springdoc:
   api-docs:
     path: /api-docs
@@ -45,7 +41,16 @@ drop:
 
 product:
   image:
-    local-dir: ${PRODUCT_IMAGE_DIR:${user.home}/.openat/product-images} # storage=local(기본)일 때 로컬 어댑터 저장 경로 — 배포는 S3 어댑터 사용
+    s3:
+      bucket: ${PRODUCT_IMAGE_S3_BUCKET} # 이미지 객체를 저장하는 단일 버킷
+      staging-prefix: ${PRODUCT_IMAGE_S3_STAGING_PREFIX} # 브라우저가 presigned PUT으로 업로드하는 임시 prefix
+      final-prefix: ${PRODUCT_IMAGE_S3_FINAL_PREFIX} # 상품에 연결된 이미지를 저장하는 최종 prefix
+      presign-expiry: 10m # 브라우저 업로드 서명 유효시간
+      max-upload-size: 5MB # promote 시 HeadObject 크기 게이트
+      endpoint-override: ${PRODUCT_IMAGE_S3_ENDPOINT:} # 값이 있으면 S3 호환 스토리지, 비면 실제 AWS
+      public-endpoint-override: ${PRODUCT_IMAGE_S3_PUBLIC_ENDPOINT:} # presigned URL용 공개 endpoint, 비면 기존 endpoint
+      access-key: ${PRODUCT_IMAGE_S3_ACCESS_KEY:} # endpoint-override 사용 시에만
+      secret-key: ${PRODUCT_IMAGE_S3_SECRET_KEY:}
   kafka:
     topic:
       product-created: product.created.events

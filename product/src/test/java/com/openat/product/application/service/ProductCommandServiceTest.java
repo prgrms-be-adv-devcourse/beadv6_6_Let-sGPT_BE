@@ -13,6 +13,7 @@ import com.openat.category.domain.model.Category;
 import com.openat.common.exception.BusinessException;
 import com.openat.product.application.dto.ProductCreateCommand;
 import com.openat.product.application.dto.ProductUpdateCommand;
+import com.openat.product.application.usecase.ImageStorageUseCase;
 import com.openat.product.domain.error.ProductErrorCode;
 import com.openat.product.domain.event.ProductCreatedEvent;
 import com.openat.product.domain.event.ProductDeletedEvent;
@@ -40,6 +41,7 @@ class ProductCommandServiceTest {
   @InjectMocks private ProductCommandService productCommandService;
   @Mock private ProductRepository productRepository;
   @Mock private CategoryQueryUseCase categoryQueryUseCase;
+  @Mock private ImageStorageUseCase imageStorageUseCase;
   @Mock private ApplicationEventPublisher eventPublisher;
 
   @Nested
@@ -62,6 +64,7 @@ class ProductCommandServiceTest {
       // then
       assertThat(result).isEqualTo(savedId);
       then(categoryQueryUseCase).should(never()).getById(any());
+      then(imageStorageUseCase).shouldHaveNoInteractions();
 
       ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
       then(productRepository).should().save(productCaptor.capture());
@@ -93,15 +96,27 @@ class ProductCommandServiceTest {
     }
 
     @Test
-    @DisplayName("이미지 키 목록을 함께 등록하면 갤러리로 저장한다")
-    void create_withImageKeys_savesGallery() {
+    @DisplayName("이미지 키를 함께 등록하면 승격된 final 키로 저장한다")
+    void create_withImageKeys_savesPromotedKeys() {
       // given
       UUID sellerId = UUID.randomUUID();
+      String stagingThumbnailKey = "staging/thumb.png";
+      String stagingImageKey = "staging/img-1.png";
+      String finalImageKey = "img-2.png";
+      given(imageStorageUseCase.promote(stagingThumbnailKey)).willReturn("thumb.png");
+      given(imageStorageUseCase.promote(stagingImageKey)).willReturn("img-1.png");
+      given(imageStorageUseCase.promote(finalImageKey)).willReturn(finalImageKey);
       given(productRepository.save(any(Product.class)))
           .willReturn(ProductFixture.persisted(UUID.randomUUID(), sellerId));
       ProductCreateCommand command =
           new ProductCreateCommand(
-              sellerId, "갤러리 상품", "설명", null, 10_000L, "thumb", List.of("img-1", "img-2"));
+              sellerId,
+              "갤러리 상품",
+              "설명",
+              null,
+              10_000L,
+              stagingThumbnailKey,
+              List.of(stagingImageKey, finalImageKey));
 
       // when
       productCommandService.create(command);
@@ -109,7 +124,9 @@ class ProductCommandServiceTest {
       // then
       ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
       then(productRepository).should().save(productCaptor.capture());
-      assertThat(productCaptor.getValue().getImageKeys()).containsExactly("img-1", "img-2");
+      assertThat(productCaptor.getValue().getThumbnailKey()).isEqualTo("thumb.png");
+      assertThat(productCaptor.getValue().getImageKeys())
+          .containsExactly("img-1.png", finalImageKey);
     }
 
     @Test
@@ -172,6 +189,39 @@ class ProductCommandServiceTest {
       // then
       assertThat(product.getName()).isEqualTo("수정된 상품");
       assertThat(product.getPrice()).isEqualTo(5_000L);
+    }
+
+    @Test
+    @DisplayName("이미지 키를 함께 수정하면 승격된 final 키로 갱신한다")
+    void update_withImageKeys_updatesPromotedKeys() {
+      // given
+      UUID sellerId = UUID.randomUUID();
+      UUID productId = UUID.randomUUID();
+      Product product = ProductFixture.persisted(productId, sellerId);
+      String stagingThumbnailKey = "staging/thumb.png";
+      String stagingImageKey = "staging/img-1.png";
+      String finalImageKey = "img-2.png";
+      given(productRepository.findById(productId)).willReturn(Optional.of(product));
+      given(imageStorageUseCase.promote(stagingThumbnailKey)).willReturn("thumb.png");
+      given(imageStorageUseCase.promote(stagingImageKey)).willReturn("img-1.png");
+      given(imageStorageUseCase.promote(finalImageKey)).willReturn(finalImageKey);
+      ProductUpdateCommand command =
+          new ProductUpdateCommand(
+              productId,
+              sellerId,
+              "수정된 상품",
+              "수정 설명",
+              null,
+              5_000L,
+              stagingThumbnailKey,
+              List.of(stagingImageKey, finalImageKey));
+
+      // when
+      productCommandService.update(command);
+
+      // then
+      assertThat(product.getThumbnailKey()).isEqualTo("thumb.png");
+      assertThat(product.getImageKeys()).containsExactly("img-1.png", finalImageKey);
     }
 
     @Test
