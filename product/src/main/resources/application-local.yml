@@ -12,6 +12,16 @@ spring:
       host: localhost
       port: 6379
 
+product:
+  image:
+    s3:
+      bucket: openat-images
+      staging-prefix: images/staging/
+      final-prefix: images/final/
+      endpoint-override: http://localhost:9000
+      access-key: ${MINIO_ROOT_USER:minioadmin}
+      secret-key: ${MINIO_ROOT_PASSWORD:minioadmin}
+
 services:
   member:
     url: http://localhost:9100                     # 타모듈 localhost
