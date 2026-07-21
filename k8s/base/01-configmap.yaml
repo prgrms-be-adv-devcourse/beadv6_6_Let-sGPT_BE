@@ -26,8 +26,12 @@ data:
   # 7-16-s3_presigned_oidc_plan §7-3 — S3 이미지 저장 비민감 공용값(버킷명·리전).
   # AWS_ROLE_ARN은 서비스마다 달라 여기 넣지 않는다 — Deployment env(22-product/26-search)에서 직접 주입.
   # 버킷명은 terraform(images.tf)이 생성한 실명과 일치해야 한다.
-  S3_IMAGES_STAGING_BUCKET: "team02-letsgpt-images-staging"
-  S3_IMAGES_FINAL_BUCKET: "team02-letsgpt-images-final"
+  # 버킷 4개를 사설 버킷 team02-letsgpt-bucket 1개로 통합 — 이미지 경로는 prefix로 분리
+  # (staging: presigned PUT 임시 업로드, final: 확정본). 버킷명은 terraform(images.tf) 실명과 일치할 것.
+  S3_IMAGES_STAGING_BUCKET: "team02-letsgpt-bucket"
+  S3_IMAGES_FINAL_BUCKET: "team02-letsgpt-bucket"
+  S3_IMAGES_STAGING_PREFIX: "images/staging/"
+  S3_IMAGES_FINAL_PREFIX: "images/final/"
   S3_REGION: "ap-northeast-2"
 ---
 # postgres 최초 기동(빈 PVC) 시 docker-entrypoint-initdb.d로 실행되는 스키마 시드.
