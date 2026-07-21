@@ -39,8 +39,10 @@ spec:
           resources:
             # k3s_memory_mitigation_plan §9-1(A안 확정: bbq_hnsw 이진양자화+1536차원 유지, float32 저장) —
             # dense_vector kNN 오프힙 여유분 반영해 상향. final 노드 limit 총예산 재분배는 §9-7 참고.
-            limits: { memory: "1500Mi" }
-            requests: { cpu: "100m", memory: "1350Mi" }
+            # 7/21 실측 재조정: 힙 768m 고정에 실사용 1224Mi — limit 여유분 회수해 final 노드
+            # 스케줄 여유 확보(search 재기동·레플리카 수용). 힙은 그대로라 동작 영향 없음.
+            limits: { memory: "1350Mi" }
+            requests: { cpu: "100m", memory: "1250Mi" }
           volumeMounts:
             - { name: es-data, mountPath: /usr/share/elasticsearch/data }
   volumeClaimTemplates:
