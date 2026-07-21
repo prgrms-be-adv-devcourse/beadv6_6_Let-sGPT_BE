@@ -53,10 +53,11 @@ public class ProductController {
 
   @Operation(
       summary = "상품 DB를 Elasticsearch로 색인",
-      description = "상품 DB 데이터를 Spring Batch chunk 단위로 읽어서 Elasticsearch products 인덱스에 저장합니다.")
+      description =
+          "상품 DB 데이터를 id 커서 기준으로 50건씩 읽고, 50건 단위 bulk 요청으로 Elasticsearch products 인덱스에 저장합니다.")
   @ApiResponse(responseCode = "200", description = "DB to ES 배치 실행 성공")
   @ApiErrorResponses
-  @GetMapping("/dbToEs")
+  @GetMapping("/dbToES")
   public ResponseEntity<DbToEsResponse> dbToEs() {
     try {
       JobExecution execution = jobLauncher.run(productDbToEsJob, newJobParameters());
