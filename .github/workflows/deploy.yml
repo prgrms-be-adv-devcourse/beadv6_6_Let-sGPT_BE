@@ -186,4 +186,3 @@ jobs:
           echo "ERROR: ArgoCD did not converge to $TARGET_REV in 600s (last rev=$REV status=$S)" >&2   # 실패는 시끄럽게
           kubectl -n argocd get application openat -o yaml | tail -40 >&2
           exit 1
-  300s
