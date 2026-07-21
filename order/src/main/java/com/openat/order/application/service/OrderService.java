@@ -76,9 +76,11 @@ public class OrderService implements OrderUseCase {
 
   @Override
   @Transactional(readOnly = true)
-  public PaymentValidationInfo getPaymentValidationInfo(UUID memberId, UUID orderId) {
-    Order order = getOwnedOrder(memberId, orderId);
-    orderCreationService.rejectUnstockedOrderForPaymentValidation(order);
+  public PaymentValidationInfo getPaymentValidationInfo(UUID orderId) {
+    Order order =
+        orderRepository
+            .findById(orderId)
+            .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
     return PaymentValidationInfo.from(order);
   }
 
