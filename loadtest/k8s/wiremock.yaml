@@ -1,0 +1,141 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# 부하테스트 전용 가짜 PG(WireMock). 실 토스페이먼츠(api.tosspayments.com) 대체.
+#
+# ★ 이 파일은 k8s/base·k8s/overlay에 절대 넣지 않는다.
+#   거기 들어가는 순간 deploy/state의 desired-state가 되어 "가짜 PG"가 상시 배포된다.
+#   여기(loadtest/k8s/)에 두고 loadtest/scripts/pg-mock-on.sh로 수동 apply만 한다.
+#
+# ★ ArgoCD prune 안전성
+#   prune은 "ArgoCD가 tracking 중인데 desired-state에서 사라진" 리소스만 지운다.
+#   tracking 판정은 기본 설정(application.instanceLabelKey 미지정)에서
+#   app.kubernetes.io/instance 라벨 = Application 이름(openat) 여부로 한다.
+#   아래 리소스에는 그 라벨을 절대 붙이지 않으므로 ArgoCD 입장에서는 존재조차 모르는
+#   orphan이고, prune 대상이 되지 않는다(AppProject에 orphanedResources도 미설정이라
+#   경고 표시조차 안 뜬다). 반대로 말하면 app.kubernetes.io/instance: openat 를
+#   실수로 붙이면 그 즉시 ArgoCD가 입양 → 다음 sync에서 삭제된다. 붙이지 말 것.
+#
+# ★ mappings ConfigMap은 여기 없다.
+#   loadtest/wiremock/mappings/*.json 원본을 유일한 진실로 두기 위해
+#   pg-mock-on.sh가 아래 한 줄로 생성한다(임베드하면 원본과 이중 관리 → 반드시 썩는다):
+#     kubectl -n openat create configmap wiremock-toss-mappings \
+#       --from-file=<mappings dir> --dry-run=client -o yaml | kubectl apply -f -
+#   PG 지연 median(LT_PG_DELAY_MEDIAN_MS) 치환도 그 스크립트가 임시 복사본에서 수행한다.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wiremock-toss
+  namespace: openat
+  labels:
+    app: wiremock-toss
+    # ArgoCD tracking 라벨이 아니다. 수동 리소스 일괄 삭제용 셀렉터.
+    openat.dev/loadtest: "true"
+spec:
+  replicas: 1
+  # 노드 메모리가 빠듯하다(payment 700Mi 등 JVM 6개). 롤링 중 구/신 파드 동시 상주로
+  # Insufficient memory Pending 나는 걸 막으려고 Recreate. 부하테스트 보조 컴포넌트라
+  # 무중단이 필요 없다.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: wiremock-toss }
+  template:
+    metadata:
+      labels:
+        app: wiremock-toss
+        openat.dev/loadtest: "true"
+      # prometheus.io/scrape 어노테이션을 일부러 붙이지 않는다 — WireMock은 Prometheus
+      # 엔드포인트가 없고, 붙이면 otel-collector가 매번 404를 긁으며 up=0 노이즈만 만든다.
+      # 이 파드의 메모리/CPU는 cAdvisor 잡(kubernetes-cadvisor)이 이미 수집하므로
+      # "인프라 — DB·파드 리소스"(uid openat-infra) 대시보드에서 그대로 보인다.
+    spec:
+      # nodeSelector/toleration 없음 = observability 노드(taint dedicated=observability:NoSchedule)에는
+      # 스케줄되지 않고 앱 노드에 뜬다. payment와 같은 노드여야 PG 콜 RTT가 서비스 간 실제
+      # 경로와 같아진다. 동시에 그 노드가 바로 메모리가 빠듯한 쪽이라 아래 limit이 중요하다.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: wiremock
+          image: wiremock/wiremock:3.9.2
+          args:
+            - --port=8080
+            # 스텁들이 {{jsonPath request.body ...}} / {{request.pathSegments.[2]}} / {{now}} 에
+            # 의존한다. 각 스텁이 transformers:["response-template"]도 선언하고 있지만,
+            # 전역 플래그를 함께 켜서 스텁 추가 시 빠뜨려도 동작하게 한다.
+            - --global-response-templating
+            - --disable-banner
+            # 요청 저널은 요청 수에 비례해 힙을 먹는다. 200건이면 __admin/requests로
+            # "정말 WireMock이 맞았나" 확인은 되면서 메모리는 상수로 묶인다.
+            - --max-request-journal-entries=200
+            # payment의 톰캣 스레드가 50 → payment가 동시에 만들 수 있는 아웃바운드 PG 콜은
+            # 최대 50. 컨테이너 스레드 50이면 WireMock이 절대 병목이 되지 않는 최소값이다.
+            # (기존 compose의 200은 이 노드에서 스레드 스택만으로 메모리를 낭비한다.)
+            - --container-threads=50
+            # delayDistribution(lognormal 300ms)을 스레드 점유 없이 처리 → 지연 중에도
+            # 컨테이너 스레드가 반환된다. 지연이 이 목의 핵심 기능이라 필수.
+            - --async-response-enabled
+            - --async-response-threads=20
+          ports: [{ containerPort: 8080 }]
+          env:
+            # JAVA_OPTS는 이미지 entrypoint 구현에 의존하지만 JAVA_TOOL_OPTIONS는 JVM이
+            # 무조건 읽는다. limit 384Mi 기준 힙 50%(=192Mi) — 남는 ~190Mi를 메타스페이스·
+            # 코드캐시·스레드 스택(70여 개)이 쓴다. -Xss512k로 스택 총량을 ~35Mi로 묶는다.
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=50.0 -Xss512k -XX:ReservedCodeCacheSize=32m" }
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+          resources:
+            # 384Mi 근거: 이 노드에는 이미 JVM 6개가 상주하고 payment 혼자 700Mi다.
+            # WireMock이 하는 일은 정적 스텁 매칭 + handlebars 치환뿐이라 힙 192Mi로 충분하고,
+            # 저널이 200건으로 고정이라 부하량에 따라 증가하지 않는다. 그렇다고 256Mi까지
+            # 조이면 스레드 스택+메타스페이스가 들어갈 자리가 없어 OOMKill 위험이 생기는데,
+            # 부하테스트 도중 목이 죽는 건 측정 자체를 버리는 것이라 64~128Mi의 헤드룸을 산다.
+            limits: { memory: "384Mi" }
+            requests: { cpu: "100m", memory: "256Mi" }
+          # 이웃 매니페스트(24-payment.yaml 등)와 동일한 보안 자세.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+          # readOnlyRootFilesystem 하에서 JVM/WireMock이 쓰기를 시도하는 두 경로만 emptyDir로 뚫는다.
+          # (증상: CrashLoopBackOff + "Read-only file system". 그때는 아래 마운트를 먼저 의심할 것.)
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: files, mountPath: /home/wiremock/__files }
+            - { name: mappings, mountPath: /home/wiremock/mappings, readOnly: true }
+          # WireMock은 /__admin/health가 버전에 따라 없을 수 있어, 어떤 3.x에서도 200을 주는
+          # /__admin/mappings 로 확인한다(스텁 4개짜리라 응답 비용도 무시 가능).
+          readinessProbe:
+            httpGet: { path: /__admin/mappings, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /__admin/mappings, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: files
+          emptyDir: {}
+        - name: mappings
+          configMap: { name: wiremock-toss-mappings }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wiremock-toss
+  namespace: openat
+  labels:
+    app: wiremock-toss
+    openat.dev/loadtest: "true"
+spec:
+  selector: { app: wiremock-toss }
+  ports: [{ port: 8080, targetPort: 8080 }]
+# NetworkPolicy 불필요 확인:
+#   k8s/base/50-networkpolicy.yaml은 postgres/kafka/redis/elasticsearch 4개 파드에만
+#   podSelector를 건다. NetworkPolicy는 "선택된 파드"에만 적용되고 앱 파드에는 아무 정책도
+#   붙지 않으므로(무정책 = 전면 허용), openat 네임스페이스에 새로 뜬 이 파드는 payment에서
+#   그대로 접근 가능하다. egress 정책은 클러스터 전체에 하나도 없어 payment의 아웃바운드도
+#   막히지 않는다. → 추가 정책 없이 payment → wiremock-toss:8080 통신이 성립한다.

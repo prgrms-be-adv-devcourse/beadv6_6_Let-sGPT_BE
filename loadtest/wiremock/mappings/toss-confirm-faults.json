@@ -1,0 +1,140 @@
+{
+  "mappings": [
+    {
+      "name": "toss-confirm-reject-4xx-by-paymentkey",
+      "priority": 1,
+      "metadata": {
+        "comment": [
+          "Opt-in fault. Priority 1 beats the priority-10 happy path, so the happy path is",
+          "untouched unless a request explicitly asks for a fault.",
+          "paymentKey prefix is the ONLY selector k6 can drive: the backend forwards the",
+          "client-supplied paymentKey verbatim to the PG, so k6 controls it end to end.",
+          "LTFAIL4XX... -> 400 -> TossConfirmResult.rejected (business failure, NOT retried)."
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "urlPath": "/v1/payments/confirm",
+        "bodyPatterns": [
+          {
+            "matchesJsonPath": {
+              "expression": "$.paymentKey",
+              "matches": "^LTFAIL4XX.*"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": { "Content-Type": "application/json" },
+        "delayDistribution": { "type": "lognormal", "median": 300, "sigma": 0.35 },
+        "jsonBody": {
+          "code": "REJECT_CARD_COMPANY",
+          "message": "loadtest: 카드사에서 결제를 거절했습니다."
+        }
+      }
+    },
+    {
+      "name": "toss-confirm-error-5xx-by-paymentkey",
+      "priority": 1,
+      "metadata": {
+        "comment": [
+          "LTFAIL5XX... -> 500 -> RealTossPaymentClient throws IllegalStateException,",
+          "which drives the backend ambiguous-outcome compensation path.",
+          "Delay stays well under the 5s read timeout but is deliberately slow: the",
+          "interesting pressure comes from slow-then-failing calls, not instant ones."
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "urlPath": "/v1/payments/confirm",
+        "bodyPatterns": [
+          {
+            "matchesJsonPath": {
+              "expression": "$.paymentKey",
+              "matches": "^LTFAIL5XX.*"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": { "Content-Type": "application/json" },
+        "delayDistribution": { "type": "lognormal", "median": 1200, "sigma": 0.35 },
+        "jsonBody": {
+          "code": "INTERNAL_SERVER_ERROR",
+          "message": "loadtest: 내부 서버 오류"
+        }
+      }
+    },
+    {
+      "name": "toss-confirm-timeout-by-paymentkey",
+      "priority": 1,
+      "metadata": {
+        "comment": "LTTIMEOUT... -> exceeds the 5s RestClient read timeout on purpose (ResourceAccessException path)."
+      },
+      "request": {
+        "method": "POST",
+        "urlPath": "/v1/payments/confirm",
+        "bodyPatterns": [
+          {
+            "matchesJsonPath": {
+              "expression": "$.paymentKey",
+              "matches": "^LTTIMEOUT.*"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "fixedDelayMilliseconds": 8000,
+        "jsonBody": { "lastTransactionKey": "wiremock_txn_timeout" }
+      }
+    },
+    {
+      "name": "toss-confirm-reject-4xx-by-header",
+      "priority": 1,
+      "metadata": {
+        "comment": [
+          "Header selector, for manual curl against WireMock only.",
+          "RealTossPaymentClient sends just Authorization + Idempotency-Key, so k6 can",
+          "NOT make this header reach WireMock through the backend."
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "urlPath": "/v1/payments/confirm",
+        "headers": { "X-Loadtest-Fault": { "equalTo": "reject" } }
+      },
+      "response": {
+        "status": 400,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "code": "REJECT_CARD_COMPANY",
+          "message": "loadtest: 카드사에서 결제를 거절했습니다."
+        }
+      }
+    },
+    {
+      "name": "toss-confirm-error-5xx-by-header",
+      "priority": 1,
+      "metadata": {
+        "comment": "Header selector, manual curl only (see toss-confirm-reject-4xx-by-header)."
+      },
+      "request": {
+        "method": "POST",
+        "urlPath": "/v1/payments/confirm",
+        "headers": { "X-Loadtest-Fault": { "equalTo": "error" } }
+      },
+      "response": {
+        "status": 500,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "code": "INTERNAL_SERVER_ERROR",
+          "message": "loadtest: 내부 서버 오류"
+        }
+      }
+    }
+  ]
+}
