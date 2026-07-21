@@ -1,6 +1,7 @@
 package com.openat.recommendation.infrastructure.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -16,6 +17,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 class SearchRecommendClientTest {
 
@@ -68,6 +70,55 @@ class SearchRecommendClientTest {
               assertThat(product.description()).isEqualTo("설명");
               assertThat(product.imgDescription()).isEqualTo("이미지 설명");
             });
+    server.verify();
+  }
+
+  @Test
+  @DisplayName("이미지 설명 필드가 없는 유사 상품 응답은 이미지 설명을 null로 역직렬화한다")
+  void recommend_withoutImgDescription_deserializesImgDescriptionAsNull() {
+    UUID resultId = UUID.randomUUID();
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/searchs/recommand"))
+        .andRespond(
+            withSuccess(
+                """
+                        [{"id":"%s","name":"상품","description":"설명"}]
+                        """
+                    .formatted(resultId),
+                MediaType.APPLICATION_JSON));
+
+    var result = client.recommend(List.of(new Seed(UUID.randomUUID(), 0.5, false)));
+
+    assertThat(result)
+        .singleElement()
+        .satisfies(product -> assertThat(product.imgDescription()).isNull());
+    server.verify();
+  }
+
+  @Test
+  @DisplayName("유사 상품 조회 응답이 빈 JSON 배열이면 빈 목록을 반환한다")
+  void recommend_withEmptyJsonArray_returnsEmptyList() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/searchs/recommand"))
+        .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+    var result = client.recommend(List.of(new Seed(UUID.randomUUID(), 0.5, false)));
+
+    assertThat(result).isEmpty();
+    server.verify();
+  }
+
+  @Test
+  @DisplayName("유사 상품 조회 응답 본문이 비어 있으면 예외를 던진다")
+  void recommend_withEmptyResponseBody_throwsRestClientException() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/searchs/recommand"))
+        .andRespond(withSuccess());
+
+    assertThatThrownBy(
+            () -> client.recommend(List.of(new Seed(UUID.randomUUID(), 0.5, false))))
+        .isInstanceOf(RestClientException.class)
+        .hasMessage("Search recommendation response body is empty");
     server.verify();
   }
 }
