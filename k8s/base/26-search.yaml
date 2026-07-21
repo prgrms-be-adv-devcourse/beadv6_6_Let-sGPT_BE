@@ -9,6 +9,10 @@ metadata:
     # k3s_node_coldboot_contention_plan §2-C — 순차 롤아웃(wave 낮은 순). final 노드 배치라
     # semi(hotpath)의 콜드부트 경합과는 무관하나 일관성을 위해 wave 부여.
     argocd.argoproj.io/sync-wave: "7"
+    # 라이브 Deployment에 kubectl-client-side-apply 소유의 serviceAccountName(search-sa 참조)이
+    # 잔존해 SSA가 못 지우고 ReplicaSet FailedCreate(SA 삭제됨)로 파드 생성이 막혔음(7/21 실측).
+    # Replace 동기화로 객체를 통째로 갈아 낡은 필드를 제거한다. 드리프트 해소 확인 후 제거 가능.
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   replicas: 1
   strategy:
@@ -68,8 +72,10 @@ spec:
           resources:
             # k3s_memory_mitigation_plan §9-7 — final 노드 limit 재분배(ES/Collector 신규분 확보).
             # ES가 벡터를 들고 있고 search는 쿼리당 임베딩 1개(6KB)만 다뤄 축소 여유 있음.
-            limits: { memory: "650Mi" }
-            requests: { cpu: "100m", memory: "460Mi" }
+            # 7/21 실측 재조정: 압박기 SIGTERM 반복으로 기동 실패 → final 노드 여유 확보 위해 하향.
+            # 힙 = limit×60% = 307m. 실측 사용량 기준 여유 확인 후 적용.
+            limits: { memory: "512Mi" }
+            requests: { cpu: "100m", memory: "380Mi" }
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }
