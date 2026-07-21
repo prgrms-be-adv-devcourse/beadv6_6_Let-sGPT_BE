@@ -4,6 +4,7 @@ import com.openat.product.presentation.dto.ImagePresignRequest;
 import com.openat.product.presentation.dto.ImagePresignResponse;
 import com.openat.support.docs.ApiErrorResponses;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.headers.Header;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
@@ -19,8 +20,13 @@ public interface ProductImageApiSpec {
   @ApiErrorResponses
   ResponseEntity<ImagePresignResponse> presign(ImagePresignRequest request);
 
-  @Operation(summary = "상품 이미지 조회", description = "키로 저장된 이미지 바이트를 반환한다.")
-  @ApiResponse(responseCode = "200", description = "조회 성공")
+  @Operation(
+      summary = "상품 이미지 조회",
+      description = "키에 해당하는 presigned GET URL로 리다이렉트한다. 이미지 바이트는 스토리지가 직접 응답한다.")
+  @ApiResponse(
+      responseCode = "302",
+      description = "presigned GET URL로 리다이렉트",
+      headers = @Header(name = "Location", description = "이미지 presigned GET URL"))
   @ApiErrorResponses
-  ResponseEntity<byte[]> getImage(String key);
+  ResponseEntity<Void> getImage(String key);
 }
