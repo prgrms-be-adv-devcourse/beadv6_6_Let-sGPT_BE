@@ -1,0 +1,74 @@
+{
+  "mappings": [
+    {
+      "name": "toss-cancel-reject-4xx",
+      "priority": 1,
+      "metadata": {
+        "comment": "Opt-in fault: pgPaymentKey starting with LTFAIL4XX -> 4xx, backend maps to TossRefundResult.failed."
+      },
+      "request": {
+        "method": "POST",
+        "urlPathPattern": "/v1/payments/LTFAIL4XX[^/]*/cancel"
+      },
+      "response": {
+        "status": 400,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "code": "ALREADY_CANCELED_PAYMENT",
+          "message": "loadtest: 이미 취소된 결제입니다."
+        }
+      }
+    },
+    {
+      "name": "toss-cancel-error-5xx",
+      "priority": 1,
+      "metadata": {
+        "comment": "Opt-in fault: pgPaymentKey starting with LTFAIL5XX -> 5xx, backend maps to TossRefundResult.unknown (stays PENDING for the webhook)."
+      },
+      "request": {
+        "method": "POST",
+        "urlPathPattern": "/v1/payments/LTFAIL5XX[^/]*/cancel"
+      },
+      "response": {
+        "status": 500,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "code": "INTERNAL_SERVER_ERROR",
+          "message": "loadtest: 내부 서버 오류"
+        }
+      }
+    },
+    {
+      "name": "toss-cancel-happy",
+      "priority": 10,
+      "metadata": {
+        "comment": "POST /v1/payments/{paymentKey}/cancel — req {cancelReason, cancelAmount} + Idempotency-Key header. Backend reads only lastTransactionKey."
+      },
+      "request": {
+        "method": "POST",
+        "urlPathPattern": "/v1/payments/[^/]+/cancel"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "transformers": ["response-template"],
+        "delayDistribution": { "type": "lognormal", "median": 300, "sigma": 0.35 },
+        "jsonBody": {
+          "mId": "loadtest_mid",
+          "paymentKey": "{{request.pathSegments.[2]}}",
+          "status": "CANCELED",
+          "lastTransactionKey": "wiremock_cancel_{{request.pathSegments.[2]}}",
+          "cancels": [
+            {
+              "transactionKey": "wiremock_cancel_{{request.pathSegments.[2]}}",
+              "cancelStatus": "DONE",
+              "cancelReason": "{{jsonPath request.body '$.cancelReason'}}",
+              "cancelAmount": "{{jsonPath request.body '$.cancelAmount'}}",
+              "canceledAt": "{{now}}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
