@@ -18,6 +18,10 @@ rules:
   - apiGroups: [""]
     resources: [nodes, services, endpoints, pods]
     verbs: [get, list, watch]
+  # kubelet 내장 cAdvisor(/metrics/cadvisor) 프록시 스크레이프용
+  - apiGroups: [""]
+    resources: [nodes/metrics]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -49,7 +53,7 @@ data:
       prometheus:
         config:
           global:
-            scrape_interval: 15s
+            scrape_interval: 30s        # gate2 A-1: 수신량·staleness 메모리 절반 (인프라 대시보드 30s 해상도 충분)
           scrape_configs:
             - job_name: kubernetes-pods
               kubernetes_sd_configs:
@@ -71,11 +75,35 @@ data:
                   target_label: namespace
                 - source_labels: [__meta_kubernetes_pod_label_app]
                   target_label: app
+            # k3s kubelet 내장 cAdvisor — 별도 파드 없이 컨테이너별 메모리/CPU 확보.
+            # Prometheus 288Mi 보호를 위해 keep 필터로 시리즈 최소화.
+            - job_name: kubernetes-cadvisor
+              scheme: https
+              tls_config:
+                insecure_skip_verify: true
+              authorization:
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              kubernetes_sd_configs:
+                - role: node
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_node_name]
+                  target_label: node
+                - target_label: __metrics_path__
+                  replacement: /metrics/cadvisor
+              metric_relabel_configs:
+                # 카디널리티 방어 — 필요한 시리즈만 keep
+                - source_labels: [__name__]
+                  regex: container_memory_working_set_bytes|container_cpu_usage_seconds_total|container_spec_memory_limit_bytes|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total|machine_memory_bytes
+                  action: keep
+                # 파드 아닌 cgroup 중간노드(빈 pod 라벨) 제거. 단 machine_*는 pod 라벨이 없으므로 예외 통과.
+                - source_labels: [__name__, pod]
+                  regex: "machine_.*;|[^;]*;.+"
+                  action: keep
     processors:
       memory_limiter:
         check_interval: 1s
-        limit_mib: 180        # resources.limits.memory(224Mi)보다 낮게 — OOMKill 전에 스스로 드롭
-        spike_limit_mib: 40
+        limit_mib: 256        # gate2 A-1: resources.limits.memory(320Mi)−64Mi(Go 비힙 쿠션). OOMKill 전 스스로 드롭
+        spike_limit_mib: 48   # soft=208, hard=256
       batch:
         timeout: 5s
         send_batch_size: 1024
@@ -137,15 +165,16 @@ spec:
             - { containerPort: 4318 }
           readinessProbe:
             httpGet: { path: /, port: 13133 }
+            timeoutSeconds: 5         # gate2 A-1 핵심: GC 쓰래싱 중 1s 기본 타임아웃 false-negative → 0/1 방지
             periodSeconds: 10
             failureThreshold: 12
           resources:
-            # k3s_memory_mitigation_plan §9-7 final 재분배표 기준.
-            # WS-F(7-14-stateless_helm_migration_plan.md §8.2) — 메트릭 스크레이프 부하 추가로
-            # 재산정 필요하나, final 노드 limit 합계가 이미 물리 4096Mi 대비 ~99%(§9-9)라
-            # 배포 후 실측(메모리 사용량·재시작 카운트) 없이 선제 상향은 보류. 실측 후 조정 대상.
-            limits: { memory: "224Mi", cpu: "200m" }
-            requests: { cpu: "50m", memory: "80Mi" }
+            # k3s_memory_mitigation_plan §9-7 기준 → gate2 라이트사이징 A-1(2026-07-16)로 상향 조정.
+            # 근거: limit 224Mi에서 memory_limiter GC 쓰래싱 → healthcheck(:13133) 1s 타임아웃 → 0/1 NotReady,
+            # prometheusremotewrite context deadline로 1207 items drop. scrape 15→30s로 수신량 절반 + limit/limiter 상향정렬.
+            # 상세: personal_workplan/plan/gate2_resource_rightsizing_plan.md §A-1(옵션 A). final 여유 1600m/실사용69%로 흡수.
+            limits: { memory: "320Mi", cpu: "300m" }
+            requests: { cpu: "75m", memory: "192Mi" }
           volumeMounts:
             - { name: otel-config, mountPath: /etc/otel }
       volumes:

@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
+# 상호 참조: 라이브 클러스터 재작업 시 이 스크립트(bootstrap), 콜드 리빌드 시 ssm-k3s-postboot.sh 사용.
 # k3s 2노드 클러스터 부트스트랩 (terraform apply 완료 후, 로컬에서 1회 실행)
 # 전제: aws cli + terraform output 접근 가능, SSM send-command 권한.
-# 절차 = k3s_2node_cluster_plan.md §2~§6 (서버 설치 → 에이전트 조인 → taint → helm →
-#        ArgoCD 설치 + Application 등록). Secret 생성(§4-3)은 마지막에 안내만 출력(값 필요).
+# 절차 = k3s_2node_cluster_plan.md §2~§6 (apiserver OIDC 인자 → 서버 설치 → JWKS 미러 게시 →
+#        에이전트 조인 → taint → helm → ArgoCD 설치 + Application 등록).
+#        Secret 생성(§4-3)은 마지막에 안내만 출력(값 필요).
+# 2026-07-17: S3 이미지 접근용 OIDC(7-16-s3_presigned_oidc_plan §3-1) 편입. 이전엔 수동
+#        런북이라 노드를 재생성하면 설정이 사라지고 product/search가 토큰 볼륨을 못 받아
+#        기동하지 못했다. 버킷/IAM provider가 선행이므로 terraform apply 후에 실행할 것.
 # 2026-07-09: 앱 매니페스트(k8s/) 배포 경로를 S3 스냅샷(ops/k8s/) apply에서 ArgoCD auto-sync로
 #        전환(argocd_ci_smoke_plan WS-B-3) — 콜드부트 후에는 ArgoCD가 deploy/state에서 직접
 #        수렴한다. ops/k8s/ 스냅샷은 이 스크립트가 더 이상 안 씀(과거 산출물, qna Q87-1).
@@ -14,6 +19,10 @@ SEMI_ID=$(terraform output -json instance_ids | python3 -c "import sys,json;prin
 FINAL_ID=$(terraform output -json instance_ids | python3 -c "import sys,json;print(json.load(sys.stdin)['final'])")
 SEMI_PRIV=$(terraform output -json instance_private_ips | python3 -c "import sys,json;print(json.load(sys.stdin)['semi'])")
 BUCKET=$(terraform output -raw s3_bucket_name)
+# S3 이미지 접근용 OIDC(§1-1/§1-2). terraform apply가 선행되어야 한다 — 버킷과 IAM
+# OIDC provider가 이미 있어야 issuer URL이 확정되고, 그 URL을 k3s 설치 전에 박아야 한다.
+OIDC_ISSUER=$(terraform output -raw k3s_oidc_issuer_url)
+JWKS_BUCKET=$(terraform output -raw oidc_jwks_bucket_name)
 cd ..
 
 run_ssm() { # $1=instance-id $2=comment $3...=commands(json array 문자열)
@@ -53,6 +62,25 @@ ZRAM_CMDS='[
 echo "== 0. zram 스왑 (semi) =="
 run_ssm "$SEMI_ID" "zram-swap-semi" "$ZRAM_CMDS"
 
+echo "== 0-1. apiserver OIDC 인자 (k3s 설치 전에 넣어야 최초 기동부터 반영) =="
+# systemd ExecStart를 직접 고치지 않고 config.yaml에 쓰는 이유: 설치 스크립트가 §1의
+# --kubelet-arg 튜닝을 ExecStart에 박기 때문에 그쪽을 건드리면 서로 덮어쓴다. k3s는 기동 시
+# 이 파일을 병합해 읽으므로 둘이 공존한다.
+# service-account-issuer는 첫 항목이 primary다 — 첫 줄이 신규 토큰 서명에 쓰이고 discovery의
+# issuer로 광고되며, 나머지는 검증 전용이다. S3 URL이 첫 줄이어야 STS가 토큰을 받아준다.
+# api-audiences는 기본값을 대체하므로 클러스터 기본 audience를 함께 나열해야 한다.
+run_ssm "$SEMI_ID" "k3s-oidc-config" "[
+  \"set -eu\",
+  \"sudo mkdir -p /etc/rancher/k3s\",
+  \"sudo tee /etc/rancher/k3s/config.yaml >/dev/null <<'YAML'\",
+  \"kube-apiserver-arg:\",
+  \"  - 'service-account-issuer=$OIDC_ISSUER'\",
+  \"  - 'service-account-issuer=https://kubernetes.default.svc.cluster.local'\",
+  \"  - 'api-audiences=https://kubernetes.default.svc.cluster.local,k3s,sts.amazonaws.com'\",
+  \"YAML\",
+  \"sudo cat /etc/rancher/k3s/config.yaml\"
+]"
+
 echo "== 1. k3s server 설치 (semi/t3.large, tier=hotpath) =="
 # --kubelet-arg system-reserved/kube-reserved: 콜드부트 시 앱 파드가 CPU를 굶겨도
 # kubelet/containerd/apiserver(kine 포함, 전부 같은 프로세스·같은 2vCPU) 몫은 항상 보장한다.
@@ -66,6 +94,54 @@ run_ssm "$SEMI_ID" "k3s-server-install" '[
   "curl -sfL https://get.k3s.io | sh -s - server --secrets-encryption --write-kubeconfig-mode 644 --node-label tier=hotpath --kubelet-arg=\"system-reserved=cpu=300m,memory=256Mi\" --kubelet-arg=\"kube-reserved=cpu=300m,memory=256Mi\" --kubelet-arg=\"eviction-hard=memory.available<400Mi\" --kubelet-arg=\"eviction-soft=memory.available<600Mi\" --kubelet-arg=\"eviction-soft-grace-period=memory.available=60s\" --kubelet-arg=\"eviction-max-pod-grace-period=30\"",
   "sudo k3s kubectl get nodes"
 ]'
+
+echo "== 1-1. OIDC discovery/JWKS 미러를 S3에 게시 =="
+# apiserver는 discovery의 jwks_uri를 내부 advertise 주소(https://<private-ip>:6443/...)로
+# 내보내는데 STS는 거기에 닿을 수 없다. 그래서 미러본에서 jwks_uri만 S3 URL로 바꿔 올린다.
+# 업로드는 이 스크립트를 돌리는 사람의 자격증명(terraform/CI급)으로 한다 — 워크로드 Role에는
+# 이 버킷 쓰기 권한이 없고 있어서도 안 된다(공개 키 변조 = 클러스터 신원 위조).
+OIDC_CMD=$(aws ssm send-command --region "$REGION" --instance-ids "$SEMI_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["sudo k3s kubectl get --raw /.well-known/openid-configuration","echo ---JWKS---","sudo k3s kubectl get --raw /openid/v1/jwks"]}' \
+  --query 'Command.CommandId' --output text)
+aws ssm wait command-executed --region "$REGION" --command-id "$OIDC_CMD" --instance-id "$SEMI_ID"
+OIDC_RAW=$(aws ssm get-command-invocation --region "$REGION" --command-id "$OIDC_CMD" --instance-id "$SEMI_ID" --query StandardOutputContent --output text)
+
+OIDC_TMP=$(mktemp -d /tmp/oidc.XXXXXX)
+OIDC_RAW="$OIDC_RAW" OIDC_ISSUER="$OIDC_ISSUER" OIDC_TMP="$OIDC_TMP" python3 <<'PY'
+import json, os
+
+raw = os.environ["OIDC_RAW"]
+issuer = os.environ["OIDC_ISSUER"]
+out = os.environ["OIDC_TMP"]
+
+disc_raw, jwks_raw = raw.split("---JWKS---")
+disc = json.loads(disc_raw)
+jwks = json.loads(jwks_raw)
+
+# 게이트: k3s가 자기 기본 issuer를 첫 항목으로 끼워넣어 primary를 가져가면 STS provider URL과
+# 어긋나 전부 무너진다. 조용히 잘못된 걸 올리느니 여기서 멈춘다.
+assert disc["issuer"] == issuer, "issuer 불일치: %s != %s" % (disc["issuer"], issuer)
+assert jwks.get("keys"), "JWKS에 키가 없음"
+
+disc["jwks_uri"] = issuer + "/openid/v1/jwks"
+
+with open(os.path.join(out, "openid-configuration"), "w") as f:
+    json.dump(disc, f)
+with open(os.path.join(out, "jwks"), "w") as f:
+    json.dump(jwks, f)
+PY
+
+aws s3 cp "$OIDC_TMP/openid-configuration" "s3://$JWKS_BUCKET/.well-known/openid-configuration" \
+  --region "$REGION" --content-type application/json
+aws s3 cp "$OIDC_TMP/jwks" "s3://$JWKS_BUCKET/openid/v1/jwks" \
+  --region "$REGION" --content-type application/json
+rm -rf "$OIDC_TMP"
+
+# STS가 실제로 읽는 경로 그대로 익명 조회해 본다. 여기서 막히면 파드가 자격증명을 못 잡는다.
+curl -sf "$OIDC_ISSUER/.well-known/openid-configuration" >/dev/null || { echo "FAIL: discovery 익명 조회 실패 — 버킷 정책 확인" >&2; exit 1; }
+curl -sf "$OIDC_ISSUER/openid/v1/jwks" >/dev/null || { echo "FAIL: JWKS 익명 조회 실패 — 버킷 정책 확인" >&2; exit 1; }
+echo "--- OIDC 미러 게시 완료: $OIDC_ISSUER"
 
 echo "== 2. 조인 토큰 획득 =="
 TOKEN_CMD=$(aws ssm send-command --region "$REGION" --instance-ids "$SEMI_ID" \

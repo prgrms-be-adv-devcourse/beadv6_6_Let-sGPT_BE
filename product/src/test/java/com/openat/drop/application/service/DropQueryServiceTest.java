@@ -118,7 +118,7 @@ class DropQueryServiceTest {
   }
 
   @Test
-  @DisplayName("드롭 스냅샷은 productId·sellerId·드롭가를 반환한다")
+  @DisplayName("드롭 스냅샷은 productId·상품명·sellerId·드롭가를 반환한다")
   void getDropSnapshot_returnsProductSellerAndPrice() {
     // given
     UUID dropId = UUID.randomUUID();
@@ -132,6 +132,7 @@ class DropQueryServiceTest {
 
     // then
     assertThat(snapshot.productId()).isEqualTo(productId);
+    assertThat(snapshot.productName()).isEqualTo("기본 굿즈");
     assertThat(snapshot.sellerId()).isEqualTo(sellerId);
     assertThat(snapshot.unitPrice()).isEqualTo(219_000L);
   }

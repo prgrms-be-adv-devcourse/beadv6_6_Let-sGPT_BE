@@ -9,6 +9,8 @@ public interface OutboxEventJpaRepository extends JpaRepository<OutboxEventJpaEn
 
     List<OutboxEventJpaEntity> findByStatusOrderByCreatedAtAsc(OutboxEventJpaEntity.Status status);
 
+    long countByStatus(OutboxEventJpaEntity.Status status);
+
     // 미발행 알림(A8/§9 정식화) — PENDING 상태로 N분 넘게 남아있는 row 탐지용.
     List<OutboxEventJpaEntity> findByStatusAndCreatedAtBefore(OutboxEventJpaEntity.Status status,
             LocalDateTime threshold);

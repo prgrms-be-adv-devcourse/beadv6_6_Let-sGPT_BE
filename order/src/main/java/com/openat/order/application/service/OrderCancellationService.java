@@ -2,97 +2,107 @@ package com.openat.order.application.service;
 
 import com.openat.common.exception.BusinessException;
 import com.openat.order.application.dto.OrderCancelInfo;
+import com.openat.order.application.dto.PaymentRefundResult;
 import com.openat.order.application.dto.StockRestoreCommand;
+import com.openat.order.application.port.PaymentPendingException;
+import com.openat.order.application.port.PaymentRefundPort;
+import com.openat.order.application.port.PaymentRefundPortException;
 import com.openat.order.application.port.ProductIntegrationPort;
 import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderStatus;
 import com.openat.order.domain.repository.OrderRepository;
-import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @RequiredArgsConstructor
 public class OrderCancellationService {
 
-    private final OrderRepository orderRepository;
-    private final OrderHistoryRecorder orderHistoryRecorder;
-    private final ProductIntegrationPort productIntegrationPort;
-    private final OrderSagaRecorder orderSagaRecorder;
-    private final OrderCompensationFailureRecorder compensationFailureRecorder;
+  private static final String AUTOMATIC_REFUND_KEY_PREFIX = "refund-order-";
 
-    @Transactional
-    public OrderCancelInfo cancel(UUID memberId, UUID orderId) {
-        Order order = getOwnedOrder(memberId, orderId);
-        OrderStatus previousStatus = order.getStatus();
-        Instant requestedAt = Instant.now();
+  private final OrderRepository orderRepository;
+  private final OrderCancellationTransitionService transitionService;
+  private final PaymentRefundPort paymentRefundPort;
+  private final ProductIntegrationPort productIntegrationPort;
+  private final OrderSagaRecorder orderSagaRecorder;
+  private final OrderCompensationFailureRecorder compensationFailureRecorder;
 
-        if (previousStatus == OrderStatus.PAYMENT_PENDING) {
-            cancelPaymentPendingOrder(order, previousStatus, requestedAt);
-        } else if (previousStatus == OrderStatus.COMPLETED) {
-            requestRefund(order, previousStatus, requestedAt);
-        } else {
-            throw new BusinessException(OrderErrorCode.INVALID_STATUS);
-        }
-
-        return OrderCancelInfo.from(order);
+  public OrderCancelInfo cancel(UUID memberId, UUID orderId) {
+    Order order = getOwnedOrder(memberId, orderId);
+    if (order.getStatus() == OrderStatus.COMPLETED) {
+      throw new BusinessException(OrderErrorCode.ALREADY_COMPLETED);
+    }
+    if (order.getStatus() != OrderStatus.PAYMENT_PENDING) {
+      throw new BusinessException(OrderErrorCode.INVALID_STATUS);
     }
 
-    private void cancelPaymentPendingOrder(Order order, OrderStatus previousStatus, Instant requestedAt) {
-        if (!order.cancelPending(requestedAt)) {
-            throw new BusinessException(OrderErrorCode.INVALID_STATUS);
-        }
-        orderHistoryRecorder.record(
-                order, previousStatus, "ORDER_CANCELLED", "결제 대기 주문 취소", "cancel-" + order.getId());
-        orderSagaRecorder.recordCompensating(order.getId());
-        restoreStockAfterCommit(order);
+    PaymentRefundResult result;
+    try {
+      result = paymentRefundPort.requestRefund(orderId, automaticRefundKey(orderId));
+    } catch (PaymentPendingException exception) {
+      throw new BusinessException(OrderErrorCode.PAYMENT_IN_PROGRESS);
+    } catch (PaymentRefundPortException exception) {
+      return cancelAndRestoreStock(memberId, order, "환불 API 무응답으로 결제 전 낙관 확정");
     }
 
-    private void requestRefund(Order order, OrderStatus previousStatus, Instant requestedAt) {
-        if (!order.requestRefund(requestedAt)) {
-            throw new BusinessException(OrderErrorCode.INVALID_STATUS);
-        }
-        orderHistoryRecorder.record(
-                order, previousStatus, "ORDER_CANCEL_REQUESTED", "취소 요청 등록", "cancel-" + order.getId());
+    if (result == PaymentRefundResult.REFUND_ACCEPTED) {
+      return transitionService.requestRefund(memberId, orderId, "cancel-refund-accepted-", false);
+    }
+    return cancelAndRestoreStock(memberId, order, "결제 전 주문 취소");
+  }
+
+  public OrderCancelInfo requestRefund(UUID memberId, UUID orderId) {
+    Order order = getOwnedOrder(memberId, orderId);
+    if (order.getStatus() != OrderStatus.COMPLETED) {
+      throw new BusinessException(OrderErrorCode.INVALID_STATUS);
     }
 
-    private Order getOwnedOrder(UUID memberId, UUID orderId) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
-        if (!order.isOwnedBy(memberId)) {
-            throw new BusinessException(OrderErrorCode.NOT_OWNER);
-        }
-        return order;
+    OrderCancelInfo result =
+        transitionService.requestRefund(memberId, orderId, "refund-request-", true);
+    try {
+      PaymentRefundResult refundResult =
+          paymentRefundPort.requestRefund(orderId, automaticRefundKey(orderId));
+      if (refundResult == PaymentRefundResult.REFUND_ACCEPTED) {
+        transitionService.clearRefundRequestFailure(orderId);
+      } else {
+        compensationFailureRecorder.recordRefundRequestFailure(
+            orderId, "Completed order was not accepted by payment refund API");
+      }
+    } catch (PaymentRefundPortException exception) {
+      compensationFailureRecorder.recordRefundRequestFailure(orderId, exception.getMessage());
     }
+    return result;
+  }
 
-    private void restoreStockAfterCommit(Order order) {
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            restoreStock(order);
-            return;
-        }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                restoreStock(order);
-            }
-        });
+  private OrderCancelInfo cancelAndRestoreStock(UUID memberId, Order order, String reasonMessage) {
+    OrderCancelInfo result =
+        transitionService.cancelPaymentPending(memberId, order.getId(), reasonMessage);
+    try {
+      productIntegrationPort.restoreStock(
+          order.getDropId(),
+          new StockRestoreCommand(order.getId(), order.getMemberId(), order.getQuantity()));
+      orderSagaRecorder.recordCompensationCompleted(order.getId());
+    } catch (ProductPortException exception) {
+      compensationFailureRecorder.recordStockRollbackFailure(order.getId(), exception.getMessage());
     }
+    return result;
+  }
 
-    private void restoreStock(Order order) {
-        try {
-            productIntegrationPort.restoreStock(
-                    order.getDropId(),
-                    new StockRestoreCommand(order.getId(), order.getMemberId(), order.getQuantity()));
-        } catch (ProductPortException exception) {
-            compensationFailureRecorder.recordStockRollbackFailure(order.getId(), exception.getMessage());
-            return;
-        }
-        orderSagaRecorder.recordCompensationCompleted(order.getId());
+  private Order getOwnedOrder(UUID memberId, UUID orderId) {
+    Order order =
+        orderRepository
+            .findById(orderId)
+            .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
+    if (!order.isOwnedBy(memberId)) {
+      throw new BusinessException(OrderErrorCode.NOT_OWNER);
     }
+    return order;
+  }
+
+  static String automaticRefundKey(UUID orderId) {
+    return AUTOMATIC_REFUND_KEY_PREFIX + orderId;
+  }
 }

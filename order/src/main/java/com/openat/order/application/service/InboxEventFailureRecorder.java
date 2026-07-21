@@ -18,65 +18,65 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class InboxEventFailureRecorder {
 
-    private static final Set<String> FINANCIAL_IMPACT_EVENT_TYPES = Set.of(
-            "payment.completed",
-            "refund.completed",
-            "refund.failed"
-    );
+  private static final Set<String> FINANCIAL_IMPACT_EVENT_TYPES =
+      Set.of("payment.completed", "refund.completed", "refund.failed");
 
-    private final InboxEventRepository inboxEventRepository;
-    private final OrderRepository orderRepository;
-    private final OrderHistoryRecorder orderHistoryRecorder;
+  private final InboxEventRepository inboxEventRepository;
+  private final OrderRepository orderRepository;
+  private final OrderHistoryRecorder orderHistoryRecorder;
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public boolean record(
-            String eventId,
-            String eventType,
-            String payload,
-            UUID orderId,
-            RuntimeException exception,
-            boolean businessDecisionFailure
-    ) {
-        InboxEvent inboxEvent = findOrCreate(eventId, eventType, payload);
-        if (inboxEvent.getStatus() == InboxEventStatus.PROCESSED) {
-            return true;
-        }
-        inboxEvent.markFailed(exception.getMessage());
-
-        if (businessDecisionFailure && orderId != null) {
-            orderRepository.findById(orderId).ifPresent(order -> recordRejectedEvent(order, eventId, exception));
-        }
-        if (businessDecisionFailure && FINANCIAL_IMPACT_EVENT_TYPES.contains(eventType) && orderId != null) {
-            log.error(
-                    "Business event sent to DLQ. financialImpact=true, eventId={}, orderId={}, eventType={}",
-                    eventId,
-                    orderId,
-                    eventType,
-                    exception);
-        }
-        return false;
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public boolean record(
+      String eventId,
+      String eventType,
+      String payload,
+      UUID orderId,
+      RuntimeException exception,
+      boolean businessDecisionFailure) {
+    InboxEvent inboxEvent = findOrCreate(eventId, eventType, payload);
+    if (inboxEvent.getStatus() == InboxEventStatus.PROCESSED) {
+      return true;
     }
+    inboxEvent.markFailed(exception.getMessage());
 
-    private InboxEvent findOrCreate(String eventId, String eventType, String payload) {
-        return inboxEventRepository.findByEventId(eventId)
-                .orElseGet(() -> create(eventId, eventType, payload));
+    if (businessDecisionFailure && orderId != null) {
+      orderRepository
+          .findById(orderId)
+          .ifPresent(order -> recordRejectedEvent(order, eventId, exception));
     }
+    if (businessDecisionFailure
+        && FINANCIAL_IMPACT_EVENT_TYPES.contains(eventType)
+        && orderId != null) {
+      log.error(
+          "Business event sent to DLQ. financialImpact=true, eventId={}, orderId={}, eventType={}",
+          eventId,
+          orderId,
+          eventType,
+          exception);
+    } else {
+      log.warn(
+          "Business event sent to DLQ. financialImpact=false, eventId={}, orderId={}, eventType={}",
+          eventId,
+          orderId,
+          eventType,
+          exception);
+    }
+    return false;
+  }
 
-    private InboxEvent create(String eventId, String eventType, String payload) {
-        return inboxEventRepository.saveAndFlush(
-                InboxEvent.receive()
-                        .eventId(eventId)
-                        .eventType(eventType)
-                        .payload(payload)
-                        .build());
-    }
+  private InboxEvent findOrCreate(String eventId, String eventType, String payload) {
+    return inboxEventRepository
+        .findByEventId(eventId)
+        .orElseGet(() -> create(eventId, eventType, payload));
+  }
 
-    private void recordRejectedEvent(Order order, String eventId, RuntimeException exception) {
-        orderHistoryRecorder.record(
-                order,
-                order.getStatus(),
-                "EVENT_PROCESSING_REJECTED",
-                exception.getMessage(),
-                eventId);
-    }
+  private InboxEvent create(String eventId, String eventType, String payload) {
+    return inboxEventRepository.saveAndFlush(
+        InboxEvent.receive().eventId(eventId).eventType(eventType).payload(payload).build());
+  }
+
+  private void recordRejectedEvent(Order order, String eventId, RuntimeException exception) {
+    orderHistoryRecorder.record(
+        order, order.getStatus(), "EVENT_PROCESSING_REJECTED", exception.getMessage(), eventId);
+  }
 }

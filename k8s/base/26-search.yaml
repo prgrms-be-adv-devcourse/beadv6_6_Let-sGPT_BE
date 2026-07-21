@@ -1,3 +1,12 @@
+# 7-16-s3_presigned_oidc_plan §7-1 — S3 접근용 OIDC(AssumeRoleWithWebIdentity) 주체.
+# 이 SA 이름이 terraform Role 신뢰정책의 sub 조건(system:serviceaccount:openat:search-sa, §3-3)과
+# 정확히 일치해야 STS가 토큰을 받아준다 — 이름 변경 시 terraform도 함께 고칠 것.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: search-sa
+  namespace: openat
+---
 # final 노드(t3.medium, tier=observability) 전용 배치 — Elasticsearch와 동거(지연 최소화),
 # semi(hotpath) 노드는 이미 메모리 여유가 없어(Q84) 여기 배치하면 안 됨.
 apiVersion: apps/v1
@@ -24,6 +33,14 @@ spec:
         prometheus.io/port: "9240"
         prometheus.io/path: "/actuator/prometheus"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      # 7-16-s3_presigned_oidc_plan §7-2/§7-4③ — SA ref + projected 토큰 + AWS env 3종이
+      # 모두 있어야 SDK가 WebIdentity provider를 켠다(하나라도 빠지면 자격증명 자체가 안 잡힘).
+      serviceAccountName: search-sa
       nodeSelector: { tier: observability }
       tolerations:
         - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
@@ -35,15 +52,26 @@ spec:
           ports: [{ containerPort: 9240 }]
           envFrom:
             - configMapRef: { name: app-config }
-            - secretRef: { name: app-secrets }
+            - secretRef: { name: db-secrets }
+            - secretRef: { name: search-secrets }
           env:
             # k3s_memory_mitigation_plan.md §7-5(WS-M5) — ES 프록시(G1, limit 비례 60%).
-            # open-in-view는 application.yaml에 이미 false.
             # MaxMetaspaceSize 캡 제거(qna.md Q116) — 서브리밋 안 걸고 pod limit 하나로 통제.
             - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
             - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: "3" }
+            - { name: SPRING_DATASOURCE_HIKARI_CONNECTIONTIMEOUT, value: "5000" }
+            # 7-16-s3_presigned_oidc_plan §7-2 — AWS OIDC 배선(search는 final 버킷 read-only, §3-4).
+            # AWS_ROLE_ARN은 서비스마다 값이 달라 configmap에 못 넣는다(§7-3) → 여기 Deployment env.
+            # 값 출처: terraform output -raw search_s3_role_arn (aws_iam_role.search_s3).
+            - { name: AWS_ROLE_ARN, value: "arn:aws:iam::823315816237:role/letsGpt-openAt-search-s3" }
+            - { name: AWS_WEB_IDENTITY_TOKEN_FILE, value: "/var/run/secrets/aws/token" }
+            - { name: AWS_REGION, value: "ap-northeast-2" }
+            - { name: AWS_STS_REGIONAL_ENDPOINTS, value: "regional" }
+          volumeMounts:
+            - { name: aws-token, mountPath: /var/run/secrets/aws, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
           startupProbe:
             httpGet: { path: /actuator/health/liveness, port: 9240 }
             periodSeconds: 5
@@ -62,6 +90,18 @@ spec:
             # ES가 벡터를 들고 있고 search는 쿼리당 임베딩 1개(6KB)만 다뤄 축소 여유 있음.
             limits: { memory: "650Mi" }
             requests: { cpu: "100m", memory: "460Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        # 기본 SA 토큰(audience=k8s api)이 아니라 STS 전용 audience 토큰을 별도 발급받는다.
+        - name: aws-token
+          projected:
+            sources:
+              - serviceAccountToken: { audience: "sts.amazonaws.com", expirationSeconds: 3600, path: token }
 ---
 apiVersion: v1
 kind: Service

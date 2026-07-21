@@ -6,16 +6,14 @@ import com.openat.payment.application.client.OrderValidationResult;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
-// X-3 — GET /internal/v1/orders/{orderId} 실연동. 서킷브레이커는 파이널로.
+// X-3 — GET /internal/v1/orders/{orderId} 실연동. OrderValidationClient의 유일한 구현체.
 @Slf4j
 @Component
-@Profile("real")
 public class RealOrderValidationClient implements OrderValidationClient {
 
     private final RestClient orderRestClient;

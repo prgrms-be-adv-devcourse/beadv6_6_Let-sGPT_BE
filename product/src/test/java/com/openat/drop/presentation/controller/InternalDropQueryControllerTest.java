@@ -32,20 +32,21 @@ class InternalDropQueryControllerTest {
   @MockitoBean private DropQueryUseCase dropQueryUseCase;
 
   @Test
-  @DisplayName("드롭 스냅샷 조회는 200과 productId·sellerId·unitPrice를 반환한다 (/internal 경로)")
+  @DisplayName("드롭 스냅샷 조회는 200과 productId·productName·sellerId·unitPrice를 반환한다 (/internal 경로)")
   void getDropSnapshot_success_returns200() throws Exception {
     // given
     UUID dropId = UUID.randomUUID();
     UUID productId = UUID.randomUUID();
     UUID sellerId = UUID.randomUUID();
     given(dropQueryUseCase.getDropSnapshot(dropId))
-        .willReturn(new DropSnapshotInfo(productId, sellerId, 219_000L));
+        .willReturn(new DropSnapshotInfo(productId, "기본 굿즈", sellerId, 219_000L));
 
     // when & then
     mockMvc
         .perform(get("/internal/drops/{dropId}/order-snapshot", dropId))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.productId").value(productId.toString()))
+        .andExpect(jsonPath("$.productName").value("기본 굿즈"))
         .andExpect(jsonPath("$.sellerId").value(sellerId.toString()))
         .andExpect(jsonPath("$.unitPrice").value(219_000));
   }

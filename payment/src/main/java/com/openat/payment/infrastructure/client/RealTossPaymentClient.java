@@ -6,20 +6,19 @@ import com.openat.payment.application.client.TossPaymentClient;
 import com.openat.payment.application.client.TossPaymentDetail;
 import com.openat.payment.application.client.TossQueryResult;
 import com.openat.payment.application.client.TossRefundResult;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.util.List;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
-// G — 실제 토스페이먼츠 API 연동(plan.md G). TossPaymentClient(포트)는 이미 확정돼 있어
-// 서비스 레이어(PaymentService/WalletChargeService/RefundService/PaymentTtlScanner)는 변경 없음 — 구현체만 교체.
+// G — 실제 토스페이먼츠 API 연동. TossPaymentClient(포트)의 유일한 구현체(스텁은 2026-07-17 제거).
 @Slf4j
 @Component
-@Profile("real")
 public class RealTossPaymentClient implements TossPaymentClient {
 
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
@@ -27,9 +26,12 @@ public class RealTossPaymentClient implements TossPaymentClient {
     private static final String DEFAULT_CANCEL_REASON = "고객 요청에 의한 결제 취소";
 
     private final RestClient tossRestClient;
+    private final MeterRegistry meterRegistry;
 
-    public RealTossPaymentClient(@Qualifier("tossRestClient") RestClient tossRestClient) {
+    public RealTossPaymentClient(@Qualifier("tossRestClient") RestClient tossRestClient,
+            MeterRegistry meterRegistry) {
         this.tossRestClient = tossRestClient;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
@@ -44,21 +46,29 @@ public class RealTossPaymentClient implements TossPaymentClient {
 
     // 결제/충전 confirm은 같은 토스 API(POST /v1/payments/confirm)를 공유 — orderId 필드에 chargeId를 그대로 매핑(G1).
     private TossConfirmResult confirm(String paymentKey, String orderId, Long amount, String idempotencyKey) {
-        return tossRestClient.post()
-                .uri("/v1/payments/confirm")
-                .header(IDEMPOTENCY_KEY_HEADER, idempotencyKey)
-                .body(new ConfirmRequest(paymentKey, orderId, amount))
-                .exchange((request, response) -> {
-                    if (response.getStatusCode().is2xxSuccessful()) {
-                        ConfirmResponse body = response.bodyTo(ConfirmResponse.class);
-                        return TossConfirmResult.approved(body.lastTransactionKey());
-                    }
-                    if (response.getStatusCode().is4xxClientError()) {
-                        return TossConfirmResult.rejected(readErrorMessage(response));
-                    }
-                    // 5xx — 신-하자드9 보정 로직(confirm이 PG호출까지 갔는지 모르는 상태)에 위임, 예외를 그대로 던짐(G2).
-                    throw new IllegalStateException("토스 confirm 실패: status=" + response.getStatusCode());
-                });
+        Timer.Sample sample = Timer.start(meterRegistry);
+        String outcome = "error";
+        try {
+            TossConfirmResult result = tossRestClient.post()
+                    .uri("/v1/payments/confirm")
+                    .header(IDEMPOTENCY_KEY_HEADER, idempotencyKey)
+                    .body(new ConfirmRequest(paymentKey, orderId, amount))
+                    .exchange((request, response) -> {
+                        if (response.getStatusCode().is2xxSuccessful()) {
+                            ConfirmResponse body = response.bodyTo(ConfirmResponse.class);
+                            return TossConfirmResult.approved(body.lastTransactionKey());
+                        }
+                        if (response.getStatusCode().is4xxClientError()) {
+                            return TossConfirmResult.rejected(readErrorMessage(response));
+                        }
+                        // 5xx — 신-하자드9 보정 로직(confirm이 PG호출까지 갔는지 모르는 상태)에 위임, 예외를 그대로 던짐(G2).
+                        throw new IllegalStateException("토스 confirm 실패: status=" + response.getStatusCode());
+                    });
+            outcome = result.approved() ? "approved" : "rejected";
+            return result;
+        } finally {
+            sample.stop(meterRegistry.timer("payment.pg.call", "operation", "confirm", "outcome", outcome));
+        }
     }
 
     @Override

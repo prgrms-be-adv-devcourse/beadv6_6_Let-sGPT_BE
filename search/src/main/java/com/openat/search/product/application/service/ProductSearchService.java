@@ -3,6 +3,8 @@ package com.openat.search.product.application.service;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import com.openat.search.product.application.dto.ProductSearchResult;
 import com.openat.search.product.infrastructure.elasticsearch.ProductDocument;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -52,6 +54,7 @@ public class ProductSearchService {
 
   private final ElasticsearchOperations elasticsearchOperations;
   private final ProductEmbeddingService productEmbeddingService;
+  private final MeterRegistry meterRegistry;
 
   public Page<ProductSearchResult> search(
       String queryText,
@@ -64,6 +67,23 @@ public class ProductSearchService {
   }
 
   public Page<ProductSearchResult> search(
+      String queryText,
+      String categoryName,
+      Long startPrice,
+      Long endPrice,
+      Integer page,
+      Integer size,
+      String sort) {
+    String type = StringUtils.hasText(queryText) ? "vector" : "keyword";
+    Timer.Sample sample = Timer.start(meterRegistry);
+    try {
+      return doSearch(queryText, categoryName, startPrice, endPrice, page, size, sort);
+    } finally {
+      sample.stop(meterRegistry.timer("search.query", "type", type));
+    }
+  }
+
+  private Page<ProductSearchResult> doSearch(
       String queryText,
       String categoryName,
       Long startPrice,

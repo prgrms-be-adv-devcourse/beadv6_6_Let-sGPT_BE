@@ -21,6 +21,14 @@ data:
   MANAGEMENT_TRACING_EXPORT_OTLP_ENABLED: "true"
   MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4318/v1/traces"
   MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
+  # 가상 스레드 베이스라인을 명시값 off로 고정 — 전 서비스 공통 정책. 이후 토글은 이 값 변경만으로 처리.
+  SPRING_THREADS_VIRTUAL_ENABLED: "false"
+  # 7-16-s3_presigned_oidc_plan §7-3 — S3 이미지 저장 비민감 공용값(버킷명·리전).
+  # AWS_ROLE_ARN은 서비스마다 달라 여기 넣지 않는다 — Deployment env(22-product/26-search)에서 직접 주입.
+  # 버킷명은 terraform(images.tf)이 생성한 실명과 일치해야 한다.
+  S3_IMAGES_STAGING_BUCKET: "team02-letsgpt-images-staging"
+  S3_IMAGES_FINAL_BUCKET: "team02-letsgpt-images-final"
+  S3_REGION: "ap-northeast-2"
 ---
 # postgres 최초 기동(빈 PVC) 시 docker-entrypoint-initdb.d로 실행되는 스키마 시드.
 # compose의 ./db/init 바인드마운트를 대체한다. 내용은 db/init/01-schemas.sql과 동일 유지할 것.
@@ -36,3 +44,4 @@ data:
     CREATE SCHEMA IF NOT EXISTS orders;
     CREATE SCHEMA IF NOT EXISTS payment;
     CREATE SCHEMA IF NOT EXISTS settlement;
+    CREATE SCHEMA IF NOT EXISTS ai;

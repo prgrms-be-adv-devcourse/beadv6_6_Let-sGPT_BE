@@ -7,7 +7,6 @@ spring:
     bootstrap-servers: ${KAFKA_BROKER}
 
 pg:
-  client-key: ${PG_CLIENT_KEY}
   secret-key: ${PG_SECRET_KEY}
 
 services:

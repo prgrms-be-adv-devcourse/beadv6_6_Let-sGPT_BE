@@ -7,7 +7,6 @@ import com.openat.payment.application.client.OrderValidationResult;
 import com.openat.payment.application.client.TossConfirmResult;
 import com.openat.payment.application.client.TossPaymentClient;
 import com.openat.payment.application.dto.PayWithWalletCommand;
-import com.openat.payment.application.dto.PaymentCompletedPayload;
 import com.openat.payment.application.dto.PaymentResult;
 import com.openat.payment.application.dto.PgConfirmCommand;
 import com.openat.payment.application.event.DomainEventPublisher;
@@ -15,13 +14,8 @@ import com.openat.payment.application.exception.PaymentErrorCode;
 import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.application.usecase.PaymentUseCase;
 import com.openat.payment.domain.model.Payment;
-import com.openat.payment.domain.model.PaymentEvent;
-import com.openat.payment.domain.model.Wallet;
-import com.openat.payment.domain.model.WalletTransaction;
-import com.openat.payment.domain.repository.PaymentEventRepository;
 import com.openat.payment.domain.repository.PaymentRepository;
-import com.openat.payment.domain.repository.WalletRepository;
-import com.openat.payment.domain.repository.WalletTransactionRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Optional;
@@ -32,52 +26,52 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class PaymentService implements PaymentUseCase {
 
-  private static final String COMPLETED_TOPIC = "payment.completed.events";
   private static final String SETTLEMENT_SOURCE_TOPIC = "payment.settlement.events";
   private static final String SETTLEMENT_EVENT_TYPE = "PaymentSettlementCompleted";
 
   private final PaymentRepository paymentRepository;
-  private final WalletRepository walletRepository;
-  private final WalletTransactionRepository walletTransactionRepository;
-  private final PaymentEventRepository paymentEventRepository;
   private final OrderValidationClient orderValidationClient;
   private final TossPaymentClient tossPaymentClient;
   private final DomainEventPublisher eventPublisher;
   private final PaymentFinalizer paymentFinalizer;
+  private final WalletPaymentApprover walletPaymentApprover;
+  private final MeterRegistry meterRegistry;
 
   public PaymentService(
       PaymentRepository paymentRepository,
-      WalletRepository walletRepository,
-      WalletTransactionRepository walletTransactionRepository,
-      PaymentEventRepository paymentEventRepository,
       OrderValidationClient orderValidationClient,
       TossPaymentClient tossPaymentClient,
       DomainEventPublisher eventPublisher,
-      PaymentFinalizer paymentFinalizer) {
+      PaymentFinalizer paymentFinalizer,
+      WalletPaymentApprover walletPaymentApprover,
+      MeterRegistry meterRegistry) {
     this.paymentRepository = paymentRepository;
-    this.walletRepository = walletRepository;
-    this.walletTransactionRepository = walletTransactionRepository;
-    this.paymentEventRepository = paymentEventRepository;
     this.orderValidationClient = orderValidationClient;
     this.tossPaymentClient = tossPaymentClient;
     this.eventPublisher = eventPublisher;
     this.paymentFinalizer = paymentFinalizer;
+    this.walletPaymentApprover = walletPaymentApprover;
+    this.meterRegistry = meterRegistry;
   }
 
+  // confirmPg와 동일한 TX 분리 원칙(D5) — 메서드에 @Transactional을 걸지 않는다. 걸면 [2]의 Order 검증
+  // HTTP 왕복 내내 DB 커넥션을 점유한다(pool=2에서 즉시 고갈, osiv_throughput_analysis §2-3 [E]).
+  // [TX 밖] 멱등 조회 -> [TX 밖] Order 검증 HTTP -> [TX] WalletPaymentApprover(쓰기 전부).
   @Override
-  @Transactional
   public PaymentResult payWithWallet(PayWithWalletCommand command) {
     String requestHash =
         RequestHasher.hash(
             command.orderId().toString(), command.memberId().toString(),
             command.amount().toString(), Payment.Method.WALLET.name());
 
+    // [1] 멱등 재생 확인 — 재생이면 HTTP 검증 없이 즉시 반환(검증 호출을 아끼는 기존 순서 유지).
     Optional<Payment> existing = paymentRepository.findByIdempotencyKey(command.idempotencyKey());
     if (existing.isPresent()) {
       return replayOrConflict(existing.get(), requestHash);
     }
 
-    // 결제 요청 접수 시 브라우저 제출값을 그대로 신뢰하지 않고 Order의 진짜 값과 대조(#17, B5 — 현재는 스텁).
+    // [2] 결제 요청 접수 시 브라우저 제출값을 그대로 신뢰하지 않고 Order의 진짜 값과 대조(#17, B5).
+    // confirmPg [1]과 같은 이유로 TX 밖 — 커넥션 비점유.
     OrderValidationResult orderResult =
         orderValidationClient.validate(command.orderId(), command.memberId(), command.amount());
     if (!orderResult.valid()
@@ -86,56 +80,8 @@ public class PaymentService implements PaymentUseCase {
       throw new BusinessException(PaymentErrorCode.ORDER_VALIDATION_FAILED);
     }
 
-    Wallet wallet = walletRepository.findOrCreateByMemberId(command.memberId());
-
-    // 잔액 차감(#8) — SELECT-then-UPDATE 없이 단일 조건부 UPDATE로 원자처리.
-    int affected = walletRepository.tryDeduct(wallet.getId(), command.amount());
-    if (affected == 0) {
-      throw new BusinessException(PaymentErrorCode.INSUFFICIENT_BALANCE);
-    }
-    // D3 — UPDATE 성공 후 같은 TX 재조회(row lock이 커밋까지 유지되므로 재조회 값이 정답, §4.2).
-    long balanceAfter =
-        walletRepository
-            .findByMemberId(command.memberId())
-            .map(Wallet::getBalance)
-            .orElse(wallet.getBalance() - command.amount());
-
-    LocalDateTime now = LocalDateTime.now();
-
-    walletTransactionRepository.save(
-        WalletTransaction.deductOf(
-            wallet.getId(), command.amount(), balanceAfter, command.idempotencyKey()));
-
-    Payment saved =
-        paymentRepository.save(
-            Payment.approvedWallet(
-                command.orderId(),
-                command.memberId(),
-                command.amount(),
-                command.idempotencyKey(),
-                requestHash));
-
-    paymentEventRepository.save(
-        PaymentEvent.builder()
-            .paymentId(saved.getId())
-            .type(PaymentEvent.Type.APPROVE)
-            .amount(command.amount())
-            .createdAt(now)
-            .build());
-
-    // (Day2 남겨둔 항목, 2026-06-21 반영) WALLET 즉시승인도 PG confirm/웹훅 경로와 동일하게 payment.completed.events 발행.
-    eventPublisher.publish(
-        "PAYMENT",
-        saved.getId(),
-        COMPLETED_TOPIC,
-        new PaymentCompletedPayload(
-            saved.getId(),
-            saved.getOrderId(),
-            saved.getMemberId(),
-            saved.getAmount(),
-            saved.getMethod().name(),
-            null,
-            saved.getApprovedAt()));
+    // [3] 차감·저장·outbox(TX) — 잔액부족(INSUFFICIENT_BALANCE)은 이 안에서 던져져 전체 롤백된다.
+    Payment saved = walletPaymentApprover.deductAndApprove(command, requestHash);
 
     return PaymentResult.of(saved.getId(), saved.getStatus().name(), saved.getAmount());
   }
@@ -145,6 +91,23 @@ public class PaymentService implements PaymentUseCase {
   // 메서드 자체엔 @Transactional을 걸지 않는다 — 걸면 토스 HTTP 호출이 DB 커넥션을 점유한 채 대기하게 된다.
   @Override
   public PaymentResult confirmPg(PgConfirmCommand command) {
+    try {
+      PaymentResult result = doConfirmPg(command);
+      meterRegistry.counter("payment.confirm.result", "result", "success", "reason", "none")
+          .increment();
+      return result;
+    } catch (RuntimeException e) {
+      meterRegistry.counter("payment.confirm.result", "result", "fail", "reason", confirmFailReason(e))
+          .increment();
+      throw e;
+    }
+  }
+
+  private static String confirmFailReason(RuntimeException e) {
+    return e instanceof BusinessException be ? be.getErrorCode().getCode() : e.getClass().getSimpleName();
+  }
+
+  private PaymentResult doConfirmPg(PgConfirmCommand command) {
     String keyHash = RequestHasher.hash(command.paymentKey());
 
     // [1] Order 검증(TX 밖, 하자드17·22 유지) — 예약 INSERT보다 먼저 둬서 검증 실패 주문이 order_id를
