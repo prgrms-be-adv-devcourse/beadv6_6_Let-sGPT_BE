@@ -81,7 +81,7 @@ spec:
             capabilities: { drop: [ALL] }
             readOnlyRootFilesystem: true
           resources:
-            requests: { cpu: "50m", memory: "32Mi" }
+            requests: { memory: "32Mi" }
             limits: { memory: "96Mi" }   # CPU limit 미설정 — 전 서비스 공통 정책.
           volumeMounts:
             - { name: script, mountPath: /warmup, readOnly: true }

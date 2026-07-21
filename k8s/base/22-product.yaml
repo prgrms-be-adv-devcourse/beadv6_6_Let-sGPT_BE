@@ -85,7 +85,7 @@ spec:
             failureThreshold: 5
           resources:
             limits: { memory: "700Mi" }
-            requests: { cpu: "100m", memory: "520Mi" }
+            requests: { cpu: "50m", memory: "520Mi" }
       volumes:
         # 기본 SA 토큰(audience=k8s api)이 아니라 STS 전용 audience 토큰을 별도 발급받는다.
         - name: aws-token
