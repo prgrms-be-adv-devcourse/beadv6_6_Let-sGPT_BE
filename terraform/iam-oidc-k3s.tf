@@ -5,29 +5,31 @@
 #
 # 흐름: k3s가 발급한 ServiceAccount projected 토큰(iss = 이 issuer)을 파드가
 #   sts:AssumeRoleWithWebIdentity로 교환 → 임시 자격증명으로 S3 접근.
-#   issuer의 discovery/JWKS는 oidc-jwks 버킷(images.tf)에 미러링돼 있고, STS가
-#   그 공개 URL로 토큰 서명을 검증한다.
+#   issuer의 discovery/JWKS는 프론트 웹파드(https://openat.duckdns.org, 인그레스 host와
+#   단일 소스)가 ConfigMap 콘텐츠로 서빙하고, STS가 그 공개 URL로 토큰 서명을 검증한다.
 #
 # 이 파일은 4계층 배선(플랜 §7-4) 중 ① terraform 계층이다. ②k3s issuer 재구성,
 # ③k8s Deployment(SA ref + projected 볼륨 + AWS env), ④app configmap이 모두
 # 맞물려야 실제로 자격증명이 잡힌다.
 
 locals {
-  # issuer = oidc-jwks 버킷의 가상 호스트 스타일 엔드포인트(점 없는 버킷명이라 TLS 와일드카드 매칭됨).
-  # k3s의 --kube-apiserver-arg=service-account-issuer 값과 **정확히 일치**해야 한다(§3-1).
-  k3s_oidc_issuer_url = "https://${var.oidc_jwks_bucket_name}.s3.${var.aws_region}.amazonaws.com"
-  k3s_oidc_host       = "${var.oidc_jwks_bucket_name}.s3.${var.aws_region}.amazonaws.com"
+  # issuer = 프론트 웹파드(인그레스 host)가 서빙하는 OIDC discovery/JWKS 엔드포인트.
+  # 프론트 인그레스 host와 단일 소스(var.oidc_issuer_host)로 묶여 있으며, 이 host 아래
+  # /.well-known/openid-configuration + JWKS를 담은 ConfigMap 콘텐츠가 서빙된다.
+  # k3s config.yaml의 service-account-issuer 값과 **정확히 일치**해야 한다.
+  k3s_oidc_issuer_url = "https://${var.oidc_issuer_host}"
+  k3s_oidc_host       = var.oidc_issuer_host
 }
 
 # ---------------------------------------------------------------------
 # OIDC provider
 # ---------------------------------------------------------------------
-# issuer의 TLS 체인 최상위 인증서 지문을 동적으로 조회한다. issuer가 S3(=Amazon 신뢰 CA)라
-# AWS는 자체 신뢰 저장소로도 검증하지만, provider 리소스엔 thumbprint 값이 필요하다.
+# issuer의 TLS 체인 최상위 인증서 지문을 동적으로 조회한다. issuer가 프론트 웹파드
+# (Let's Encrypt 발급 인증서)라 이제 Let's Encrypt 체인(ISRG Root X1) 지문이 잡혀야 한다.
 #
-# 확인필요: tls_certificate가 S3 엔드포인트 리프 인증서 체인의 최상위를 반환하는지,
-# 그리고 issuer 재구성(§3-1) 후 이 data source가 실제 issuer 호스트에 도달 가능한지
-# apply 시 검증할 것. 값이 부적절하면 S3 TLS 루트 CA(Amazon Root CA 1) 지문으로 고정한다.
+# 확인필요: tls_certificate가 프론트 인그레스(openat.duckdns.org) 리프 인증서 체인의
+# 최상위(ISRG Root X1)를 반환하는지, 그리고 이 data source가 실제 issuer 호스트에
+# 도달 가능한지 apply 시 검증할 것.
 data "tls_certificate" "k3s_oidc" {
   url = local.k3s_oidc_issuer_url
 }
@@ -90,7 +92,7 @@ data "aws_iam_policy_document" "product_s3" {
       "s3:GetObject",
       "s3:DeleteObject",
     ]
-    resources = ["${aws_s3_bucket.images_staging.arn}/*"]
+    resources = ["${aws_s3_bucket.this.arn}/images/staging/*"]
   }
 
   statement {
@@ -100,7 +102,15 @@ data "aws_iam_policy_document" "product_s3" {
       "s3:PutObject",
       "s3:GetObject",
     ]
-    resources = ["${aws_s3_bucket.images_final.arn}/*"]
+    resources = ["${aws_s3_bucket.this.arn}/images/final/*"]
+  }
+
+  # tfstate 동거 이중 방어 — prefix allow 실수에도 tfstate 도달 차단.
+  statement {
+    sid       = "DenyTfstateAccess"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = ["${aws_s3_bucket.this.arn}/tfstate/*"]
   }
 }
 
@@ -111,52 +121,7 @@ resource "aws_iam_role_policy" "product_s3" {
 }
 
 # ---------------------------------------------------------------------
-# search-s3 Role — final 읽기 전용(AI 이미지 분석용 GetObject만)
+# search — S3 Role 미부여
 # ---------------------------------------------------------------------
-data "aws_iam_policy_document" "search_s3_assume" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.k3s.arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${local.k3s_oidc_host}:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${local.k3s_oidc_host}:sub"
-      values   = ["system:serviceaccount:openat:search-sa"]
-    }
-  }
-}
-
-resource "aws_iam_role" "search_s3" {
-  name               = "${var.project_name}-search-s3"
-  assume_role_policy = data.aws_iam_policy_document.search_s3_assume.json
-
-  tags = { Name = "${var.project_name}-search-s3" }
-}
-
-# 최소권한(§3-4): final 버킷 GetObject만. ListBucket 미부여.
-# 없는 key GetObject는 403(404 아님) → search가 "없음/스킵"으로 처리(§6).
-data "aws_iam_policy_document" "search_s3" {
-  statement {
-    sid       = "FinalObjectReadOnly"
-    effect    = "Allow"
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.images_final.arn}/*"]
-  }
-}
-
-resource "aws_iam_role_policy" "search_s3" {
-  name   = "${var.project_name}-search-s3-access"
-  role   = aws_iam_role.search_s3.id
-  policy = data.aws_iam_policy_document.search_s3.json
-}
+# search는 product 이미지 API(HTTP) 경유로 이미지를 받고 S3에 직접 접근하지 않는다.
+# 따라서 별도 IAM Role/SA OIDC 배선을 두지 않는다.
