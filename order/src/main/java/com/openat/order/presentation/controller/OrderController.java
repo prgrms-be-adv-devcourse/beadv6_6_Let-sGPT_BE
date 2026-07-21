@@ -124,10 +124,9 @@ public class OrderController implements OrderApiSpec {
   @Override
   @GetMapping("/internal/v1/orders/{orderId}")
   public ResponseEntity<InternalOrderValidationResponse> getOrderForPayment(
-      @PathVariable UUID orderId, @RequestParam UUID memberId) {
+      @PathVariable UUID orderId) {
     return ResponseEntity.ok(
-        InternalOrderValidationResponse.from(
-            orderUseCase.getPaymentValidationInfo(memberId, orderId)));
+        InternalOrderValidationResponse.from(orderUseCase.getPaymentValidationInfo(orderId)));
   }
 
   @Override
