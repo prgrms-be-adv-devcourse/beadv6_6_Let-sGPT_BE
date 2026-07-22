@@ -13,6 +13,10 @@ spring:
       server:
         webflux:
           routes:
+            - id: admin-chat-api
+              uri: http://localhost:9160
+              predicates:
+                - Path=/api/v1/ai/chats,/api/v1/ai/chats/**
             - id: queue-api
               uri: http://localhost:9150
               predicates:
@@ -104,6 +108,12 @@ spring:
                 - Path=/settlement/**
               filters:
                 - StripPrefix=1
+            - id: ai
+              uri: http://localhost:9160
+              predicates:
+                - Path=/ai/**
+              filters:
+                - StripPrefix=1
 
 openapi:
   aggregate:
@@ -115,3 +125,4 @@ openapi:
       payment-service: http://localhost:9130/api-docs
       settlement-service: http://localhost:9140/api-docs
       queue-service: http://localhost:9150/api-docs
+      ai-service: http://localhost:9160/api-docs
