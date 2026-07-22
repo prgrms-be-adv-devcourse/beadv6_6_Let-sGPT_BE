@@ -39,6 +39,7 @@ services:
       resources:
         limits:
           memory: 700M
+    restart: always
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.2.5
@@ -105,10 +106,11 @@ services:
     restart: "no"
 
   # Redis 데이터를 swagger-ui처럼 브라우저에서 클릭해서 보기 위한 웹 UI.
-  # 인프라 컨테이너로 분류해서 1번 묶음(postgres/kafka/redis)에 같이 둠 - 필요할 때만 같이 띄우면 됨.
+  # tools 프로필: 기본 `docker compose up -d`에서 제외 - 필요할 때 `docker compose up -d redis-commander`.
   redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: local-redis-commander
+    profiles: ["tools"]
     environment:
       REDIS_HOSTS: local:redis:6379
     ports:
@@ -123,6 +125,7 @@ services:
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: local-kafka-ui
+    profiles: ["tools"]
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
