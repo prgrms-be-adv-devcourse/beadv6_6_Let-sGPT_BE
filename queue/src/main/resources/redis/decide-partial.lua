@@ -12,14 +12,21 @@
 -- 사이의 레이스(막 앞사람이 빠져나가 방금 rank 0이 된 순간 등)까지 막는 건 원자적으로 실행되는
 -- 이 스크립트뿐이다.
 --
+-- 버그 이력(MSA 경계 위반 제거, queue-remaining-sync 재설계 작업): 예전엔 KEYS[4]가 product
+-- 소유 `drop:{dropId}` 해시를 직접 읽었다 - 다른 모듈의 내부 데이터스토어를 직접 침범하는
+-- 것이라 없앴다. `remaining`은 이제 이 큐가 이미 갖고 있는 `total - reserved`로 계산한다
+-- (수학적으로 product의 실제 remaining과 항상 같음이 증명됨). 이 스크립트는 closeAt을 보지
+-- 않으므로(원래도 안 봤음) drop-meta 키는 필요 없다.
+--
 -- KEYS[1]=queue:{dropId}            (ZSET)
 -- KEYS[2]=queue:{dropId}:heartbeat  (ZSET)
 -- KEYS[3]=queue:{dropId}:qty        (HASH)
--- KEYS[4]=drop:{dropId}             (HASH, product 소유 - remaining, 읽기 전용)
--- KEYS[5]=outstanding:{dropId}      (STRING)
--- KEYS[6]=admitted:{dropId}         (ZSET)
--- KEYS[7]=admitted:{dropId}:qty     (HASH)
--- KEYS[8]=decision:{dropId}         (HASH)
+-- KEYS[4]=total:{dropId}            (STRING - 총재고, 불변값 캐시)
+-- KEYS[5]=reserved:{dropId}         (STRING - 선점 누적 수량, CREATED/CANCELLED로 가감)
+-- KEYS[6]=outstanding:{dropId}      (STRING)
+-- KEYS[7]=admitted:{dropId}         (ZSET)
+-- KEYS[8]=admitted:{dropId}:qty     (HASH)
+-- KEYS[9]=decision:{dropId}         (HASH)
 --
 -- ARGV[1]=dropId  ARGV[2]=userId  ARGV[3]=입장권 TTL(초)  ARGV[4]=now(epoch ms)
 --
@@ -38,12 +45,18 @@ if requestedQty <= 0 then
   return 0
 end
 
-local remainingRaw = redis.call('HGET', KEYS[4], 'remaining')
-if remainingRaw == false then
+local total = redis.call('GET', KEYS[4])
+if total == false then
   return 0
 end
-local remaining = tonumber(remainingRaw)
-local outstanding = tonumber(redis.call('GET', KEYS[5]) or '0')
+local reserved = tonumber(redis.call('GET', KEYS[5]) or '0')
+local remaining = tonumber(total) - reserved
+-- 방어적 클램프(위생 코드 - 실제 드리프트를 고치는 게 아니라 이상값이 admission 계산에
+-- 새어들어가는 것만 막는다).
+if remaining < 0 then remaining = 0 end
+if remaining > tonumber(total) then remaining = tonumber(total) end
+
+local outstanding = tonumber(redis.call('GET', KEYS[6]) or '0')
 local available = remaining - outstanding
 if available <= 0 then
   return 0
@@ -61,11 +74,11 @@ local expireAt = now + (ttl * 1000)
 redis.call('ZREM', KEYS[1], userId)
 redis.call('ZREM', KEYS[2], userId)
 redis.call('HDEL', KEYS[3], userId)
-redis.call('HDEL', KEYS[8], userId)
+redis.call('HDEL', KEYS[9], userId)
 
 redis.call('SET', 'admission:' .. ARGV[1] .. ':' .. userId, grant, 'EX', ttl)
-redis.call('ZADD', KEYS[6], expireAt, userId)
-redis.call('HSET', KEYS[7], userId, grant)
-redis.call('INCRBY', KEYS[5], grant)
+redis.call('ZADD', KEYS[7], expireAt, userId)
+redis.call('HSET', KEYS[8], userId, grant)
+redis.call('INCRBY', KEYS[6], grant)
 
 return grant

@@ -1,6 +1,7 @@
 package com.openat.queue.domain.repository
 
 import com.openat.queue.domain.model.AdmittedEntry
+import com.openat.queue.domain.model.QueueStatusSnapshot
 import com.openat.queue.domain.model.WaitingTicket
 import java.time.Instant
 
@@ -19,15 +20,25 @@ interface WaitingQueueRepository {
      * 그 조건에 못 미치면(이미 대기자가 있거나 가용 재고 부족) 평범하게 대기열(ZSET)에
      * 등록한다(이미 있으면 무시, NX. 요청 수량과 하트비트는 이미 대기 중이어도 매번 갱신 -
      * 재호출로 수량을 바꿀 수 있게 허용). 어느 경우든 이 dropId를 [activeDropIds]에 등록한다.
+     *
+     * 대기열 순번(score)은 앱 서버가 계산한 시각이 아니라 Redis 자신의 시계(`TIME`)로 이
+     * 스크립트 안에서 원자적으로 찍는다 - 앱 서버 시각(밀리초 해상도)을 쓰면 실제 동시
+     * 요청 여러 건이 같은 밀리초에 도착했을 때 ZSET 점수가 타이(tie)나서 Redis가 도착
+     * 순서가 아니라 member 문자열(userId) 사전순으로 정렬해버리는 실사용 버그가 있었다
+     * (데모에서 실제 재현됨). 그래서 이 메서드는 `now` 파라미터를 받지 않는다.
      * @return 즉시 입장권이 발급됐으면 그 [AdmittedEntry], 대기열에 등록됐을 뿐이면 null
      */
-    fun enqueueOrFastAdmit(dropId: String, userId: String, quantity: Int, ttlSeconds: Long, now: Instant): AdmittedEntry?
+    fun enqueueOrFastAdmit(dropId: String, userId: String, quantity: Int, ttlSeconds: Long): AdmittedEntry?
 
     /** 현재 순번 스냅샷(+요청 수량). 대기열에 없으면 null. */
     fun ticketOf(dropId: String, userId: String): WaitingTicket?
 
-    /** 폴링 시 마지막 응답 시각(하트비트)을 갱신해 이탈 판정 TTL을 늦춘다. */
-    fun touchHeartbeat(dropId: String, userId: String, now: Instant)
+    /**
+     * 상태 폴링(hot path) 한 번에 필요한 모든 값을 단일 원자 실행(1왕복)으로 읽고,
+     * [touchHeartbeat]가 true고 대기 중이면 하트비트도 함께 갱신한다(status-snapshot.lua).
+     * 예전의 개별 조회 조합(입장권→순번→재고→outstanding→확정→결정, 최대 9왕복)을 대체한다.
+     */
+    fun statusSnapshotOf(dropId: String, userId: String, now: Instant, touchHeartbeat: Boolean): QueueStatusSnapshot
 
     /** 현재 대기 인원(ZCARD). 성능 측정 하네스(Phase 4)의 Gauge 지표용. */
     fun sizeOf(dropId: String): Long
@@ -66,11 +77,34 @@ interface WaitingQueueRepository {
      * 계층에서도 읽어 `available = remaining - outstanding`을 status 응답용으로 계산한다. */
     fun outstandingOf(dropId: String): Long
 
-    /** 이 사용자가 "기다림(WAIT)"을 이미 확정했는지(같은 질문을 반복하지 않기 위함) - peek. */
-    fun hasConfirmedWait(dropId: String, userId: String): Boolean
+    /**
+     * "기다림(WAIT)"을 확정 상태로 기록한다 - 이후 무응답 타임아웃 제거 대상에서 빠진다(정책).
+     * @param grantableNowAtConfirm 확정 그 순간의 grantableNow(remaining-outstanding, 0 이상).
+     * @param maxAtConfirm 확정 그 순간의 optimisticMax(총재고-확정). null이면 확정 당시 total
+     *   미캐시로 값을 몰랐던 경우.
+     *
+     * 이후 재질의 여부는 "확정 당시와 비교해 둘 중 하나라도 바뀌었는가"로 판단한다
+     * (QueueService.resolveStatus 참고) - optimisticMax만으로는 주문 취소(CANCELLED)로
+     * 재고가 회복되는 신호를 못 잡기 때문에 grantableNow도 같이 필요하다.
+     */
+    fun markWaitConfirmed(dropId: String, userId: String, grantableNowAtConfirm: Long, maxAtConfirm: Long?)
 
-    /** "기다림(WAIT)"을 확정 상태로 기록한다. */
-    fun markWaitConfirmed(dropId: String, userId: String)
+    /**
+     * DECISION_REQUIRED를 처음 노출하는 순간 "물어본 시각"을 원자적으로 기록한다(이미 기록돼
+     * 있으면 기존 값 유지 - 폴링마다 마감이 뒤로 밀리지 않게). 무응답 이탈 처리([sweepDecisionTimeout])의
+     * 기준점이자, 클라이언트 카운트다운용 마감 시각(deadline) 계산의 근거다.
+     * @return 적용되는 askedAt(epoch ms). WAIT 확정자면 -1(타임아웃 대상 아님).
+     */
+    fun markAskedIfAbsent(dropId: String, userId: String, now: Instant): Long
+
+    /**
+     * 맨 앞(rank 0) 사용자가 DECISION_REQUIRED에 [timeoutMs] 넘게 무응답이면 대기열에서
+     * 제거한다(sweep-decision.lua) - 엄격한 FIFO에서 rank 0의 미결정은 큐 전체 정지이므로
+     * 필수인 자가치유. WAIT 확정자는 제거하지 않고, 제거 직전 재고가 도착해 몫이 채워진
+     * 사람도 원자적 재확인으로 보호한다.
+     * @return 제거된 userId, 아무도 제거하지 않았으면 null
+     */
+    fun sweepDecisionTimeout(dropId: String, now: Instant, timeoutMs: Long): String?
 
     /**
      * 특정 사용자 한 명을 그 순간의 가용 재고만큼만 즉시 원자적으로 입장 처리한다("부분구매"

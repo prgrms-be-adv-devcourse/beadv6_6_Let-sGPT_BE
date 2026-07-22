@@ -345,9 +345,7 @@ public class ProductSearchService {
   }
 
   private boolean containsSearchExpression(String text, String expression) {
-    return isSingleHangulSyllable(expression)
-        ? containsSearchTerm(text, expression)
-        : text.contains(expression);
+    return isHangulTerm(expression) ? containsSearchTerm(text, expression) : text.contains(expression);
   }
 
   private boolean containsSearchTerm(String text, String term) {
@@ -355,7 +353,6 @@ public class ProductSearchService {
       return text.contains(term);
     }
 
-    boolean requireEndBoundary = isSingleHangulSyllable(term);
     int fromIndex = 0;
     while (fromIndex < text.length()) {
       int matchIndex = text.indexOf(term, fromIndex);
@@ -368,7 +365,8 @@ public class ProductSearchService {
           matchIndex == 0 || !Character.isLetterOrDigit(text.codePointBefore(matchIndex));
       boolean endsAtWordBoundary =
           matchEnd == text.length() || !Character.isLetterOrDigit(text.codePointAt(matchEnd));
-      if (startsAtWordBoundary && (!requireEndBoundary || endsAtWordBoundary)) {
+      if (startsAtWordBoundary
+          && (endsAtWordBoundary || hasStandaloneColorSuffix(text, matchEnd))) {
         return true;
       }
       fromIndex = matchEnd;
@@ -376,8 +374,12 @@ public class ProductSearchService {
     return false;
   }
 
-  private boolean isSingleHangulSyllable(String value) {
-    return value.codePointCount(0, value.length()) == 1 && isHangulTerm(value);
+  private boolean hasStandaloneColorSuffix(String text, int matchEnd) {
+    int suffixEnd = matchEnd + 1;
+    return suffixEnd <= text.length()
+        && text.startsWith("색", matchEnd)
+        && (suffixEnd == text.length()
+            || !Character.isLetterOrDigit(text.codePointAt(suffixEnd)));
   }
 
   private boolean isHangulTerm(String value) {
