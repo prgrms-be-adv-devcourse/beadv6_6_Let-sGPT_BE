@@ -27,8 +27,22 @@ public class OrderSagaStateRepositoryAdaptor implements OrderSagaStateRepository
   }
 
   @Override
+  public int enterCompensatingUnlessCompleted(UUID orderId, Instant now) {
+    return orderSagaStateJpaRepository.enterCompensatingUnlessCompleted(
+        orderId,
+        now,
+        OrderSagaStep.COMPENSATING,
+        OrderSagaStep.COMPENSATION_COMPLETED);
+  }
+
+  @Override
   public List<OrderSagaState> findCompensatingBefore(Instant cutoff) {
     return orderSagaStateJpaRepository.findByCurrentStepAndCompensatingSinceBefore(
         OrderSagaStep.COMPENSATING, cutoff);
+  }
+
+  @Override
+  public List<OrderSagaState> findCompensating() {
+    return orderSagaStateJpaRepository.findByCurrentStep(OrderSagaStep.COMPENSATING);
   }
 }

@@ -52,7 +52,7 @@ class OrderCompensationTransitionServiceTest {
             order,
             order.getStatus(),
             "STOCK_ROLLBACK_RETRY_COMPLETED",
-            "운영자 재고 롤백 재처리 성공",
+            "재고 롤백 재처리 성공",
             "stock-rollback-retry-completed-" + order.getId());
   }
 
@@ -78,10 +78,25 @@ class OrderCompensationTransitionServiceTest {
     service.confirmRefund(order.getId());
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
+    verify(orderSagaRecorder).recordCompensating(order.getId());
     verify(applicationEventPublisher)
         .publishEvent(
             new RefundStockRestoreRequested(
                 order.getId(), order.getDropId(), order.getMemberId(), order.getQuantity()));
+  }
+
+  @Test
+  void should_skip_stock_restore_when_confirming_refund_after_compensation_completed() {
+    Order order = failedOrder(OrderFailCode.PG_ERROR);
+    ReflectionTestUtils.setField(order, "status", OrderStatus.REFUND_FAILED);
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+    when(orderSagaRecorder.isCompensationCompleted(order.getId())).thenReturn(true);
+
+    service.confirmRefund(order.getId());
+
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
+    verify(orderSagaRecorder, never()).recordCompensating(any());
+    verify(applicationEventPublisher, never()).publishEvent(any(RefundStockRestoreRequested.class));
   }
 
   @Test

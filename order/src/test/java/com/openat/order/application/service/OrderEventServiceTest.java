@@ -3,7 +3,9 @@ package com.openat.order.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -250,8 +252,8 @@ class OrderEventServiceTest {
   }
 
   @Test
-  @DisplayName("환불 완료 이벤트 금액이 주문 금액과 다르면 환불 완료로 전이하지 않는다")
-  void refundCompleted_whenAmountMismatch_throwInvalidInput() {
+  @DisplayName("환불 완료 이벤트 금액이 주문 금액을 초과하면 환불 완료로 전이하지 않는다")
+  void refundCompleted_whenAmountExceedsOrder_throwInvalidInput() {
     // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
@@ -261,7 +263,7 @@ class OrderEventServiceTest {
     when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
     RefundCompletedCommand command =
-        new RefundCompletedCommand(orderId, UUID.randomUUID(), 9_999L, UUID.randomUUID());
+        new RefundCompletedCommand(orderId, UUID.randomUUID(), 10_001L, UUID.randomUUID());
 
     // when
     BusinessException ex =
@@ -272,6 +274,95 @@ class OrderEventServiceTest {
     assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
     verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName("환불 진행 중 주문은 잔액 환불 이벤트로 환불 완료 처리한다")
+  void refundCompleted_whenRemainingAmount_changesToRefunded() {
+    // given
+    Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
+    order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
+    order.requestRefund(Instant.parse("2026-06-26T00:00:02Z"));
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+
+    // when
+    orderEventService.handleRefundCompleted(
+        new RefundCompletedCommand(order.getId(), UUID.randomUUID(), 4_000L, UUID.randomUUID()));
+
+    // then
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
+    verify(orderHistoryRecorder)
+        .record(
+            any(),
+            any(),
+            eq("ORDER_REFUNDED"),
+            contains("잔액 환불로 완결"),
+            any());
+    verify(orderSagaRecorder).recordCompensating(order.getId());
+    verify(applicationEventPublisher).publishEvent(any(RefundStockRestoreRequested.class));
+  }
+
+  @Test
+  @DisplayName("결제 완료 주문의 직행 부분환불 이벤트는 상태 전이와 재고복구를 건너뛴다")
+  void refundCompleted_whenDirectPartialRefund_skipsTransitionAndStockRestore() {
+    // given
+    Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
+    order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+
+    // when
+    orderEventService.handleRefundCompleted(
+        new RefundCompletedCommand(order.getId(), UUID.randomUUID(), 4_000L, UUID.randomUUID()));
+
+    // then
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.COMPLETED);
+    verify(orderHistoryRecorder)
+        .record(
+            any(),
+            any(),
+            eq("PARTIAL_REFUND_COMPLETED"),
+            contains("직행 부분환불 처리"),
+            any());
+    verify(orderSagaRecorder, never()).recordCompensating(any());
+    verify(applicationEventPublisher, never()).publishEvent(any());
+  }
+
+  @Test
+  @DisplayName("결제 완료 주문의 직행 전액환불 이벤트는 환불 완료 처리한다")
+  void refundCompleted_whenDirectFullRefund_changesToRefunded() {
+    // given
+    Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
+    order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+
+    // when
+    orderEventService.handleRefundCompleted(
+        new RefundCompletedCommand(order.getId(), UUID.randomUUID(), 10_000L, UUID.randomUUID()));
+
+    // then
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
+    verify(orderSagaRecorder).recordCompensating(order.getId());
+    verify(applicationEventPublisher).publishEvent(any(RefundStockRestoreRequested.class));
+  }
+
+  @Test
+  @DisplayName("이미 보상 완료된 주문은 환불 완료 시 재고복구를 다시 요청하지 않는다")
+  void refundCompleted_whenCompensationAlreadyCompleted_skipsStockRestore() {
+    // given
+    Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
+    order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+    when(orderSagaRecorder.isCompensationCompleted(order.getId())).thenReturn(true);
+
+    // when
+    orderEventService.handleRefundCompleted(
+        new RefundCompletedCommand(order.getId(), UUID.randomUUID(), 10_000L, UUID.randomUUID()));
+
+    // then
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
+    verify(orderSagaRecorder, never()).recordCompensating(any());
+    verify(applicationEventPublisher, never())
+        .publishEvent(any(RefundStockRestoreRequested.class));
   }
 
   @Test

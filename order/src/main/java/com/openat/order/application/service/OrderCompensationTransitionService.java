@@ -67,7 +67,9 @@ public class OrderCompensationTransitionService {
         "MANUAL_CORRECTION",
         "운영자 환불 수동 확정",
         "manual-refund-confirmation-" + orderId);
-    if (previousStatus == OrderStatus.REFUND_FAILED) {
+    if (previousStatus == OrderStatus.REFUND_FAILED
+        && !orderSagaRecorder.isCompensationCompleted(orderId)) {
+      orderSagaRecorder.recordCompensating(orderId);
       applicationEventPublisher.publishEvent(
           new RefundStockRestoreRequested(
               order.getId(), order.getDropId(), order.getMemberId(), order.getQuantity()));
@@ -107,7 +109,7 @@ public class OrderCompensationTransitionService {
         order,
         order.getStatus(),
         "STOCK_ROLLBACK_RETRY_COMPLETED",
-        "운영자 재고 롤백 재처리 성공",
+        "재고 롤백 재처리 성공",
         "stock-rollback-retry-completed-" + orderId);
     orderSagaRecorder.recordCompensationCompleted(orderId);
   }
