@@ -60,6 +60,7 @@ inference:
 recommendation:
   drop-cache:
     page-size: ${RECOMMENDATION_DROP_CACHE_PAGE_SIZE:100}
+    refresh-interval: ${RECOMMENDATION_DROP_CACHE_REFRESH_INTERVAL:5m}
   weights:
     partial-ttl: ${RECOMMENDATION_WEIGHTS_PARTIAL_TTL:10m}
     current-product-score: ${RECOMMENDATION_CURRENT_PRODUCT_SCORE:0.9}
