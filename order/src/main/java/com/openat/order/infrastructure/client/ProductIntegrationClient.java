@@ -86,13 +86,29 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
 
   @Override
   public void restoreStock(UUID dropId, StockRestoreCommand command) {
-    executeStockChange(
+    executeStockChangeOnce(
         OperationType.RESTORE_STOCK,
         () ->
             productInternalApiClient.restoreStock(
                 dropId,
                 new StockChangeRequest(command.orderId(), command.buyerId(), command.quantity())));
     publishStockAdjustment(dropId, command.quantity(), StockAdjustmentReason.CANCELLED);
+  }
+
+  private void executeStockChangeOnce(OperationType operationType, Runnable operation) {
+    try {
+      circuitBreaker.executeRunnable(
+          () -> {
+            try {
+              operation.run();
+            } catch (RestClientException exception) {
+              throw toProductPortException(operationType, exception);
+            }
+          });
+    } catch (CallNotPermittedException exception) {
+      throw new ProductPortException(
+          fallbackFailCode(operationType), "Product circuit breaker is open", exception);
+    }
   }
 
   private void publishStockAdjustment(UUID dropId, int count, StockAdjustmentReason reason) {

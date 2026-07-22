@@ -1,6 +1,8 @@
 package com.openat.order.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -63,6 +65,20 @@ class OrderCompensationFailureRecorderTest {
             "rollback timeout",
             "stock-rollback-failed-" + order.getId());
     verify(orderSagaRecorder).recordCompensating(order.getId());
+  }
+
+  @Test
+  void should_skip_repeated_stock_rollback_failure_history() {
+    Order order = refundedOrder();
+    order.recordFailure(OrderFailCode.STOCK_ROLLBACK_FAILED, "first timeout");
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+
+    recorder.recordStockRollbackFailure(order.getId(), "repeated timeout");
+
+    assertThat(order.getFailCode()).isEqualTo(OrderFailCode.STOCK_ROLLBACK_FAILED);
+    assertThat(order.getFailMessage()).isEqualTo("first timeout");
+    verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
+    verify(orderSagaRecorder, never()).recordCompensating(any());
   }
 
   private Order refundedOrder() {

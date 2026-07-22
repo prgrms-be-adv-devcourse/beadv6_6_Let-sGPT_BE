@@ -3,6 +3,7 @@ package com.openat.order.infrastructure.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
@@ -189,12 +190,12 @@ class ProductIntegrationClientTest {
             failure -> assertThat(failure.getFailCode()).isEqualTo(OrderFailCode.DROP_CLOSED));
 
     verify(productInternalApiClient).fetchOrderSnapshot(any());
-    verify(retrySleeper, never()).sleep(org.mockito.ArgumentMatchers.anyLong());
+    verify(retrySleeper, never()).sleep(anyLong());
   }
 
   @Test
   @DisplayName("재고 롤백 API 연결 실패는 재고 롤백 실패 코드로 변환한다")
-  void restoreStock_mapsConnectionFailure() {
+  void restoreStock_mapsConnectionFailure() throws InterruptedException {
     doThrow(new ResourceAccessException("connection refused"))
         .when(productInternalApiClient)
         .restoreStock(any(), any());
@@ -208,7 +209,8 @@ class ProductIntegrationClientTest {
             ProductPortException.class,
             exception ->
                 assertThat(exception.getFailCode()).isEqualTo(OrderFailCode.STOCK_ROLLBACK_FAILED));
-    verify(productInternalApiClient, times(3)).restoreStock(any(), any());
+    verify(productInternalApiClient).restoreStock(any(), any());
+    verify(retrySleeper, never()).sleep(anyLong());
     verify(applicationEventPublisher, never()).publishEvent(any());
   }
 
