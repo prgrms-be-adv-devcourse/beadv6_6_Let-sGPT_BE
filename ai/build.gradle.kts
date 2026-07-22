@@ -5,6 +5,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-restclient")
     runtimeOnly("io.micrometer:micrometer-registry-prometheus")
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+    testImplementation("org.testcontainers:testcontainers-postgresql")
 }
 
 tasks.withType<Test> {
