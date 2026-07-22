@@ -2,14 +2,22 @@
 -- 미소진 입장권 수량(outstanding)을 뺀 만큼만, 대기열 앞에서부터 순서대로 입장시킨다.
 -- "사용자 수"가 아니라 "요청 수량"으로 재고를 통제한다(1인당 여러 개 구매 가능).
 --
+-- 버그 이력(MSA 경계 위반 제거, queue-remaining-sync 재설계 작업): 예전엔 KEYS[4]가 product
+-- 소유 `drop:{dropId}` 해시를 직접 읽었다 - 다른 모듈의 내부 데이터스토어를 직접 침범하는
+-- 것이라 없앴다. `remaining`은 이제 이 큐가 이미 갖고 있는 `total - reserved`로 계산한다
+-- (수학적으로 product의 실제 remaining과 항상 같음이 증명됨). closeAt/limitPerUser는 queue
+-- 소유 `drop-meta:{dropId}` 캐시(부트스트랩 시 product REST 1회 호출로 채움)에서 읽는다.
+--
 -- KEYS[1]=queue:{dropId}            (ZSET, 대기 순번)
 -- KEYS[2]=queue:{dropId}:heartbeat  (ZSET)
 -- KEYS[3]=queue:{dropId}:qty        (HASH, userId -> 요청수량)
--- KEYS[4]=drop:{dropId}             (HASH, product 소유 - remaining/openAt/closeAt, 읽기 전용)
--- KEYS[5]=outstanding:{dropId}      (STRING, 미소진 입장권 수량 합)
--- KEYS[6]=admitted:{dropId}         (ZSET, member=userId, score=입장권 만료 epoch ms)
--- KEYS[7]=admitted:{dropId}:qty     (HASH, userId -> 발급 수량)
--- KEYS[8]=decision:{dropId}         (HASH, Phase B 대화형 결정 상태 - 정상 입장 시 함께 정리)
+-- KEYS[4]=total:{dropId}            (STRING - 총재고, 불변값 캐시)
+-- KEYS[5]=reserved:{dropId}         (STRING - 선점 누적 수량, CREATED/CANCELLED로 가감)
+-- KEYS[6]=drop-meta:{dropId}        (HASH, queue 소유 - closeAt, 부트스트랩 캐시)
+-- KEYS[7]=outstanding:{dropId}      (STRING, 미소진 입장권 수량 합)
+-- KEYS[8]=admitted:{dropId}         (ZSET, member=userId, score=입장권 만료 epoch ms)
+-- KEYS[9]=admitted:{dropId}:qty     (HASH, userId -> 발급 수량)
+-- KEYS[10]=decision:{dropId}        (HASH, Phase B 대화형 결정 상태 - 정상 입장 시 함께 정리)
 --
 -- ARGV[1]=dropId  ARGV[2]=입장권 TTL(초)  ARGV[3]=now(epoch ms)
 -- ARGV[4]=maxGhostScan(아래 "유령 정리" 방어용 상한 - 정상 흐름에서는 사실상 안 쓰임)
@@ -38,19 +46,25 @@
 
 local now = tonumber(ARGV[3])
 
-local closeAt = tonumber(redis.call('HGET', KEYS[4], 'closeAt') or '-1')
+local closeAt = tonumber(redis.call('HGET', KEYS[6], 'closeAt') or '-1')
 if closeAt >= 0 and now >= closeAt then
   return {}
 end
 
-local remainingRaw = redis.call('HGET', KEYS[4], 'remaining')
-if remainingRaw == false then
-  -- 캐시 미존재(워밍 전) - 안전하게 이번 tick은 건너뛴다.
+local total = redis.call('GET', KEYS[4])
+if total == false then
+  -- total 캐시 미존재(부트스트랩 REST 미완료) - 안전하게 이번 tick은 건너뛴다(예전 "drop 해시
+  -- 미워밍" 저하와 동일한 조건).
   return {}
 end
-local remaining = tonumber(remainingRaw)
+local reserved = tonumber(redis.call('GET', KEYS[5]) or '0')
+local remaining = tonumber(total) - reserved
+-- 방어적 클램프(위생 코드 - 정합성을 고치는 게 아니라 이상값이 admission 계산에 새어들어가는
+-- 것만 막는다. 실제 드리프트는 이 클램프로 고쳐지지 않는다).
+if remaining < 0 then remaining = 0 end
+if remaining > tonumber(total) then remaining = tonumber(total) end
 
-local outstanding = tonumber(redis.call('GET', KEYS[5]) or '0')
+local outstanding = tonumber(redis.call('GET', KEYS[7]) or '0')
 local available = remaining - outstanding
 if available <= 0 then
   return {}
@@ -70,13 +84,13 @@ local i = 1
 while i <= #candidates do
   local userId = candidates[i]
 
-  if redis.call('ZSCORE', KEYS[6], userId) then
+  if redis.call('ZSCORE', KEYS[8], userId) then
     -- 이미 미소진 입장권 보유(비정상 재등록) - 순서 방해가 아니므로 대기열에서만 제거하고
     -- 다음 후보를 계속 본다(엄격한 FIFO 정지 대상 아님).
     redis.call('ZREM', KEYS[1], userId)
     redis.call('ZREM', KEYS[2], userId)
     redis.call('HDEL', KEYS[3], userId)
-    redis.call('HDEL', KEYS[8], userId)
+    redis.call('HDEL', KEYS[10], userId)
     i = i + 1
   else
     local qty = tonumber(redis.call('HGET', KEYS[3], userId) or '1')
@@ -88,12 +102,12 @@ while i <= #candidates do
     redis.call('ZREM', KEYS[1], userId)
     redis.call('ZREM', KEYS[2], userId)
     redis.call('HDEL', KEYS[3], userId)
-    redis.call('HDEL', KEYS[8], userId)
+    redis.call('HDEL', KEYS[10], userId)
 
     redis.call('SET', 'admission:' .. ARGV[1] .. ':' .. userId, qty, 'EX', ttl)
-    redis.call('ZADD', KEYS[6], expireAt, userId)
-    redis.call('HSET', KEYS[7], userId, qty)
-    redis.call('INCRBY', KEYS[5], qty)
+    redis.call('ZADD', KEYS[8], expireAt, userId)
+    redis.call('HSET', KEYS[9], userId, qty)
+    redis.call('INCRBY', KEYS[7], qty)
 
     available = available - qty
     table.insert(admitted, userId)
