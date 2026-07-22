@@ -33,7 +33,10 @@ public class AiImageService {
   private final RestClient restClient;
 
   // local
-  private final String imgUrlHost = "http://localhost:8000/api/v1/products/images/";
+  //private final String imgUrlHost = "http://localhost:8000/api/v1/products/images/";
+
+  // real
+  private final String imgUrlHost = "https://openat.duckdns.org/api/v1/products/images/";
 
   @Transactional(readOnly = true)
   public AiImageAnalyzeResponse analyze(MultipartFile image, String prompt) {
