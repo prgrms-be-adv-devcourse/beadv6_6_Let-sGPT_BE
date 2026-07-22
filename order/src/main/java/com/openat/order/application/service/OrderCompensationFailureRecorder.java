@@ -27,6 +27,9 @@ public class OrderCompensationFailureRecorder {
         orderRepository
             .findById(orderId)
             .orElseThrow(() -> new BusinessException(OrderErrorCode.NOT_FOUND));
+    if (order.getFailCode() == OrderFailCode.STOCK_ROLLBACK_FAILED) {
+      return;
+    }
     if (order.getFailCode() == null) {
       order.recordFailure(OrderFailCode.STOCK_ROLLBACK_FAILED, message);
     }

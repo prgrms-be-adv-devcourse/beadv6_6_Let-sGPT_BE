@@ -12,5 +12,9 @@ public interface OrderSagaStateRepository {
 
   Optional<OrderSagaState> findByOrderId(UUID orderId);
 
+  int enterCompensatingUnlessCompleted(UUID orderId, Instant now);
+
   List<OrderSagaState> findCompensatingBefore(Instant cutoff);
+
+  List<OrderSagaState> findCompensating();
 }

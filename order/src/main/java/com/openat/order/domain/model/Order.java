@@ -245,7 +245,8 @@ public class Order {
     if (status != OrderStatus.CANCEL_REQUESTED
         && status != OrderStatus.REFUND_PENDING
         && status != OrderStatus.REFUND_FAILED
-        && status != OrderStatus.CANCELLED) {
+        && status != OrderStatus.CANCELLED
+        && status != OrderStatus.COMPLETED) {
       return false;
     }
     this.status = OrderStatus.REFUNDED;
