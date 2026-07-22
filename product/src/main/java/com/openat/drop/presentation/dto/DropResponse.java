@@ -19,7 +19,8 @@ public record DropResponse(
     @Schema(description = "잔여 수량(재고 게이트키퍼 파생)") int remainingQuantity,
     @Schema(description = "드롭 상태(OPEN·SOLD_OUT은 오픈 시각·잔여로 파생)") DropStatus status,
     @Schema(description = "오픈 시각") Instant openAt,
-    @Schema(description = "종료 시각, null: 매진까지") Instant closeAt) {
+    @Schema(description = "종료 시각, null: 매진까지") Instant closeAt,
+    @Schema(description = "1인당 구매 한도, null: 제한 없음") Integer limitPerUser) {
 
   public static DropResponse from(DropInfo info) {
     return new DropResponse(
@@ -35,6 +36,7 @@ public record DropResponse(
         info.remainingQuantity(),
         info.status(),
         info.openAt(),
-        info.closeAt());
+        info.closeAt(),
+        info.limitPerUser());
   }
 }

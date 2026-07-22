@@ -20,7 +20,8 @@ public record DropInfo(
     int remainingQuantity,
     DropStatus status,
     Instant openAt,
-    Instant closeAt) {
+    Instant closeAt,
+    Integer limitPerUser) {
 
   public static DropInfo of(
       Drop drop, String sellerName, int remainingQuantity, DropStatus status) {
@@ -45,6 +46,7 @@ public record DropInfo(
         remainingQuantity,
         status,
         drop.getOpenAt(),
-        drop.getCloseAt());
+        drop.getCloseAt(),
+        drop.getLimitPerUser());
   }
 }
