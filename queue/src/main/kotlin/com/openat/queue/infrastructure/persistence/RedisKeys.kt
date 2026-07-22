@@ -27,11 +27,13 @@ object RedisKeys {
      * product의 remaining에서 빼는 데 쓴다: available = remaining - outstanding. */
     fun outstanding(dropId: String): String = "outstanding:$dropId"
 
-    /** product 모듈이 소유한 드롭 재고 캐시 - 읽기 전용으로 참조한다(DropCacheRedisAdaptor와 동일 키/필드 계약).
-     * HASH, field "remaining"에 현재 가용 재고(정수 문자열)가 들어있다. */
-    fun productDrop(dropId: String): String = "drop:$dropId"
-
-    const val PRODUCT_REMAINING_FIELD: String = "remaining"
+    /** queue 소유 드롭 메타데이터 캐시 - product의 `GET /api/v1/drops/{dropId}` 응답을 캐시 미스 시
+     * 1회 호출해 채운다(product의 `drop:{dropId}` Redis 해시를 직접 읽던 예전 방식 폐기 - MSA 경계
+     * 위반이었음. queue-remaining-sync 재설계 작업 참고). HASH, field "closeAt"(epoch ms 문자열,
+     * 없으면 "-1"), field "limitPerUser"(정수 문자열, 없으면 "-1"). `remaining`은 이 해시에 없다 -
+     * `total(dropId) - reserved(dropId)`로 계산한다(핵심 발견: 수학적으로 항상 같은 값이라
+     * product Redis를 직접 안 읽어도 된다). */
+    fun dropMeta(dropId: String): String = "drop-meta:$dropId"
 
     /** 대화형 결정(Phase B) 상태 - HASH, field=userId, value="WAIT_CONFIRMED"(있으면 이미 "기다림"을
      * 선택한 것 - 같은 질문을 반복해서 묻지 않기 위한 표시). 없으면 아직 안 물어봤거나 답 안 함. */
@@ -46,6 +48,16 @@ object RedisKeys {
     /** 확정 수량에 이미 반영한 eventId 집합(SET) - Kafka의 at-least-once 재전달로 같은 이벤트가
      * 두 번 와도 중복 반영하지 않기 위한 멱등 처리용(COMPLETED/REFUNDED는 서로 다른 eventId). */
     fun confirmedSeen(dropId: String): String = "confirmed:$dropId:seen"
+
+    /** 선점(미확정) 누적 수량 - queue 자신이 StockAdjustment 이벤트(CREATED/CANCELLED)를
+     * 소비해 가감하는 큐 소유 값. "선점된 재고 중 아직 확정 안 된 만큼"(reserved-confirmed)이
+     * 재고 복구 가능성이 있는 미확정 재고다(구매자 입장 시 기다림/조정구매/포기 분기 판정에
+     * 쓰임). CANCELLED로 다시 줄어들 수 있어 단조증가가 아니다. STRING, 정수. */
+    fun reserved(dropId: String): String = "reserved:$dropId"
+
+    /** 선점 수량에 이미 반영한 eventId 집합(SET) - confirmedSeen과 동일한 목적의 멱등 처리용
+     * (CREATED/CANCELLED는 서로 다른 eventId). */
+    fun reservedSeen(dropId: String): String = "reserved:$dropId:seen"
 
     /** 드롭의 총 수량(불변값) - product의 `GET /drops/{dropId}` 응답을 최초 1회 호출해 캐싱한 것.
      * STRING, 정수. */
