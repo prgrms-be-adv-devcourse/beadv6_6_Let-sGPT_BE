@@ -270,6 +270,26 @@ class ProductSearchServiceSortTest {
   }
 
   @Test
+  void doesNotMatchKoreanSearchTermAtStartOfLongerCompoundWord() {
+    ProductDocument noteColor =
+        document("note-color", "노트컬러", "다양한 색상의 문구 상품", null);
+    ProductDocument note = document("note", "노트", "필기용 문구 상품", null);
+
+    when(productEmbeddingService.embed("노트"))
+        .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
+    SearchHits<ProductDocument> candidates = searchHits(List.of(noteColor, note));
+    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
+        .thenReturn(candidates);
+
+    Page<ProductSearchResult> result =
+        productSearchService.search("노트", null, null, null, 0, 20, null);
+
+    assertThat(result.getContent())
+        .extracting(item -> item.document().id())
+        .containsExactly("note");
+  }
+
+  @Test
   void reranksMatchingProductsByExactCosineSimilarity() {
     ProductDocument fartherProduct =
         document("farther", "검정색 운동화", "러닝 신발", null).withEmbedding(new float[] {0.0F, 1.0F});
