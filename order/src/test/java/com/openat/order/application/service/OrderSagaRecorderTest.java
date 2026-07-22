@@ -3,6 +3,8 @@ package com.openat.order.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -93,6 +95,13 @@ class OrderSagaRecorderTest {
     UUID orderId = UUID.randomUUID();
     OrderSagaState sagaState = existingSagaState(orderId);
     when(orderSagaStateRepository.findByOrderId(orderId)).thenReturn(Optional.of(sagaState));
+    doAnswer(
+            invocation -> {
+              sagaState.enterCompensating();
+              return 1;
+            })
+        .when(orderSagaStateRepository)
+        .enterCompensatingUnlessCompleted(eq(orderId), any(Instant.class));
 
     // when
     orderSagaRecorder.recordCompensating(orderId);
@@ -153,6 +162,22 @@ class OrderSagaRecorderTest {
     orderSagaRecorder.recordStockDecreased(orderId);
 
     assertThat(sagaState.getCurrentStep()).isEqualTo(OrderSagaStep.COMPENSATION_COMPLETED);
+  }
+
+  @Test
+  void should_not_regress_completed_compensation_to_compensating() {
+    UUID orderId = UUID.randomUUID();
+    OrderSagaState sagaState = existingSagaState(orderId);
+    sagaState.advanceTo(OrderSagaStep.COMPENSATION_COMPLETED);
+    when(orderSagaStateRepository.enterCompensatingUnlessCompleted(
+            eq(orderId), any(Instant.class)))
+        .thenReturn(0);
+
+    orderSagaRecorder.recordCompensating(orderId);
+
+    assertThat(sagaState.getCurrentStep()).isEqualTo(OrderSagaStep.COMPENSATION_COMPLETED);
+    verify(orderSagaStateRepository)
+        .enterCompensatingUnlessCompleted(eq(orderId), any(Instant.class));
   }
 
   @Test

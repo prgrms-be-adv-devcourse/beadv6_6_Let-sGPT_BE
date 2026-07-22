@@ -78,7 +78,7 @@
    - COMPLETE → `order.complete` + `order.completed` 이벤트 발행 (→ 정산)
    - FAILED → **재고 롤백(보상)** + `order.cancelled` / `payment_failed`
 5. 결제 미회신 시간초과 → **주문(order)이 TTL 기준으로 타임아웃 감지** → 상품 재고 롤백(보상) API 호출 → `order.failed`. (상품은 롤백 API만 제공하고 타임아웃을 감지하지 않음 — 재고 통신은 동기 API 단일 경로)
-6. 주문 취소 → 환불 요청 → 환불 결과 이벤트 (COMPLETE: `order.refund` / FAILED: `order.refund_failed` 수동 처리)
+6. 주문 취소 → 환불 요청 → 환불 결과 이벤트 (COMPLETE: `order.refund` / FAILED: `order.refund_failed` 수동 처리) *(2026-07-21 코드 확인 — order가 호출하는 payment 내부 환불 API `POST /internal/v1/refunds`는 payment에 미구현. 현재 실동작 환불 경로는 payment 유저 API 직행뿐이며, 이 때문에 order의 취소는 payment 장애 여부와 무관하게 항상 "결제 전 낙관 확정"으로 동작)*
 7. 월 정산: 결제가 발행하는 `payment.settlement.events` 적재 → **Spring Batch** (`cron 0 0 3 1 * *`, 매월 1일 03시)로 수수료·환불 차감 정산 *(2026-07-09 코드 기준 갱신 — 정산은 `order.completed`를 구독하지 않음)*
 
 ---

@@ -16,10 +16,16 @@
 특정 모듈 하나를 IntelliJ로 직접 실행하면서 개발할 때 사용.
 
 ```bash
-docker compose up -d postgres kafka redis minio minio-init
+docker compose up -d
 ```
 
-- 상품 이미지 기능은 MinIO가 필요하며, `minio-init`이 로컬 이미지 버킷을 생성한다.
+- 위 한 줄로 필수 인프라 전부(postgres·kafka·elasticsearch·redis·minio)가 뜬다. 서비스명을
+  나열하지 않는다 — 나열하면 새로 추가된 인프라(예: minio)가 빠져 이미지 업로드 등이 조용히 깨진다.
+- 전 컨테이너 `restart: always`라 최초 1회만 띄우면 이후 Docker/PC 재시작 시 자동으로 같이 뜬다.
+- 웹 UI 도구(redis-commander·kafka-ui)는 `tools` 프로필로 분리되어 기본 기동에서 제외 —
+  필요할 때 `docker compose up -d redis-commander` 처럼 이름을 지정해 띄운다.
+- 상품 이미지 기능은 MinIO가 필요하며, `minio-init`이 로컬 이미지 버킷을 생성한다(1회성 컨테이너,
+  Exited 상태가 정상).
 - `postgres`는 최초 기동(빈 볼륨) 시 `db/init/01-schemas.sql`이 자동 실행되어
   `openat` DB 안에 `member/product/orders/payment/settlement` 5개 스키마가 자동 생성됨.
 - 이미 떠 있던 볼륨이라 자동 생성이 안 됐다면:
