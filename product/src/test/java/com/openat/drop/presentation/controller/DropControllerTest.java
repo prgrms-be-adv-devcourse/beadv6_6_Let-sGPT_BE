@@ -159,7 +159,8 @@ class DropControllerTest {
           .andExpect(jsonPath("$.id").value(info.id().toString()))
           .andExpect(jsonPath("$.status").value("OPEN"))
           .andExpect(jsonPath("$.sellerName").value("노드 아틀리에"))
-          .andExpect(jsonPath("$.remainingQuantity").value(37));
+          .andExpect(jsonPath("$.remainingQuantity").value(37))
+          .andExpect(jsonPath("$.limitPerUser").value(2));
     }
 
     @Test
@@ -257,6 +258,7 @@ class DropControllerTest {
         37,
         DropStatus.OPEN,
         Instant.parse("2026-07-01T00:00:00Z"),
-        null);
+        null,
+        2);
   }
 }
