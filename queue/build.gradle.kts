@@ -22,6 +22,16 @@ dependencies {
 
     // Phase B: order.completed 이벤트를 구독해 확정(결제완료) 수량을 자체 집계
     implementation("org.springframework.kafka:spring-kafka")
+    // 버그 이력(라이브 통합 검증 중 재현됨) - `spring-kafka`만 있으면 컴파일은 되고 기동도 조용히
+    // 성공하지만, StockAdjustmentConsumer의 @KafkaListener가 완전히 무시된다(에러 로그조차 없음).
+    // 원인: Spring Boot 4.x는 Kafka 자동설정(@EnableKafka 상당의 리스너 어노테이션 처리,
+    // ConsumerFactory/KafkaTemplate 빈 자동 생성 등)을 `spring-boot-autoconfigure`에서 떼어내
+    // 별도 모듈(`spring-boot-kafka`)로 분리했다(payment 모듈이 동일한 이유로 이미 겪고 고친 문제 -
+    // flyway/restclient도 같은 패턴, payment/build.gradle.kts 주석 참고). 이 의존성이 빠지면
+    // `spring-kafka`의 클래스(KafkaTemplate 등)는 클래스패스에 있어도 그걸 스프링 빈으로
+    // 자동 연결해줄 자동설정 자체가 없어서, @KafkaListener 메서드가 등록되지 않고 어떤 예외도
+    // 던지지 않은 채 조용히 아무 일도 안 한다(디버그 로그에도 "kafka" 문자열이 전혀 안 잡힘).
+    implementation("org.springframework.boot:spring-boot-kafka")
 
     // Phase B: product의 총재고(GET /drops/{dropId}) 1회 조회는 RestClient(spring-boot-starter-web -
     // 루트 build.gradle.kts subprojects 블록에 이미 전역 적용됨)로 충분해 별도 의존성 추가 불필요.
