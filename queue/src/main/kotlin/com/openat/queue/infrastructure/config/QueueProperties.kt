@@ -21,7 +21,30 @@ data class QueueProperties(
     val admission: Admission = Admission(),
     val waiting: Waiting = Waiting(),
     val polling: Polling = Polling(),
+    val entry: Entry = Entry(),
+    val decision: Decision = Decision(),
 ) {
+    data class Entry(
+        /**
+         * 진입 요청 수량의 전역 상한(안전망). 프론트가 1~5로 제한하지만 API 직접 호출로 우회
+         * 가능하므로 서버에서 강제한다 - 상한 없는 수량(예: 999999)은 엄격한 FIFO에서 rank 0
+         * 도달 시 대기열 전체를 무기한 정지시키는 벡터가 된다. 드롭별 정밀 정책은 product의
+         * `limitPerUser`(drop 해시)를 추가로 적용한다(QueueService.enter).
+         * 정책 변경 시 env `QUEUE_ENTRY_MAX_QUANTITY`만 바꾸면 된다(재배포 불필요).
+         */
+        @DefaultValue("5") val maxQuantity: Int = 5,
+    )
+
+    data class Decision(
+        /**
+         * DECISION_REQUIRED를 처음 노출한 뒤 이 시간 안에 응답(WAIT/PARTIAL/GIVE_UP)이 없으면
+         * 무응답 이탈로 간주해 대기열에서 제거한다 - 엄격한 FIFO에서 rank 0의 미결정은 큐 전체
+         * 정지이므로 필수 장치. WAIT을 명시적으로 선택한 사람은 제거 대상이 아니다(정책상 앞
+         * 순번 유지). 마감 시각(deadline)은 상태 응답에 실어 클라이언트가 카운트다운을 보여준다.
+         */
+        @DefaultValue("30000") val timeoutMs: Long = 30000,
+    )
+
     data class Admission(
         /**
          * admit.lua가 엄격한 FIFO로 멈추기 전, "이미 입장권을 보유한 비정상 유령 항목"을
