@@ -26,7 +26,11 @@ public class TossClientConfig {
             @Value("${pg.secret-key}") String secretKey,
             @Value("${pg.base-url:https://api.tosspayments.com}") String baseUrl,
             ObjectMapper objectMapper) {
+        // HTTP/1.1 고정. JDK HttpClient 기본값(HTTP_2)은 평문 대상(부하테스트 WireMock)에 h2c 업그레이드를
+        // 시도하다 스트림이 깨진다(RST_STREAM·빈 body → ResourceAccessException 누적 → 토스 서킷 고착).
+        // 실 토스는 confirm 유량이 리미터로 10건/초 캡이라 1.1 커넥션 풀로 충분하다.
         HttpClient httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(3))
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
