@@ -1,7 +1,6 @@
 package com.openat.search.product.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -17,9 +16,6 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
@@ -43,254 +39,425 @@ class ProductSearchServiceSortTest {
             elasticsearchOperations, productEmbeddingService, new SimpleMeterRegistry());
   }
 
-  @ParameterizedTest
-  @CsvSource({
-    "'createdAt,desc', createdAt, DESC",
-    "'price,asc', price, ASC",
-    "'price,desc', price, DESC"
-  })
-  void appliesRequestedSortToFilterSearch(
-      String sortValue, String expectedProperty, Sort.Direction expectedDirection) {
-    SearchHits<ProductDocument> searchHits = emptySearchHits();
-    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
-        .thenReturn(searchHits);
-
-    productSearchService.search(null, null, null, null, 0, 20, sortValue);
-
-    ArgumentCaptor<NativeQuery> queryCaptor = ArgumentCaptor.forClass(NativeQuery.class);
-    verify(elasticsearchOperations).search(queryCaptor.capture(), eq(ProductDocument.class));
-    Sort.Order order = queryCaptor.getValue().getPageable().getSort().getOrderFor(expectedProperty);
-
-    assertThat(order).isNotNull();
-    assertThat(order.getDirection()).isEqualTo(expectedDirection);
-  }
-
-  @ParameterizedTest
-  @CsvSource({
-    "'createdAt,desc', newest, middle, oldest",
-    "'price,asc', cheapest, middle, expensive",
-    "'price,desc', expensive, middle, cheapest"
-  })
-  void sortsVectorSearchResultsByRequestedSort(
-      String sortValue, String firstId, String secondId, String thirdId) {
-    ProductDocument oldest = document("oldest", 2_000L, "2026-01-01T00:00:00Z");
-    ProductDocument newest = document("newest", 3_000L, "2026-03-01T00:00:00Z");
-    ProductDocument middle = document("middle", 2_000L, "2026-02-01T00:00:00Z");
-    ProductDocument cheapest = document("cheapest", 1_000L, "2026-01-15T00:00:00Z");
-    ProductDocument expensive = document("expensive", 3_000L, "2026-02-15T00:00:00Z");
-
-    List<ProductDocument> documents =
-        sortValue.startsWith("createdAt")
-            ? List.of(oldest, newest, middle)
-            : List.of(middle, expensive, cheapest);
+  @Test
+  void filtersLowRelevanceThenReturnsRelevantResultsByScore() {
+    ProductDocument newestIrrelevant =
+        document("newest-irrelevant", 1_000L, "2026-03-01T00:00:00Z");
+    ProductDocument newerRelevant =
+        document("newer-relevant", 1_000L, "2026-02-01T00:00:00Z");
+    ProductDocument mostRelevant = document("most-relevant", 1_000L, "2026-01-01T00:00:00Z");
 
     when(productEmbeddingService.embed("bag")).thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
-    SearchHits<ProductDocument> searchHits = searchHits(documents);
-    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
-        .thenReturn(searchHits);
-
-    Page<ProductSearchResult> result =
-        productSearchService.search("bag", null, null, null, 0, 20, sortValue);
-
-    assertThat(result.getContent())
-        .extracting(item -> item.document().id())
-        .containsExactly(firstId, secondId, thirdId);
-  }
-
-  @Test
-  void keepsOnlyVectorCandidatesContainingAllTermsInSameAttributeContext() {
-    ProductDocument bothTermsInName = document("both-in-name", "가벼운 흰색 운동화", "러닝용 신발", null);
-    ProductDocument termsAcrossFields = document("across-fields", "흰색 러닝화", "편안한 운동화", null);
-    ProductDocument onlyColor = document("only-color", "흰색 반팔티", "여름 의류", null);
-    ProductDocument onlyProduct = document("only-product", "검은색 운동화", "러닝용 신발", null);
-
-    when(productEmbeddingService.embed("흰색 운동화")).thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
     SearchHits<ProductDocument> candidates =
-        searchHits(List.of(bothTermsInName, termsAcrossFields, onlyColor, onlyProduct));
+        searchHits(
+            List.of(newestIrrelevant, newerRelevant, mostRelevant),
+            List.of(0.60F, 0.90F, 0.95F));
     when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
         .thenReturn(candidates);
 
     Page<ProductSearchResult> result =
-        productSearchService.search("흰색 운동화", null, null, null, 0, 20, null);
+        productSearchService.search("bag", null, null, null, 0, 20);
 
     assertThat(result.getContent())
         .extracting(item -> item.document().id())
-        .containsExactly("both-in-name");
+        .containsExactly("most-relevant", "newer-relevant");
   }
 
   @Test
-  void excludesAccessoryColorFromPrimaryProductColorMatch() {
-    ProductDocument burgundyDerbyWithBlackLaces =
-        document(
-            "burgundy-derby",
-            "프리미엄 운동화",
-            "수제화 스타일",
-            "버건디 스웨이드 윙팁 더비 슈즈, 브로깅 디테일, 검정색 끈, 원형 코, 갈색 밑창");
-    ProductDocument blackSneakers =
-        document("black-sneakers", "데일리 스니커즈", "가벼운 신발", "검정색 운동화, 메시 소재, 흰색 밑창, 검정색 끈");
+  void keepsSemanticVectorCandidatesWithoutLiteralQueryTerms() {
+    ProductDocument semanticMatch =
+        document("semantic", "초경량 크로스백", "작은 소지품을 휴대하기 좋은 제품", null);
 
-    when(productEmbeddingService.embed("검정색 운동화"))
+    when(productEmbeddingService.embed("여행할 때 편하게 메는 작은 가방"))
         .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
     SearchHits<ProductDocument> candidates =
-        searchHits(List.of(burgundyDerbyWithBlackLaces, blackSneakers));
+        searchHits(List.of(semanticMatch), List.of(0.92F));
     when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
         .thenReturn(candidates);
 
     Page<ProductSearchResult> result =
-        productSearchService.search("검정색 운동화", null, null, null, 0, 20, null);
+        productSearchService.search("여행할 때 편하게 메는 작은 가방", null, null, null, 0, 20);
 
     assertThat(result.getContent())
         .extracting(item -> item.document().id())
-        .containsExactly("black-sneakers");
+        .containsExactly("semantic");
   }
 
   @Test
-  void includesStandalonePrimaryColorWithProductTypeFromFirstAttribute() {
-    ProductDocument blackLoafers =
+  void keepsExplicitBlackColorMatchAheadOfHigherScoringBrownProduct() {
+    ProductDocument brownShoes =
         document(
-            "black-loafers",
-            "클래식 남성화",
-            "편안한 데일리 슈즈",
-            "가죽 로퍼, 블랙, 검정색, 다크그레이, 매트한 가죽, 끈 장식, 태슬 포인트, "
-                + "스티치 디테일, 편안한 디자인, 남성 신발, 데일리 슈즈");
+            "brown-shoes",
+            "가죽 옥스퍼드 슈즈",
+            "단정한 남성 구두",
+            "브라운, 갈색, 카멜, 매끄러운 가죽");
+    ProductDocument blackShoes =
+        document(
+            "black-shoes",
+            "가죽 더비 슈즈",
+            "단정한 남성 정장 구두",
+            "검정색, 블랙, 무광 가죽, 끈 있는 디자인");
 
-    when(productEmbeddingService.embed("검정 로퍼"))
+    when(productEmbeddingService.embed("정장에 어울리는 검은색 가죽 소재의 단정한 남성 구두"))
         .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
-    SearchHits<ProductDocument> candidates = searchHits(List.of(blackLoafers));
+    SearchHits<ProductDocument> candidates =
+        searchHits(List.of(brownShoes, blackShoes), List.of(0.99F, 0.90F));
     when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
         .thenReturn(candidates);
 
     Page<ProductSearchResult> result =
-        productSearchService.search("검정 로퍼", null, null, null, 0, 20, null);
+        productSearchService.search(
+            "정장에 어울리는 검은색 가죽 소재의 단정한 남성 구두", null, null, null, 0, 20);
 
     assertThat(result.getContent())
         .extracting(item -> item.document().id())
-        .containsExactly("black-loafers");
+        .containsExactly("black-shoes");
   }
 
-  @ParameterizedTest
-  @ValueSource(strings = {"검정 침구", "검정 베개"})
-  void matchesPrimaryColorWithProductTermsFromLaterImageAttributes(String queryText) {
-    ProductDocument blackBedding =
+  @Test
+  void excludesBeltWhenQueryExplicitlyRequestsDressShoes() {
+    ProductDocument blackShoes =
         document(
-            "black-bedding",
-            "포근한 패딩 세트",
-            "재활용 소재로 만든 침실용 제품",
-            "검정, 다크그레이(dark grey), 차콜(charcoal) 색상 침구 세트, 직사각형 베개, "
-                + "폴리에스터 리사이클 나일론 소재, 매끄러운 광택 질감, 바스락거리는 패딩 형태, "
-                + "포근한 볼륨감, 수평으로 쌓인 구도");
+            "black-shoes",
+            "가죽 더비 슈즈",
+            "단정한 남성 정장 구두",
+            "검정색, 블랙, 무광 가죽, 끈 있는 디자인");
+    ProductDocument leatherBelt =
+        document(
+            "leather-belt",
+            "아틀리에 가죽 벨트",
+            "클래식한 정장용 가죽 액세서리",
+            "브라운, 갈색, 은색 버클, 단정한 디자인");
 
-    when(productEmbeddingService.embed(queryText))
+    when(productEmbeddingService.embed("정장에 어울리는 검은색 가죽 소재의 단정한 남성 구두"))
         .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
-    SearchHits<ProductDocument> candidates = searchHits(List.of(blackBedding));
+    SearchHits<ProductDocument> candidates =
+        searchHits(List.of(blackShoes, leatherBelt), List.of(0.90F, 0.89F));
     when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
         .thenReturn(candidates);
 
     Page<ProductSearchResult> result =
-        productSearchService.search(queryText, null, null, null, 0, 20, null);
+        productSearchService.search(
+            "정장에 어울리는 검은색 가죽 소재의 단정한 남성 구두", null, null, null, 0, 20);
 
     assertThat(result.getContent())
         .extracting(item -> item.document().id())
-        .containsExactly("black-bedding");
+        .containsExactly("black-shoes");
   }
 
   @Test
-  void doesNotMatchProductNameInsideLongerCompoundAttribute() {
-    ProductDocument brownBarStool =
+  void returnsEmptyWhenNoCandidateMatchesExplicitDressShoesType() {
+    ProductDocument leatherBelt =
         document(
-            "brown-bar-stool",
-            "클래식 바 스툴",
-            "견고한 원목 의자",
-            "바 스툴, 나무 소재, 짙은 갈색, 브라운, 다크 우드, 패브릭 시트, 네이비, 남색, "
-                + "청색, 사각형 쿠션, 금속 장식 스테드, 발받침대, 견고한 구조");
+            "leather-belt",
+            "아틀리에 가죽 벨트",
+            "클래식한 정장용 가죽 액세서리",
+            "브라운, 갈색, 은색 버클, 단정한 디자인");
 
-    when(productEmbeddingService.embed("브라운 침대")).thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
-    when(productEmbeddingService.embed("브라운 발받침대"))
+    when(productEmbeddingService.embed("검은색 남성 구두"))
         .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
-    SearchHits<ProductDocument> candidates = searchHits(List.of(brownBarStool));
-    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
-        .thenReturn(candidates);
-
-    Page<ProductSearchResult> bedResult =
-        productSearchService.search("브라운 침대", null, null, null, 0, 20, null);
-    Page<ProductSearchResult> footrestResult =
-        productSearchService.search("브라운 발받침대", null, null, null, 0, 20, null);
-
-    assertThat(bedResult.getContent()).isEmpty();
-    assertThat(footrestResult.getContent())
-        .extracting(item -> item.document().id())
-        .containsExactly("brown-bar-stool");
-  }
-
-  @Test
-  void excludesCandidateWhenSingleCharacterKoreanAttributeIsMissing() {
-    ProductDocument slipOnSneakersWithoutLaces =
-        document(
-            "slip-on-without-laces",
-            "메쉬 슬립온",
-            "갑피 일체형 신발",
-            "슬립온 운동화, 검정색(블랙), 짙은회색(차콜), 빨간색(레드) 포인트, 메쉬 소재, "
-                + "니트 질감, 갑피 일체형, 신축성 있는 소재, 둥근 코, 낮은 굽, 스웨이브 러빙 스타일");
-
-    when(productEmbeddingService.embed("블랙 끈"))
-        .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
-    SearchHits<ProductDocument> candidates = searchHits(List.of(slipOnSneakersWithoutLaces));
+    SearchHits<ProductDocument> candidates = searchHits(List.of(leatherBelt), List.of(0.95F));
     when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
         .thenReturn(candidates);
 
     Page<ProductSearchResult> result =
-        productSearchService.search("블랙 끈", null, null, null, 0, 20, null);
+        productSearchService.search("검은색 남성 구두", null, null, null, 0, 20);
 
     assertThat(result.getContent()).isEmpty();
   }
 
   @Test
-  void doesNotMatchSingleKoreanSyllableInsideCompoundWord() {
-    ProductDocument socksAndSneakers =
+  void doesNotInterpretSilverSubstringInsideBlackAsGray() {
+    ProductDocument blackBag =
         document(
-            "socks-and-sneakers",
-            "블랙 로우탑 운동화",
-            "고탄성 니트 메쉬 신발",
-            "검정, 블랙, 다크그레이 스니커즈, 양말, 신발, 니트 소재, 메쉬 질감");
-    ProductDocument horseToy =
-        document("horse-toy", "말 인형", "어린이 장난감", "갈색 말, 부드러운 봉제 소재");
+            "black-bag",
+            "검정 가죽 가방",
+            "단정한 비즈니스 가방",
+            "검정색, 블랙, 가죽 소재");
+    ProductDocument brownBelt =
+        document(
+            "brown-belt",
+            "가죽 벨트",
+            "단정한 정장용 액세서리",
+            "브라운, 갈색, 은색 버클");
 
-    when(productEmbeddingService.embed("말"))
+    when(productEmbeddingService.embed("검은색 가죽 소재"))
         .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
-    SearchHits<ProductDocument> candidates = searchHits(List.of(socksAndSneakers, horseToy));
+    SearchHits<ProductDocument> candidates =
+        searchHits(List.of(brownBelt, blackBag), List.of(0.99F, 0.90F));
     when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
         .thenReturn(candidates);
 
     Page<ProductSearchResult> result =
-        productSearchService.search("말", null, null, null, 0, 20, null);
+        productSearchService.search("검은색 가죽 소재", null, null, null, 0, 20);
 
     assertThat(result.getContent())
         .extracting(item -> item.document().id())
-        .containsExactly("horse-toy");
+        .containsExactly("black-bag");
   }
 
   @Test
-  void doesNotMatchKoreanSearchTermAtStartOfLongerCompoundWord() {
-    ProductDocument noteColor =
-        document("note-color", "노트컬러", "다양한 색상의 문구 상품", null);
-    ProductDocument note = document("note", "노트", "필기용 문구 상품", null);
+  void keepsOnlyBootProductsWhenQueryExplicitlyRequestsBoots() {
+    ProductDocument wheelchair =
+        document(
+            "wheelchair",
+            "아웃도어 이동 용품",
+            "비 오는 날 사용할 수 있는 이동 장비",
+            "검정색 전동 휠체어, 방수 소재 커버, 대형 타이어");
+    ProductDocument dressShoes =
+        document(
+            "dress-shoes",
+            "가죽 옥스퍼드 슈즈",
+            "단정한 남성 구두",
+            "검정색 더비 슈즈, 가죽 소재, 낮은 굽");
+    ProductDocument blackBoots =
+        document(
+            "black-boots",
+            "검정 첼시 부츠",
+            "비 오는 날 신기 좋은 신발",
+            "블랙 첼시 부츠, 방수 가죽, 고무 밑창");
 
-    when(productEmbeddingService.embed("노트"))
+    when(productEmbeddingService.embed("비 오는 날에도 신을 수 있는 검은색 방수 아웃도어 부츠"))
         .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
-    SearchHits<ProductDocument> candidates = searchHits(List.of(noteColor, note));
+    SearchHits<ProductDocument> candidates =
+        searchHits(
+            List.of(wheelchair, dressShoes, blackBoots), List.of(0.99F, 0.95F, 0.90F));
     when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
         .thenReturn(candidates);
 
     Page<ProductSearchResult> result =
-        productSearchService.search("노트", null, null, null, 0, 20, null);
+        productSearchService.search(
+            "비 오는 날에도 신을 수 있는 검은색 방수 아웃도어 부츠",
+            null,
+            null,
+            null,
+            0,
+            20);
 
     assertThat(result.getContent())
         .extracting(item -> item.document().id())
-        .containsExactly("note");
+        .containsExactly("black-boots");
   }
 
   @Test
-  void reranksMatchingProductsByExactCosineSimilarity() {
+  void prioritizesCrossbodyProductTypeOverRequestedColor() {
+    ProductDocument beigeChair =
+        document(
+            "beige-chair",
+            "베이지 디자인 체어",
+            "작은 공간에 놓기 좋은 의자",
+            "베이지색 소형 의자, 패브릭 소재, 수납 공간");
+    ProductDocument beigeStorageBox =
+        document(
+            "beige-storage-box",
+            "베이지 수납 박스",
+            "여행용 소품을 정리하는 수납함",
+            "베이지색 소형 수납함, 손잡이 포함");
+    ProductDocument crossbodyBag =
+        document(
+            "crossbody-bag",
+            "미니멀 크로스백",
+            "여행할 때 간편하게 메는 소형 가방",
+            "검정색 크로스백, 긴 어깨 스트랩, 지퍼 포켓");
+
+    when(productEmbeddingService.embed("여행할 때 간편하게 멜 수 있는 베이지색 소형 크로스백"))
+        .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
+    SearchHits<ProductDocument> candidates =
+        searchHits(
+            List.of(beigeChair, beigeStorageBox, crossbodyBag),
+            List.of(0.99F, 0.97F, 0.90F));
+    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
+        .thenReturn(candidates);
+
+    Page<ProductSearchResult> result =
+        productSearchService.search(
+            "여행할 때 간편하게 멜 수 있는 베이지색 소형 크로스백",
+            null,
+            null,
+            null,
+            0,
+            20);
+
+    assertThat(result.getContent())
+        .extracting(item -> item.document().id())
+        .containsExactly("crossbody-bag");
+  }
+
+  @Test
+  void keepsRequestedColorWithinMatchingCrossbodyProducts() {
+    ProductDocument blackCrossbodyBag =
+        document(
+            "black-crossbody-bag",
+            "미니멀 크로스백",
+            "여행용 소형 가방",
+            "검정색 크로스백, 긴 어깨 스트랩");
+    ProductDocument beigeCrossbodyBag =
+        document(
+            "beige-crossbody-bag",
+            "데일리 크로스바디 백",
+            "가볍게 메는 소형 가방",
+            "베이지색 크로스백, 조절식 스트랩");
+
+    when(productEmbeddingService.embed("베이지색 소형 크로스백"))
+        .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
+    SearchHits<ProductDocument> candidates =
+        searchHits(
+            List.of(blackCrossbodyBag, beigeCrossbodyBag), List.of(0.99F, 0.90F));
+    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
+        .thenReturn(candidates);
+
+    Page<ProductSearchResult> result =
+        productSearchService.search("베이지색 소형 크로스백", null, null, null, 0, 20);
+
+    assertThat(result.getContent())
+        .extracting(item -> item.document().id())
+        .containsExactly("beige-crossbody-bag");
+  }
+
+  @Test
+  void usesMostSpecificProductTypeFromQuery() {
+    ProductDocument laptop =
+        document(
+            "laptop", "업무용 노트북", "휴대용 컴퓨터", "노트북 컴퓨터, 금속 본체");
+    ProductDocument genericBag =
+        document("generic-bag", "여행 가방", "소지품 수납", "캔버스 가방, 손잡이");
+    ProductDocument laptopPouch =
+        document(
+            "laptop-pouch",
+            "노트북 파우치",
+            "기기 보호용 수납 제품",
+            "노트북 슬리브, 지퍼 잠금");
+
+    when(productEmbeddingService.embed("여행용 노트북 파우치 가방"))
+        .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
+    SearchHits<ProductDocument> candidates =
+        searchHits(List.of(laptop, genericBag, laptopPouch), List.of(0.99F, 0.98F, 0.90F));
+    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
+        .thenReturn(candidates);
+
+    Page<ProductSearchResult> result =
+        productSearchService.search("여행용 노트북 파우치 가방", null, null, null, 0, 20);
+
+    assertThat(result.getContent())
+        .extracting(item -> item.document().id())
+        .containsExactly("laptop-pouch");
+  }
+
+  @Test
+  void doesNotClassifyTableLampAsFurnitureTable() {
+    ProductDocument tableLamp =
+        document(
+            "table-lamp", "원목 테이블 램프", "침실용 조명", "테이블 램프, 패브릭 갓");
+    ProductDocument table =
+        document(
+            "table", "원목 사이드 테이블", "거실용 가구", "원형 목재 테이블, 나무 다리");
+
+    when(productEmbeddingService.embed("거실에 놓을 원목 테이블"))
+        .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
+    SearchHits<ProductDocument> candidates =
+        searchHits(List.of(tableLamp, table), List.of(0.99F, 0.90F));
+    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
+        .thenReturn(candidates);
+
+    Page<ProductSearchResult> result =
+        productSearchService.search("거실에 놓을 원목 테이블", null, null, null, 0, 20);
+
+    assertThat(result.getContent())
+        .extracting(item -> item.document().id())
+        .containsExactly("table");
+  }
+
+  @Test
+  void genericBagQueryIncludesSpecificBagTypes() {
+    ProductDocument crossbodyBag =
+        document(
+            "crossbody-bag",
+            "미니멀 크로스백",
+            "여행용 소형 가방",
+            "크로스백, 어깨 스트랩");
+
+    when(productEmbeddingService.embed("가볍게 멜 수 있는 가방"))
+        .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
+    SearchHits<ProductDocument> candidates = searchHits(List.of(crossbodyBag), List.of(0.90F));
+    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
+        .thenReturn(candidates);
+
+    Page<ProductSearchResult> result =
+        productSearchService.search("가볍게 멜 수 있는 가방", null, null, null, 0, 20);
+
+    assertThat(result.getContent())
+        .extracting(item -> item.document().id())
+        .containsExactly("crossbody-bag");
+  }
+
+  @Test
+  void usesDescriptionAsProductTypeFallbackWhenPrimaryMetadataHasNoType() {
+    ProductDocument unnamedBag =
+        document("unnamed-bag", "종우", "블랙 가방", "검은색, 방수 원단, 지퍼 포켓");
+    ProductDocument chair =
+        document("chair", "디자인 체어", "거실 의자", "베이지색, 패브릭 소재");
+
+    when(productEmbeddingService.embed("검은색 가방"))
+        .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
+    SearchHits<ProductDocument> candidates =
+        searchHits(List.of(chair, unnamedBag), List.of(0.99F, 0.90F));
+    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
+        .thenReturn(candidates);
+
+    Page<ProductSearchResult> result =
+        productSearchService.search("검은색 가방", null, null, null, 0, 20);
+
+    assertThat(result.getContent())
+        .extracting(item -> item.document().id())
+        .containsExactly("unnamed-bag");
+  }
+
+  @Test
+  void recognizesRedColorSynonymInProductDescription() {
+    ProductDocument blueCarrier =
+        document("blue", "여행용 캐리어", "바퀴 달린 수하물", "파란색, 블루, 네이비");
+    ProductDocument redCarrier =
+        document("red", "여행용 캐리어", "바퀴 달린 수하물", "레드, 붉은색, 크림슨");
+
+    when(productEmbeddingService.embed("빨간색 여행용 캐리어"))
+        .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
+    SearchHits<ProductDocument> candidates =
+        searchHits(List.of(blueCarrier, redCarrier), List.of(0.99F, 0.85F));
+    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
+        .thenReturn(candidates);
+
+    Page<ProductSearchResult> result =
+        productSearchService.search("빨간색 여행용 캐리어", null, null, null, 0, 20);
+
+    assertThat(result.getContent())
+        .extracting(item -> item.document().id())
+        .containsExactly("red");
+  }
+
+  @Test
+  void usesLexicalMatchAsSmallRerankSignalForRelevantVectorCandidates() {
+    ProductDocument semanticOnly =
+        document("semantic-only", "데일리 스니커즈", "가벼운 신발", null);
+    ProductDocument lexicalMatch =
+        document("lexical-match", "러닝 운동화", "러닝용 신발", null);
+
+    when(productEmbeddingService.embed("러닝 운동화"))
+        .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
+    SearchHits<ProductDocument> candidates =
+        searchHits(List.of(semanticOnly, lexicalMatch), List.of(0.98F, 0.90F));
+    when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
+        .thenReturn(candidates);
+
+    Page<ProductSearchResult> result =
+        productSearchService.search("러닝 운동화", null, null, null, 0, 20);
+
+    assertThat(result.getContent())
+        .extracting(item -> item.document().id())
+        .containsExactly("lexical-match", "semantic-only");
+  }
+
+  @Test
+  void ranksProductsByElasticsearchRescoredKnnScore() {
     ProductDocument fartherProduct =
         document("farther", "검정색 운동화", "러닝 신발", null).withEmbedding(new float[] {0.0F, 1.0F});
     ProductDocument nearestProduct =
@@ -298,12 +465,13 @@ class ProductSearchServiceSortTest {
 
     when(productEmbeddingService.embed("검정색 운동화"))
         .thenReturn(Optional.of(new float[] {1.0F, 0.0F}));
-    SearchHits<ProductDocument> candidates = searchHits(List.of(fartherProduct, nearestProduct));
+    SearchHits<ProductDocument> candidates =
+        searchHits(List.of(fartherProduct, nearestProduct), List.of(0.88F, 0.95F));
     when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
         .thenReturn(candidates);
 
     Page<ProductSearchResult> result =
-        productSearchService.search("검정색 운동화", null, null, null, 0, 20, null);
+        productSearchService.search("검정색 운동화", null, null, null, 0, 20);
 
     assertThat(result.getContent())
         .extracting(item -> item.document().id())
@@ -320,15 +488,16 @@ class ProductSearchServiceSortTest {
     when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
         .thenReturn(candidates);
 
-    productSearchService.search("검정색 운동화", null, null, null, 0, 20, null);
+    productSearchService.search("검정색 운동화", null, null, null, 0, 20);
 
     ArgumentCaptor<NativeQuery> queryCaptor = ArgumentCaptor.forClass(NativeQuery.class);
     verify(elasticsearchOperations).search(queryCaptor.capture(), eq(ProductDocument.class));
     var knn = queryCaptor.getValue().getKnnSearches().getFirst();
 
-    assertThat(knn.k()).isEqualTo(500);
-    assertThat(knn.numCandidates()).isEqualTo(5_000);
+    assertThat(knn.k()).isEqualTo(100);
+    assertThat(knn.numCandidates()).isEqualTo(1_000);
     assertThat(knn.rescoreVector().oversample()).isEqualTo(5.0F);
+    assertThat(queryCaptor.getValue().getSourceFilter().getIncludes()).doesNotContain("embedding");
   }
 
   @Test
@@ -337,7 +506,7 @@ class ProductSearchServiceSortTest {
     when(elasticsearchOperations.search(any(NativeQuery.class), eq(ProductDocument.class)))
         .thenReturn(searchHits);
 
-    productSearchService.search(null, null, null, null, 0, 20, null);
+    productSearchService.search(null, null, null, null, 0, 20);
 
     ArgumentCaptor<NativeQuery> queryCaptor = ArgumentCaptor.forClass(NativeQuery.class);
     verify(elasticsearchOperations).search(queryCaptor.capture(), eq(ProductDocument.class));
@@ -351,14 +520,6 @@ class ProductSearchServiceSortTest {
         .satisfies(query -> assertThat(query.exists().field()).isEqualTo("deletedAt"));
     assertThat(order).isNotNull();
     assertThat(order.getDirection()).isEqualTo(Sort.Direction.DESC);
-  }
-
-  @Test
-  void rejectsUnsupportedSort() {
-    assertThatThrownBy(
-            () -> productSearchService.search(null, null, null, null, 0, 20, "updatedAt,desc"))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("createdAt,desc");
   }
 
   private SearchHits<ProductDocument> emptySearchHits() {
@@ -375,10 +536,25 @@ class ProductSearchServiceSortTest {
     return searchHits;
   }
 
+  private SearchHits<ProductDocument> searchHits(
+      List<ProductDocument> documents, List<Float> scores) {
+    SearchHits<ProductDocument> searchHits = mock(SearchHits.class);
+    List<SearchHit<ProductDocument>> hits =
+        java.util.stream.IntStream.range(0, documents.size())
+            .mapToObj(index -> searchHit(documents.get(index), scores.get(index)))
+            .toList();
+    when(searchHits.stream()).thenAnswer(ignored -> hits.stream());
+    return searchHits;
+  }
+
   private SearchHit<ProductDocument> searchHit(ProductDocument document) {
+    return searchHit(document, 0.5F);
+  }
+
+  private SearchHit<ProductDocument> searchHit(ProductDocument document, float score) {
     SearchHit<ProductDocument> searchHit = mock(SearchHit.class);
     when(searchHit.getContent()).thenReturn(document);
-    when(searchHit.getScore()).thenReturn(0.5F);
+    when(searchHit.getScore()).thenReturn(score);
     return searchHit;
   }
 
