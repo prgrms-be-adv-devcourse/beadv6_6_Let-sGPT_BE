@@ -9890,7 +9890,6 @@ metadata:
     app.kubernetes.io/part-of: argocd
     app.kubernetes.io/version: v3.4.4
 spec:
-  ttlSecondsAfterFinished: 60
   template:
     metadata:
       labels:
