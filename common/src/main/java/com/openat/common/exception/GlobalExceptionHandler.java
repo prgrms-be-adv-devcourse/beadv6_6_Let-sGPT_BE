@@ -13,6 +13,7 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * 모든 도메인이 공유하는 전역 예외 처리기.
@@ -88,6 +89,17 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(CommonErrorCode.INVALID_INPUT.getHttpStatus())
                 .body(ErrorResponse.of(CommonErrorCode.INVALID_INPUT));
+    }
+
+    // 존재하지 않는 라우트로 요청이 오면 정적 리소스 핸들러까지 못 찾아 이 예외가 던져지는데,
+    // 별도 핸들러가 없으면 404여야 할 미매칭 경로가 catch-all로 500 응답돼서 추가함.
+    /** 매칭되는 라우트/리소스 없음 → 404 NOT_FOUND, 요청 리소스 경로를 로그로 */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResourceFound(NoResourceFoundException e) {
+        log.warn("[NoResourceFoundException] 매칭되는 라우트 없음: {}", e.getResourcePath());
+        return ResponseEntity
+                .status(CommonErrorCode.NOT_FOUND.getHttpStatus())
+                .body(ErrorResponse.of(CommonErrorCode.NOT_FOUND));
     }
 
     /** 미지원 HTTP 메서드 → 405 */
