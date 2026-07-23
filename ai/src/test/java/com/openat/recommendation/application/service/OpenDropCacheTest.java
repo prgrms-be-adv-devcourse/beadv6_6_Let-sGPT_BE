@@ -185,6 +185,21 @@ class OpenDropCacheTest {
   }
 
   @Test
+  @DisplayName("카테고리 드롭은 마감 임박순으로 정렬하고 마감 시각이 없으면 뒤에 둔다")
+  void findByCategory_sortsByCloseAtWithNullLast() {
+    UUID categoryId = UUID.randomUUID();
+    DropMeta noDeadline = drop(UUID.randomUUID(), categoryId, null);
+    DropMeta later =
+        drop(UUID.randomUUID(), categoryId, Instant.parse("2099-02-01T00:00:00Z"));
+    DropMeta sooner =
+        drop(UUID.randomUUID(), categoryId, Instant.parse("2099-01-01T00:00:00Z"));
+    when(openDropClient.getAllOpenDrops()).thenReturn(List.of(noDeadline, later, sooner));
+    cache.refresh();
+
+    assertThat(cache.findByCategory(categoryId, 3)).containsExactly(sooner, later, noDeadline);
+  }
+
+  @Test
   @DisplayName("일반 드롭은 마감 임박순으로 정렬하고 마감 시각이 없으면 뒤에 둔다")
   void findGeneral_sortsByCloseAtWithNullLast() {
     DropMeta noDeadline = drop(UUID.randomUUID(), UUID.randomUUID(), null);

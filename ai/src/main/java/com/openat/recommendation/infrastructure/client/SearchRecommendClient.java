@@ -1,5 +1,7 @@
 package com.openat.recommendation.infrastructure.client;
 
+import static com.openat.recommendation.infrastructure.client.RestClientResponses.requireBody;
+
 import com.openat.recommendation.domain.model.Seed;
 import java.util.List;
 import java.util.UUID;
@@ -10,7 +12,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
 
 @Component
 public class SearchRecommendClient {
@@ -26,17 +27,14 @@ public class SearchRecommendClient {
   }
 
   public List<SimilarProductResponse> recommend(List<Seed> seeds) {
-    List<SimilarProductResponse> response =
+    return requireBody(
         restClient
             .post()
             .uri("/api/v1/searchs/recommand")
             .body(buildRequest(seeds))
             .retrieve()
-            .body(new ParameterizedTypeReference<>() {});
-    if (response == null) {
-      throw new RestClientException("Search recommendation response body is empty");
-    }
-    return response;
+            .body(new ParameterizedTypeReference<>() {}),
+        "Search recommendation response body is empty");
   }
 
   private SearchRecommendationRequest buildRequest(List<Seed> seeds) {

@@ -1,5 +1,7 @@
 package com.openat.recommendation.infrastructure.client;
 
+import static com.openat.recommendation.infrastructure.client.RestClientResponses.requireBody;
+
 import com.openat.recommendation.application.port.out.OrderSignalClient;
 import com.openat.recommendation.domain.model.PurchaseSignal;
 import java.time.Instant;
@@ -10,7 +12,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
 
 @Component
 public class OrderSignalRestClient implements OrderSignalClient {
@@ -27,7 +28,7 @@ public class OrderSignalRestClient implements OrderSignalClient {
 
   @Override
   public List<PurchaseSignal> getPurchaseSignals(UUID memberId) {
-    List<PurchaseSignalResponse> response =
+    List<PurchaseSignalResponse> response = requireBody(
         restClient
             .get()
             .uri(
@@ -38,10 +39,8 @@ public class OrderSignalRestClient implements OrderSignalClient {
                         .queryParam("limit", purchaseLimit)
                         .build())
             .retrieve()
-            .body(new ParameterizedTypeReference<>() {});
-    if (response == null) {
-      throw new RestClientException("Order purchase signal response body is empty");
-    }
+            .body(new ParameterizedTypeReference<>() {}),
+        "Order purchase signal response body is empty");
     return response.stream().map(PurchaseSignalResponse::toDomain).toList();
   }
 

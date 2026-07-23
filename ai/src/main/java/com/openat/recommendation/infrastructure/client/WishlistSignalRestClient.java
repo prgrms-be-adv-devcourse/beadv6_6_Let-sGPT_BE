@@ -1,5 +1,7 @@
 package com.openat.recommendation.infrastructure.client;
 
+import static com.openat.recommendation.infrastructure.client.RestClientResponses.requireBody;
+
 import com.openat.common.auth.UserHeaders;
 import com.openat.common.response.PageResponse;
 import com.openat.recommendation.application.port.out.WishlistSignalClient;
@@ -10,7 +12,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
 
 @Component
 public class WishlistSignalRestClient implements WishlistSignalClient {
@@ -27,7 +28,7 @@ public class WishlistSignalRestClient implements WishlistSignalClient {
 
   @Override
   public List<UUID> getWishlistProductIds(UUID memberId) {
-    PageResponse<WishlistItemResponse> response =
+    PageResponse<WishlistItemResponse> response = requireBody(
         restClient
             .get()
             .uri(
@@ -39,10 +40,8 @@ public class WishlistSignalRestClient implements WishlistSignalClient {
                         .build())
             .header(UserHeaders.USER_ID, memberId.toString())
             .retrieve()
-            .body(new ParameterizedTypeReference<>() {});
-    if (response == null) {
-      throw new RestClientException("Member wishlist response body is empty");
-    }
+            .body(new ParameterizedTypeReference<>() {}),
+        "Member wishlist response body is empty");
     return response.content().stream().map(WishlistItemResponse::productId).toList();
   }
 

@@ -23,9 +23,11 @@ import org.springframework.stereotype.Component;
 public class OpenDropCache {
 
   private static final Logger log = LoggerFactory.getLogger(OpenDropCache.class);
-  private static final Comparator<DropMeta> REPRESENTATIVE_DROP_ORDER =
+  private static final Comparator<DropMeta> CLOSE_AT_ORDER =
       Comparator.comparing(
-              DropMeta::closeAt, Comparator.nullsLast(Comparator.naturalOrder()))
+          DropMeta::closeAt, Comparator.nullsLast(Comparator.naturalOrder()));
+  private static final Comparator<DropMeta> REPRESENTATIVE_DROP_ORDER =
+      CLOSE_AT_ORDER
           .thenComparing(DropMeta::dropPrice)
           .thenComparing(DropMeta::dropId);
 
@@ -59,8 +61,11 @@ public class OpenDropCache {
   public List<UUID> filterOpenProductIds(Collection<UUID> candidateProductIds) {
     Map<UUID, DropMeta> snapshot = cache.get();
     return candidateProductIds.stream()
-        .filter(snapshot::containsKey)
-        .filter(productId -> isStillOpen(snapshot.get(productId)))
+        .filter(
+            productId -> {
+              DropMeta drop = snapshot.get(productId);
+              return drop != null && isStillOpen(drop);
+            })
         .toList();
   }
 
@@ -72,6 +77,7 @@ public class OpenDropCache {
     return cache.get().values().stream()
         .filter(this::isStillOpen)
         .filter(drop -> categoryId.equals(drop.categoryId()))
+        .sorted(CLOSE_AT_ORDER)
         .limit(limit)
         .toList();
   }
@@ -79,9 +85,7 @@ public class OpenDropCache {
   public List<DropMeta> findGeneral(int limit) {
     return cache.get().values().stream()
         .filter(this::isStillOpen)
-        .sorted(
-            Comparator.comparing(
-                DropMeta::closeAt, Comparator.nullsLast(Comparator.naturalOrder())))
+        .sorted(CLOSE_AT_ORDER)
         .limit(limit)
         .toList();
   }

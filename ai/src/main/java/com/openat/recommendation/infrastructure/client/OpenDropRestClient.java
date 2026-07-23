@@ -1,5 +1,8 @@
 package com.openat.recommendation.infrastructure.client;
 
+import static com.openat.recommendation.infrastructure.client.RestClientResponses.requireBody;
+
+import com.openat.common.response.PageResponse;
 import com.openat.recommendation.application.port.out.OpenDropClient;
 import com.openat.recommendation.domain.model.DropMeta;
 import java.time.Instant;
@@ -33,7 +36,7 @@ public class OpenDropRestClient implements OpenDropClient {
     int totalPages;
 
     do {
-      DropPageResponse<DropResponse> response = getPage(page);
+      PageResponse<DropResponse> response = getPage(page);
       if (response.content() == null) {
         throw new RestClientException("Product open drop response content is empty");
       }
@@ -49,8 +52,8 @@ public class OpenDropRestClient implements OpenDropClient {
     return List.copyOf(drops);
   }
 
-  private DropPageResponse<DropResponse> getPage(int page) {
-    DropPageResponse<DropResponse> response =
+  private PageResponse<DropResponse> getPage(int page) {
+    return requireBody(
         restClient
             .get()
             .uri(
@@ -62,15 +65,9 @@ public class OpenDropRestClient implements OpenDropClient {
                         .queryParam("size", pageSize)
                         .build())
             .retrieve()
-            .body(new ParameterizedTypeReference<>() {});
-    if (response == null) {
-      throw new RestClientException("Product open drop response body is empty");
-    }
-    return response;
+            .body(new ParameterizedTypeReference<>() {}),
+        "Product open drop response body is empty");
   }
-
-  record DropPageResponse<T>(
-      List<T> content, int page, int size, long totalElements, int totalPages) {}
 
   record DropResponse(
       UUID id,
