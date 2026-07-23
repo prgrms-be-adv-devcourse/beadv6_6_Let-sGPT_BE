@@ -252,13 +252,21 @@ jobs:
             if [ "$REV" = "$TARGET_REV" ] && [ "$S" = "Synced/Healthy" ]; then
               echo "ArgoCD converged at $REV."
               # openat 수렴 후: 자기감시·관측 Application도 건강한지 확인.
-              # OutOfSync/Degraded/Progressing 고착(예: 리소스 재생성 루프)을 배포 시점에 드러낸다.
+              # OutOfSync/Degraded/Progressing "고착"만 잡는다 — 두 앱은 main 직추적이라
+              # 새 커밋 직후 automated sync가 따라잡기 전 잠깐 OutOfSync인 게 정상이므로,
+              # 스냅샷 1회가 아니라 유예(180초) 안에 Synced/Healthy 도달하면 통과.
               for APP in argocd observability; do
-                AS=$(kubectl -n argocd get application "$APP" -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "?")
-                if [ "$AS" != "Synced/Healthy" ]; then
-                  dump_diagnostics "application/$APP 이 Synced/Healthy가 아님 ($AS) — 자기감시/관측 스택 점검 필요"
-                  exit 1
-                fi
+                app_deadline=$(( SECONDS + 180 ))
+                while :; do
+                  AS=$(kubectl -n argocd get application "$APP" -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "?")
+                  [ "$AS" = "Synced/Healthy" ] && break
+                  if [ "$SECONDS" -ge "$app_deadline" ]; then
+                    dump_diagnostics "application/$APP 이 유예 180초 내 Synced/Healthy 미도달 ($AS) — 자기감시/관측 스택 점검 필요"
+                    exit 1
+                  fi
+                  echo "application/$APP: $AS — 수렴 대기 중..."
+                  sleep 10
+                done
               done
               exit 0
             fi
