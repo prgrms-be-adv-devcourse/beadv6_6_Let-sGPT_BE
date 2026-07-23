@@ -1,5 +1,8 @@
 server:
   port: 9240
+  tomcat:
+    mbeanregistry:
+      enabled: true   # tomcat_threads_* 메트릭(Micrometer TomcatMetrics) 노출에 필요
 
 spring:
   profiles:
