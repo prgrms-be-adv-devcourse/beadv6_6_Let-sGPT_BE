@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 
 class SeedScorerTest {
 
-  private final SeedScorer scorer = scorer(0.9, 0.3, 0.5, 0.1, 0.85, 20, 20);
+  private final SeedScorer scorer = scorer(0.3, 0.5, 0.1, 0.85, 20, 20);
 
   @Test
   @DisplayName("구매 점수는 주문 횟수가 늘 때마다 0.1씩 증가한다")
@@ -64,7 +64,7 @@ class SeedScorerTest {
   @Test
   @DisplayName("찜 점수가 더 높게 설정되어도 중복 상품은 구매 신호를 유지한다")
   void scoreSignals_whenWishlistWeightExceedsPurchaseWeight_stillKeepsPurchaseSeed() {
-    SeedScorer retunedScorer = scorer(0.9, 0.8, 0.5, 0.1, 0.85, 20, 20);
+    SeedScorer retunedScorer = scorer(0.8, 0.5, 0.1, 0.85, 20, 20);
     UUID productId = UUID.randomUUID();
 
     var result = retunedScorer.scoreSignals(List.of(purchase(productId, 1)), List.of(productId));
@@ -79,28 +79,11 @@ class SeedScorerTest {
   }
 
   @Test
-  @DisplayName("현재 상품이 다른 신호와 겹치면 0.9 현재 상품 시드를 유지한다")
-  void mergeCurrentProduct_whenOverlapsOtherSignals_keepsCurrentProductSeed() {
-    UUID productId = UUID.randomUUID();
-    List<Seed> baseSeeds = scorer.scoreSignals(List.of(purchase(productId, 100)), List.of(productId));
-
-    var result = scorer.mergeCurrentProduct(baseSeeds, productId);
-
-    assertThat(result)
-        .singleElement()
-        .satisfies(
-            seed -> {
-              assertThat(seed.score()).isEqualTo(0.9);
-              assertThat(seed.buy()).isFalse();
-            });
-  }
-
-  @Test
-  @DisplayName("비로그인 상세 요청은 현재 상품 0.9 시드 하나만 만든다")
-  void mergeCurrentProduct_whenNoBaseSeeds_returnsOnlyCurrentProductSeed() {
+  @DisplayName("상세 요청은 현재 상품 시드 하나만 만든다")
+  void currentProductSeed_returnsOnlyCurrentProductSeed() {
     UUID productId = UUID.randomUUID();
 
-    var result = scorer.mergeCurrentProduct(List.of(), productId);
+    var result = scorer.currentProductSeed(productId);
 
     assertThat(result)
         .singleElement()
@@ -117,7 +100,6 @@ class SeedScorerTest {
   }
 
   private SeedScorer scorer(
-      double currentProductScore,
       double wishlistScore,
       double purchaseBaseScore,
       double purchaseIncrement,
@@ -125,7 +107,6 @@ class SeedScorerTest {
       int purchaseLimit,
       int wishlistLimit) {
     return new SeedScorer(
-        currentProductScore,
         wishlistScore,
         purchaseBaseScore,
         purchaseIncrement,

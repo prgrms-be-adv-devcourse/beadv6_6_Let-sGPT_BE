@@ -12,8 +12,11 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -27,39 +30,42 @@ public class RecommendationSeedService {
   private final SeedScorer seedScorer;
   private final SeedWeightsCache seedWeightsCache;
   private final Duration partialTtl;
+  private final Executor executor;
 
   public RecommendationSeedService(
       OrderSignalClient orderSignalClient,
       WishlistSignalClient wishlistSignalClient,
       SeedScorer seedScorer,
       SeedWeightsCache seedWeightsCache,
-      @Value("${recommendation.weights.partial-ttl:10m}") Duration partialTtl) {
+      @Value("${recommendation.weights.partial-ttl:10m}") Duration partialTtl,
+      @Qualifier("recommendationExecutor") Executor executor) {
     this.orderSignalClient = orderSignalClient;
     this.wishlistSignalClient = wishlistSignalClient;
     this.seedScorer = seedScorer;
     this.seedWeightsCache = seedWeightsCache;
     this.partialTtl = partialTtl;
+    this.executor = executor;
   }
 
-  public List<Seed> collect(UUID currentProductId) {
+  public List<Seed> collect() {
     UserContext context = UserContextHolder.get();
     if (context == null) {
-      return currentProductId == null
-          ? List.of()
-          : seedScorer.mergeCurrentProduct(List.of(), currentProductId);
+      return List.of();
     }
 
     UUID memberId = UUID.fromString(context.userId());
     List<Seed> baseSeeds =
         seedWeightsCache.find(memberId).orElseGet(() -> refreshWeightsCache(memberId));
-    return currentProductId == null
-        ? baseSeeds
-        : seedScorer.mergeCurrentProduct(baseSeeds, currentProductId);
+    return baseSeeds;
   }
 
   public List<Seed> refreshWeightsCache(UUID memberId) {
-    Optional<List<PurchaseSignal>> purchaseSignals = getPurchaseSignals(memberId);
-    Optional<List<UUID>> wishlistProductIds = getWishlistProductIds(memberId);
+    CompletableFuture<Optional<List<PurchaseSignal>>> purchaseSignalsFuture =
+        CompletableFuture.supplyAsync(() -> getPurchaseSignals(memberId), executor);
+    CompletableFuture<Optional<List<UUID>>> wishlistProductIdsFuture =
+        CompletableFuture.supplyAsync(() -> getWishlistProductIds(memberId), executor);
+    Optional<List<PurchaseSignal>> purchaseSignals = purchaseSignalsFuture.join();
+    Optional<List<UUID>> wishlistProductIds = wishlistProductIdsFuture.join();
     List<Seed> baseSeeds =
         seedScorer.scoreSignals(
             purchaseSignals.orElse(List.of()), wishlistProductIds.orElse(List.of()));

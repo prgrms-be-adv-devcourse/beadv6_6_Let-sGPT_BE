@@ -12,7 +12,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class SeedScorer {
 
-  private final double currentProductScore;
+  // 상세 시드는 현재 상품 1개뿐이라 score가 검색 결과에 영향을 주지 않음(벡터 방향만 사용).
+  // 검색 API가 score 필드를 요구하므로 유효값을 채워 보내는 더미 값이다.
+  private static final double CURRENT_PRODUCT_SCORE = 0.9;
+
   private final double wishlistScore;
   private final double purchaseBaseScore;
   private final double purchaseIncrement;
@@ -21,14 +24,12 @@ public class SeedScorer {
   private final int wishlistLimit;
 
   public SeedScorer(
-      @Value("${recommendation.weights.current-product-score}") double currentProductScore,
       @Value("${recommendation.weights.wishlist-score}") double wishlistScore,
       @Value("${recommendation.weights.purchase-base-score}") double purchaseBaseScore,
       @Value("${recommendation.weights.purchase-increment}") double purchaseIncrement,
       @Value("${recommendation.weights.purchase-max-score}") double purchaseMaxScore,
       @Value("${recommendation.weights.purchase-limit}") int purchaseLimit,
       @Value("${recommendation.weights.wishlist-limit}") int wishlistLimit) {
-    this.currentProductScore = currentProductScore;
     this.wishlistScore = wishlistScore;
     this.purchaseBaseScore = purchaseBaseScore;
     this.purchaseIncrement = purchaseIncrement;
@@ -39,51 +40,24 @@ public class SeedScorer {
 
   public List<Seed> scoreSignals(
       List<PurchaseSignal> purchaseSignals, List<UUID> wishlistProductIds) {
-    Map<UUID, PrioritizedSeed> merged = new LinkedHashMap<>();
+    Map<UUID, Seed> merged = new LinkedHashMap<>();
     purchaseSignals.stream()
         .limit(purchaseLimit)
         .map(signal -> new Seed(signal.productId(), purchaseScore(signal.orderCount()), true))
-        .forEach(seed -> merge(merged, seed, SignalType.PURCHASE));
+        .forEach(seed -> merged.putIfAbsent(seed.productId(), seed));
     wishlistProductIds.stream()
         .limit(wishlistLimit)
         .map(productId -> new Seed(productId, wishlistScore, false))
-        .forEach(seed -> merge(merged, seed, SignalType.WISHLIST));
-    return merged.values().stream().map(PrioritizedSeed::seed).toList();
+        .forEach(seed -> merged.putIfAbsent(seed.productId(), seed));
+    return List.copyOf(merged.values());
   }
 
-  public List<Seed> mergeCurrentProduct(List<Seed> baseSeeds, UUID currentProductId) {
-    Map<UUID, PrioritizedSeed> merged = new LinkedHashMap<>();
-    merge(
-        merged, new Seed(currentProductId, currentProductScore, false), SignalType.CURRENT_PRODUCT);
-    baseSeeds.forEach(
-        seed -> merge(merged, seed, seed.buy() ? SignalType.PURCHASE : SignalType.WISHLIST));
-    return merged.values().stream().map(PrioritizedSeed::seed).toList();
+  public List<Seed> currentProductSeed(UUID currentProductId) {
+    return List.of(new Seed(currentProductId, CURRENT_PRODUCT_SCORE, false));
   }
 
   public double purchaseScore(long orderCount) {
     return Math.min(purchaseBaseScore + (orderCount - 1) * purchaseIncrement, purchaseMaxScore);
   }
 
-  private void merge(Map<UUID, PrioritizedSeed> merged, Seed candidate, SignalType signalType) {
-    PrioritizedSeed prioritizedCandidate = new PrioritizedSeed(candidate, signalType);
-    merged.merge(
-        candidate.productId(),
-        prioritizedCandidate,
-        (existing, incoming) ->
-            incoming.signalType().priority > existing.signalType().priority ? incoming : existing);
-  }
-
-  private record PrioritizedSeed(Seed seed, SignalType signalType) {}
-
-  private enum SignalType {
-    WISHLIST(1),
-    PURCHASE(2),
-    CURRENT_PRODUCT(3);
-
-    private final int priority;
-
-    SignalType(int priority) {
-      this.priority = priority;
-    }
-  }
 }

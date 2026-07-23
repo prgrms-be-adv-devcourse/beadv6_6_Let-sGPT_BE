@@ -21,6 +21,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,80 +41,22 @@ class RecommendationSeedServiceTest {
   @Mock private OrderSignalClient orderSignalClient;
   @Mock private WishlistSignalClient wishlistSignalClient;
   @Mock private SeedWeightsCache seedWeightsCache;
-  private final SeedScorer seedScorer = new SeedScorer(0.9, 0.3, 0.5, 0.1, 0.85, 20, 20);
+  private final SeedScorer seedScorer = new SeedScorer(0.3, 0.5, 0.1, 0.85, 20, 20);
+  private final ExecutorService executor = Executors.newFixedThreadPool(4);
 
   @AfterEach
   void tearDown() {
     UserContextHolder.clear();
-  }
-
-  @Test
-  @DisplayName("비로그인 상세 요청은 외부 신호를 조회하지 않고 현재 상품 시드만 반환한다")
-  void collect_whenAnonymousDetail_doesNotCallSignalClients() {
-    RecommendationSeedService service =
-        new RecommendationSeedService(
-            orderSignalClient,
-            wishlistSignalClient,
-            seedScorer,
-            seedWeightsCache,
-            PARTIAL_TTL);
-    UUID productId = UUID.randomUUID();
-
-    var result = service.collect(productId);
-
-    assertThat(result)
-        .singleElement()
-        .satisfies(
-            seed -> {
-              assertThat(seed.productId()).isEqualTo(productId);
-              assertThat(seed.score()).isEqualTo(0.9);
-            });
-    verify(orderSignalClient, never()).getPurchaseSignals(org.mockito.ArgumentMatchers.any());
-    verify(wishlistSignalClient, never()).getWishlistProductIds(org.mockito.ArgumentMatchers.any());
-    verify(seedWeightsCache, never()).find(org.mockito.ArgumentMatchers.any());
+    executor.shutdownNow();
   }
 
   @Test
   @DisplayName("비로그인 홈 요청은 외부 신호를 조회하지 않고 빈 시드를 반환한다")
   void collect_whenAnonymousHome_returnsEmptySeedsWithoutCallingSignalClients() {
-    assertThat(service().collect(null)).isEmpty();
+    assertThat(service().collect()).isEmpty();
     verify(orderSignalClient, never()).getPurchaseSignals(org.mockito.ArgumentMatchers.any());
     verify(wishlistSignalClient, never()).getWishlistProductIds(org.mockito.ArgumentMatchers.any());
     verify(seedWeightsCache, never()).find(org.mockito.ArgumentMatchers.any());
-  }
-
-  @Test
-  @DisplayName("로그인 요청은 구매와 찜 신호를 조회해 타입 우선순위로 병합한 시드를 반환한다")
-  void collect_whenLoggedIn_fetchesSignalsAndReturnsMergedSeeds() {
-    RecommendationSeedService service =
-        new RecommendationSeedService(
-            orderSignalClient,
-            wishlistSignalClient,
-            seedScorer,
-            seedWeightsCache,
-            PARTIAL_TTL);
-    UUID memberId = UUID.randomUUID();
-    UUID currentProductId = UUID.randomUUID();
-    UUID overlappingProductId = UUID.randomUUID();
-    UUID wishlistOnlyProductId = UUID.randomUUID();
-    PurchaseSignal purchaseSignal = new PurchaseSignal(overlappingProductId, 2, 2, Instant.EPOCH);
-    UserContextHolder.set(new UserContext(memberId.toString(), Set.of("USER")));
-    when(orderSignalClient.getPurchaseSignals(memberId)).thenReturn(List.of(purchaseSignal));
-    when(wishlistSignalClient.getWishlistProductIds(memberId))
-        .thenReturn(List.of(overlappingProductId, wishlistOnlyProductId));
-
-    var result = service.collect(currentProductId);
-
-    assertThat(result)
-        .extracting(seed -> seed.productId(), seed -> seed.score(), seed -> seed.buy())
-        .containsExactly(
-            org.assertj.core.groups.Tuple.tuple(currentProductId, 0.9, false),
-            org.assertj.core.groups.Tuple.tuple(overlappingProductId, 0.6, true),
-            org.assertj.core.groups.Tuple.tuple(wishlistOnlyProductId, 0.3, false));
-    verify(orderSignalClient).getPurchaseSignals(memberId);
-    verify(wishlistSignalClient).getWishlistProductIds(memberId);
-    verify(seedWeightsCache)
-        .save(memberId, result.subList(1, result.size()), SeedWeightsCache.FULL_TTL);
   }
 
   @Test
@@ -120,7 +67,7 @@ class RecommendationSeedServiceTest {
     List<Seed> cached = List.of(new Seed(cachedProductId, 0.5, true));
     when(seedWeightsCache.find(memberId)).thenReturn(java.util.Optional.of(cached));
 
-    assertThat(service().collect(null)).isEqualTo(cached);
+    assertThat(service().collect()).isEqualTo(cached);
     verify(orderSignalClient, never()).getPurchaseSignals(org.mockito.ArgumentMatchers.any());
     verify(wishlistSignalClient, never()).getWishlistProductIds(org.mockito.ArgumentMatchers.any());
   }
@@ -135,6 +82,35 @@ class RecommendationSeedServiceTest {
     var result = service().refreshWeightsCache(memberId);
 
     verify(seedWeightsCache).save(memberId, result, SeedWeightsCache.FULL_TTL);
+  }
+
+  @Test
+  @DisplayName("구매와 찜 신호를 병렬로 조회한다")
+  void refreshWeightsCache_fetchesSignalsConcurrently() throws Exception {
+    UUID memberId = UUID.randomUUID();
+    CountDownLatch started = new CountDownLatch(2);
+    CountDownLatch release = new CountDownLatch(1);
+    when(orderSignalClient.getPurchaseSignals(memberId))
+        .thenAnswer(
+            ignored -> {
+              started.countDown();
+              release.await(1, TimeUnit.SECONDS);
+              return List.of();
+            });
+    when(wishlistSignalClient.getWishlistProductIds(memberId))
+        .thenAnswer(
+            ignored -> {
+              started.countDown();
+              release.await(1, TimeUnit.SECONDS);
+              return List.of();
+            });
+
+    CompletableFuture<List<Seed>> result =
+        CompletableFuture.supplyAsync(() -> service().refreshWeightsCache(memberId));
+
+    assertThat(started.await(1, TimeUnit.SECONDS)).isTrue();
+    release.countDown();
+    assertThat(result.get(1, TimeUnit.SECONDS)).isEmpty();
   }
 
   @Test
@@ -189,7 +165,7 @@ class RecommendationSeedServiceTest {
     when(orderSignalClient.getPurchaseSignals(memberId)).thenThrow(new RuntimeException("order"));
     when(wishlistSignalClient.getWishlistProductIds(memberId)).thenReturn(List.of(wishlistId));
 
-    var result = service().collect(null);
+    var result = service().collect();
 
     assertThat(result).extracting(seed -> seed.productId()).containsExactly(wishlistId);
     verify(seedWeightsCache).save(memberId, result, PARTIAL_TTL);
@@ -205,7 +181,7 @@ class RecommendationSeedServiceTest {
     when(wishlistSignalClient.getWishlistProductIds(memberId))
         .thenThrow(new RuntimeException("member"));
 
-    var result = service().collect(null);
+    var result = service().collect();
 
     assertThat(result).extracting(seed -> seed.productId()).containsExactly(purchaseId);
     verify(seedWeightsCache).save(memberId, result, PARTIAL_TTL);
@@ -220,7 +196,7 @@ class RecommendationSeedServiceTest {
         .thenThrow(new RuntimeException("member"));
     when(seedWeightsCache.find(memberId)).thenReturn(Optional.empty());
 
-    assertThat(service().collect(null)).isEmpty();
+    assertThat(service().collect()).isEmpty();
     verify(seedWeightsCache, never())
         .save(
             org.mockito.ArgumentMatchers.any(),
@@ -234,7 +210,8 @@ class RecommendationSeedServiceTest {
         wishlistSignalClient,
         seedScorer,
         seedWeightsCache,
-        PARTIAL_TTL);
+        PARTIAL_TTL,
+        executor);
   }
 
   private UUID login() {
