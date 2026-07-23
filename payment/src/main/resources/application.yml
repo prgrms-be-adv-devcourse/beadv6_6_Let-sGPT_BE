@@ -38,6 +38,9 @@ toss:
   rl:
     permits-per-sec: ${TOSS_RL_PERMITS_PER_SEC:10} # 초당 허용 호출 수(인스턴스별 정적 분할)
     timeout-ms: ${TOSS_RL_TIMEOUT_MS:500} # 허가 대기 타임아웃
+  retry:
+    max-attempts: ${TOSS_RT_MAX_ATTEMPTS:2} # confirm 네트워크 오류 시 총 시도 횟수(원호출 1 + 재시도 1)
+    wait-ms: ${TOSS_RT_WAIT_MS:200} # 재시도 사이 대기 시간
 order:
   cb:
     slow-call-ms: ${ORDER_CB_SLOW_CALL_MS:1500} # 주문검증 read 2s에 맞춘 느린 호출 판정 시간
