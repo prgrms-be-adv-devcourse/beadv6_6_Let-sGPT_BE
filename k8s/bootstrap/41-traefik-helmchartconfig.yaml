@@ -1,0 +1,20 @@
+# k3s 번들 Traefik 서비스 오버라이드 (k3s 내장 helm-controller 훅 — 헬름 CLI 불요).
+# externalTrafficPolicy=Local: klipper-lb SNAT로 클라이언트 소스 IP가 유실(10.42.x.x)되는 것을 방지.
+#   웹훅 소스 IP 화이트리스트(base/34-webhook-ipallowlist-middleware.yaml)의 전제 조건 —
+#   Cluster 정책으로 되돌리면 Traefik이 실 IP를 못 봐 화이트리스트가 전 웹훅을 403 차단한다.
+# nodeSelector: DNS(openat.duckdns.org)가 서버 노드(ip-10-0-1-160) 공인 IP를 가리키므로,
+#   Local 정책에서 Traefik 파드가 다른 노드로 이동하면 전 인입이 드롭된다. 파드를 DNS 대상
+#   노드에 명시 고정(에이전트 노드 taint에 암묵 의존하지 않음).
+# 클러스터에 2026-07-23 kubectl apply 적용 완료 — 이 파일은 재현용 원본.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        externalTrafficPolicy: Local
+    nodeSelector:
+      kubernetes.io/hostname: ip-10-0-1-160

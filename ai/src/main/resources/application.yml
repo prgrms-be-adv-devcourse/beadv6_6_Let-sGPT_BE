@@ -2,6 +2,10 @@ server:
   port: 9160
 
 spring:
+  kafka:
+    consumer:
+      group-id: ai-service
+      auto-offset-reset: latest
   profiles:
     active: local
   application:
@@ -24,7 +28,6 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: method
 
-# k8s probe + Prometheus 메트릭
 management:
   endpoints:
     web:
@@ -33,8 +36,46 @@ management:
   endpoint:
     health:
       probes:
-        enabled: true   # k8s 밖에서도 readiness/liveness 활성화
+        enabled: true
   tracing:
     export:
       otlp:
-        enabled: false   # 로컬 기본 off (k8s ConfigMap에서 true로 override)
+        enabled: false
+
+services:
+  internal:
+    timeout: ${INTERNAL_API_TIMEOUT:2000ms}
+  order:
+    url: ${ORDER_SERVICE_URL:http://localhost:9120}
+  member:
+    url: ${MEMBER_SERVICE_URL:http://localhost:9100}
+  product:
+    url: ${PRODUCT_SERVICE_URL:http://localhost:9110}
+  search:
+    url: ${SEARCH_SERVICE_URL:http://localhost:9240}
+    timeout: ${SEARCH_SERVICE_TIMEOUT:2500ms}
+    recommendation-size: ${SEARCH_RECOMMENDATION_SIZE:20}
+
+inference:
+  base-url: ${INFERENCE_BASE_URL:https://api.inferway.xyz/v1}
+  api-key: ${INFERENCE_API_KEY:}
+  model: ${INFERENCE_MODEL:chat}
+  timeout: ${INFERENCE_LLM_TIMEOUT:120000ms}
+
+recommendation:
+  kafka:
+    topic:
+      order-completed: order.completed.events
+      wishlist-changed: wishlist.changed.events
+  fallback-limit: ${RECOMMENDATION_FALLBACK_LIMIT:3}
+  drop-cache:
+    page-size: ${RECOMMENDATION_DROP_CACHE_PAGE_SIZE:100}
+    refresh-interval: ${RECOMMENDATION_DROP_CACHE_REFRESH_INTERVAL:5m}
+  weights:
+    partial-ttl: ${RECOMMENDATION_WEIGHTS_PARTIAL_TTL:10m}
+    wishlist-score: ${RECOMMENDATION_WISHLIST_SCORE:0.3}
+    purchase-base-score: ${RECOMMENDATION_PURCHASE_BASE_SCORE:0.5}
+    purchase-increment: ${RECOMMENDATION_PURCHASE_INCREMENT:0.1}
+    purchase-max-score: ${RECOMMENDATION_PURCHASE_MAX_SCORE:0.85}
+    purchase-limit: ${RECOMMENDATION_PURCHASE_LIMIT:20}
+    wishlist-limit: ${RECOMMENDATION_WISHLIST_LIMIT:20}

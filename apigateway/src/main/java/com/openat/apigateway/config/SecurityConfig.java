@@ -191,6 +191,9 @@ public class SecurityConfig {
                                 "/api/v1/products", "/api/v1/products/**",
                                 "/api/v1/drops", "/api/v1/drops/**").access(scopedFor("openat-product"))
 
+                        // 개인화 추천 읽기 — 공개 (비회원도 기본 추천 조회 가능)
+                        .pathMatchers(HttpMethod.GET, "/api/v1/recommendations").permitAll()
+
                         // 그 외 모든 경로: 인증 필요 + scoped 토큰 명시적 거부
                         .anyExchange().access(authenticatedAndNotScoped())
                 )

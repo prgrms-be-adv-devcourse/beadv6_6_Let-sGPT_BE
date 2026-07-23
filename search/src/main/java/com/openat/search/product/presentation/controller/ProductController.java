@@ -84,7 +84,7 @@ public class ProductController {
   @PostMapping("/search")
   public ResponseEntity<PageResponse<ProductResponse>> searchProducts(
       @io.swagger.v3.oas.annotations.parameters.RequestBody(
-              description = "Product search conditions including the sort field",
+              description = "Product search conditions",
               required = true,
               content =
                   @Content(
@@ -100,8 +100,7 @@ public class ProductController {
                                     "startPrice": null,
                                     "endPrice": null,
                                     "page": 0,
-                                    "size": 20,
-                                    "sort": "createdAt,desc"
+                                    "size": 20
                                   }
                                   """)))
           @Valid
@@ -109,7 +108,7 @@ public class ProductController {
           ProductSearchApiRequest request) {
     ProductSearchApiRequest safeRequest =
         request == null
-            ? new ProductSearchApiRequest(null, null, null, null, null, null, null)
+            ? new ProductSearchApiRequest(null, null, null, null, null, null)
             : request;
 
     Page<ProductResponse> products =
@@ -120,8 +119,7 @@ public class ProductController {
                 safeRequest.startPrice(),
                 safeRequest.endPrice(),
                 safeRequest.page(),
-                safeRequest.size(),
-                safeRequest.sort())
+                safeRequest.size())
             .map(ProductResponse::from);
 
     return ResponseEntity.ok(PageResponse.of(products));

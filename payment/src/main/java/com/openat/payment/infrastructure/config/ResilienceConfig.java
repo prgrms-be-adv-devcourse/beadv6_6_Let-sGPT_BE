@@ -1,13 +1,20 @@
 package com.openat.payment.infrastructure.config;
 
+import com.openat.common.exception.BusinessException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.micrometer.tagged.TaggedCircuitBreakerMetrics;
 import io.github.resilience4j.micrometer.tagged.TaggedRateLimiterMetrics;
+import io.github.resilience4j.micrometer.tagged.TaggedRetryMetrics;
 import io.github.resilience4j.ratelimiter.RateLimiter;
 import io.github.resilience4j.ratelimiter.RateLimiterConfig;
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryConfig;
+import io.github.resilience4j.retry.RetryRegistry;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +50,11 @@ public class ResilienceConfig {
   @Bean
   public RateLimiterRegistry rateLimiterRegistry() {
     return RateLimiterRegistry.ofDefaults();
+  }
+
+  @Bean
+  public RetryRegistry retryRegistry() {
+    return RetryRegistry.ofDefaults();
   }
 
   /**
@@ -127,6 +139,34 @@ public class ResilienceConfig {
     return registry.rateLimiter("toss", config);
   }
 
+  /**
+   * 토스 confirm 계열 네트워크 오류 멱등 재시도. maxAttempts(원호출+재시도)·waitDuration은 env.
+   * confirm은 Idempotency-Key를 토스에 그대로 전달하므로 유휴 종료된 keep-alive 커넥션 재사용에서 오는
+   * {@link ResourceAccessException}(EOF 등)에 한해 안전하게 재시도한다.
+   *
+   * <p>재시도 금지: 서킷 open({@link CallNotPermittedException})·유량 거절({@link RequestNotPermitted})·
+   * 도메인 예외({@link BusinessException})·5xx 불명 상태({@link IllegalStateException}) — 응답 상태가
+   * 불확실한 예외는 멱등 재시도 대상이 아니라 기존 보정 로직 경로로 흘려보낸다.
+   */
+  @Bean
+  public Retry tossConfirmRetry(
+      RetryRegistry registry,
+      @Value("${toss.retry.max-attempts:2}") int maxAttempts,
+      @Value("${toss.retry.wait-ms:200}") long waitMs) {
+    RetryConfig config =
+        RetryConfig.custom()
+            .maxAttempts(maxAttempts)
+            .waitDuration(Duration.ofMillis(waitMs))
+            .retryExceptions(ResourceAccessException.class)
+            .ignoreExceptions(
+                CallNotPermittedException.class,
+                RequestNotPermitted.class,
+                BusinessException.class,
+                IllegalStateException.class)
+            .build();
+    return registry.retry("tossConfirm", config);
+  }
+
   @Bean
   public TaggedCircuitBreakerMetrics circuitBreakerMetrics(
       CircuitBreakerRegistry registry, MeterRegistry meterRegistry) {
@@ -140,6 +180,13 @@ public class ResilienceConfig {
   public TaggedRateLimiterMetrics rateLimiterMetrics(
       RateLimiterRegistry registry, MeterRegistry meterRegistry) {
     TaggedRateLimiterMetrics metrics = TaggedRateLimiterMetrics.ofRateLimiterRegistry(registry);
+    metrics.bindTo(meterRegistry);
+    return metrics;
+  }
+
+  @Bean
+  public TaggedRetryMetrics retryMetrics(RetryRegistry registry, MeterRegistry meterRegistry) {
+    TaggedRetryMetrics metrics = TaggedRetryMetrics.ofRetryRegistry(registry);
     metrics.bindTo(meterRegistry);
     return metrics;
   }

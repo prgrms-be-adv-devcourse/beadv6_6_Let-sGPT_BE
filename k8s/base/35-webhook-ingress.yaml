@@ -1,0 +1,29 @@
+# 토스 웹훅 3경로 전용 Ingress — 소스 IP 화이트리스트 적용.
+# Traefik 라우터 우선순위는 규칙 길이 기반 → 이 구체적 경로들이 openat-ingress(31)의 /api Prefix보다
+# 먼저 매칭돼 ipAllowList 체인을 태운다. 나머지 /api 트래픽은 31-ingress 그대로.
+# 미들웨어 순서: redirect-https(HTTP→HTTPS) → webhook-ipallowlist(소스 IP 검사). 둘 다 openat ns.
+# 적용 전 klipper-lb 소스 IP 보존 검증 선행 필수 — 소스 IP 유실 시 웹훅 전면 403이라 미검증 상태로 붙이면 안 됨.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: openat-webhook-ingress
+  namespace: openat
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: openat-redirect-https@kubernetescrd,openat-webhook-ipallowlist@kubernetescrd
+spec:
+  tls:
+    - hosts: [openat.duckdns.org]
+      secretName: openat-tls
+  rules:
+    - host: openat.duckdns.org
+      http:
+        paths:
+          - path: /api/v1/payments/webhook
+            pathType: Exact
+            backend: { service: { name: apigateway, port: { number: 8000 } } }
+          - path: /api/v1/wallet/charge/webhook
+            pathType: Exact
+            backend: { service: { name: apigateway, port: { number: 8000 } } }
+          - path: /api/v1/refunds/webhook
+            pathType: Exact
+            backend: { service: { name: apigateway, port: { number: 8000 } } }
