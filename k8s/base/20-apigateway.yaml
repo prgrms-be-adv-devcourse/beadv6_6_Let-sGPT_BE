@@ -5,10 +5,6 @@ kind: Deployment
 metadata:
   name: apigateway
   namespace: openat
-  annotations:
-    # k3s_node_coldboot_contention_plan §2-C: 7서비스 동시배포(트리거 A) 방지 — ArgoCD가
-    # wave 순서(낮은 값 먼저, 이전 wave 헬스 확인 후 다음 진행)로만 apply하게 강제.
-    argocd.argoproj.io/sync-wave: "1"
 spec:
   replicas: 1
   # 단일 워커 노드: 롤링 시 옛+새 파드 2배 메모리로 Insufficient memory Pending(Q80 #7) 방지.
