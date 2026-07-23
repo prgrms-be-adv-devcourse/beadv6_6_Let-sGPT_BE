@@ -250,7 +250,17 @@ jobs:
 
             # ── 성공: 이번에 push한 revision으로 Synced/Healthy 수렴 ──
             if [ "$REV" = "$TARGET_REV" ] && [ "$S" = "Synced/Healthy" ]; then
-              echo "ArgoCD converged at $REV."; exit 0
+              echo "ArgoCD converged at $REV."
+              # openat 수렴 후: 자기감시·관측 Application도 건강한지 확인.
+              # OutOfSync/Degraded/Progressing 고착(예: 리소스 재생성 루프)을 배포 시점에 드러낸다.
+              for APP in argocd observability; do
+                AS=$(kubectl -n argocd get application "$APP" -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "?")
+                if [ "$AS" != "Synced/Healthy" ]; then
+                  dump_diagnostics "application/$APP 이 Synced/Healthy가 아님 ($AS) — 자기감시/관측 스택 점검 필요"
+                  exit 1
+                fi
+              done
+              exit 0
             fi
 
             # ── ① sync 작업 실패 (반드시 이번 revision일 때만 — 잔존 Failed 오인 방지) ──
