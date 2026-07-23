@@ -8,33 +8,36 @@ resources:
 - ../base
 
 images:
+- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/ai
+  newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/ai
+  newTag: e9c17c79ee25ac79f8f1c5e85d4d43a7f29389d3
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
-  newTag: cfdf6a1cec498581867409d73fd961c4b67b3edc
+  newTag: e9c17c79ee25ac79f8f1c5e85d4d43a7f29389d3
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
-  newTag: cfdf6a1cec498581867409d73fd961c4b67b3edc
+  newTag: e9c17c79ee25ac79f8f1c5e85d4d43a7f29389d3
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order
-  newTag: 6ad4079fa6a2fa7fdbb6cfd08b5dea621c14aac4
+  newTag: e9c17c79ee25ac79f8f1c5e85d4d43a7f29389d3
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
-  newTag: 6ad4079fa6a2fa7fdbb6cfd08b5dea621c14aac4
+  newTag: e9c17c79ee25ac79f8f1c5e85d4d43a7f29389d3
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
-  newTag: 736d78cf98e2543de49c4492c085535d4f988b85
+  newTag: e9c17c79ee25ac79f8f1c5e85d4d43a7f29389d3
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
-  newTag: cfdf6a1cec498581867409d73fd961c4b67b3edc
+  newTag: e9c17c79ee25ac79f8f1c5e85d4d43a7f29389d3
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/recommendation
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/recommendation
   newTag: 8e3e630da494b6c04da0219dce8bb8877d8b6552
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/search
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/search
-  newTag: 736d78cf98e2543de49c4492c085535d4f988b85
+  newTag: e9c17c79ee25ac79f8f1c5e85d4d43a7f29389d3
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
-  newTag: 0309b5c771d9e9103f4836ad5100bb2e3dce5e24
+  newTag: e9c17c79ee25ac79f8f1c5e85d4d43a7f29389d3
 - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
   newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
   newTag: 2197c5e63935b9c4f0976bc9fae187c57c9c30fc
