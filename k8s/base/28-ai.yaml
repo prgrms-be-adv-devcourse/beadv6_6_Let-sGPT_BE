@@ -4,8 +4,6 @@ kind: Deployment
 metadata:
   name: ai
   namespace: openat
-  annotations:
-    argocd.argoproj.io/sync-wave: "9"
 spec:
   replicas: 1
   strategy:
