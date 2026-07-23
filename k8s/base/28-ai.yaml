@@ -50,8 +50,9 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 5
           resources:
-            limits: { memory: "300Mi" }
-            requests: { cpu: "50m", memory: "256Mi" }
+            # Kafka 컨슈머 2개 + 드롭 캐시 탑재 후 300Mi에서 OOMKilled 반복(동급 서비스 실사용 320~430Mi).
+            limits: { memory: "512Mi" }
+            requests: { cpu: "50m", memory: "384Mi" }
 ---
 apiVersion: v1
 kind: Service
