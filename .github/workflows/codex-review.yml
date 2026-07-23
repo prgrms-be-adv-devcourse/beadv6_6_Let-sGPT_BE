@@ -1,0 +1,89 @@
+name: Codex PR Review
+
+# AI PR 리뷰(에이전틱). 러너에 레포를 체크아웃하고 Codex CLI(read-only 샌드박스)가
+# 디프 + 필요 시 주변 코드를 직접 탐색하며 리뷰한다. 결과는 PR에 통짜 코멘트 1개.
+# 실행 조건: 리포 변수 vars.CODEX_REVIEW_ENABLED == 'true' + 시크릿 OPENAI_API_KEY 등록.
+# 모델 id는 리포 변수 vars.CODEX_MODEL 로 외부화(사용자가 gpt-5.6-sol 로 등록 예정).
+# synchronize 트리거 없음 — push마다 재리뷰는 비용 낭비. 재리뷰가 필요하면 PR을
+# ready_for_review 토글하거나 reopen.
+on:
+  pull_request:
+    branches: [main, dev]
+    types: [opened, reopened, ready_for_review]
+
+concurrency:
+  group: codex-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      ${{ vars.CODEX_REVIEW_ENABLED == 'true'
+          && github.event.pull_request.draft == false
+          && github.event.sender.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # base 브랜치와의 merge-base diff 계산에 전체 이력 필요
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Codex CLI 설치
+        run: npm install -g @openai/codex
+
+      - name: 에이전틱 리뷰 실행
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}   # env 인증만으로 codex exec 동작(별도 login 스텝 불요)
+          CODEX_MODEL: ${{ vars.CODEX_MODEL }}   # 모델 id는 리포 변수로 외부화 — 교체 시 워크플로 수정 불요
+          BASE_REF: ${{ github.base_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          git diff origin/"$BASE_REF"...HEAD > /tmp/pr.diff
+          # 디프가 비면(문서만 변경 등도 리뷰는 하되) 크기 상한으로 폭주 방지
+          DIFF_BYTES=$(wc -c < /tmp/pr.diff)
+          if [ "$DIFF_BYTES" -gt 400000 ]; then
+            head -c 400000 /tmp/pr.diff > /tmp/pr.diff.clip
+            mv /tmp/pr.diff.clip /tmp/pr.diff
+            echo "(디프 400KB 초과 — 앞부분만 전달, 에이전트가 나머지는 직접 탐색)" >> /tmp/pr.diff
+          fi
+          {
+            cat .github/codex-review-prompt.md
+            echo
+            echo "## PR 제목"
+            echo "$PR_TITLE"
+            echo
+            echo "## 이 PR의 디프 (base: $BASE_REF)"
+            echo '```diff'
+            cat /tmp/pr.diff
+            echo '```'
+          } > /tmp/review-input.md
+          # 프롬프트는 stdin으로 전달('-'). 인자로 넘기면 대용량 디프가 단일 argv
+          # 상한(MAX_ARG_STRLEN 128KB)을 넘겨 "Argument list too long"으로 실패한다.
+          codex exec \
+            --sandbox read-only \
+            --model "$CODEX_MODEL" \
+            --output-last-message /tmp/review-output.md \
+            - < /tmp/review-input.md
+
+      - name: PR 코멘트 게시 (sticky — 재실행 시 갱신)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          MARKER='<!-- codex-review -->'
+          printf '%s\n\n%s\n' "$MARKER" "$(cat /tmp/review-output.md)" > /tmp/comment.md
+          EXISTING=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -1)
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${EXISTING}" \
+              -F body=@/tmp/comment.md
+          else
+            gh pr comment "$PR_NUMBER" --body-file /tmp/comment.md
+          fi

@@ -1,0 +1,29 @@
+name: CodeQL
+
+# 코드 정적 보안 분석(GitHub CodeQL). Snyk 스캔과 같은 성격의 비차단 독립 워크플로다.
+# PR마다 돌리지 않고(과함) 주 1회 정기 스캔 + 수동 실행만. PR을 막지 않으며, 결과는
+# 레포 Security 탭의 code scanning 알림으로 올라간다(별도 시크릿 불요 — GITHUB_TOKEN 사용).
+# 빌드 없이 소스만 스캔(build-mode: none)해 Gradle 빌드 시간·실패 리스크를 피한다.
+on:
+  schedule:
+    - cron: "0 20 * * 0"   # 매주 일 20:00 UTC = 월 05:00 KST
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # code scanning 결과 업로드
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CodeQL 초기화 (Java/Kotlin · 빌드 없이 스캔)
+        uses: github/codeql-action/init@v3
+        with:
+          languages: java-kotlin
+          build-mode: none
+
+      - name: CodeQL 분석
+        uses: github/codeql-action/analyze@v3
