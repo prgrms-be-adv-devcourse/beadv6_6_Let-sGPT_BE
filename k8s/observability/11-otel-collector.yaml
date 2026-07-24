@@ -109,6 +109,11 @@ data:
         check_interval: 1s
         limit_mib: 256        # gate2 A-1: resources.limits.memory(320Mi)−64Mi(Go 비힙 쿠션). OOMKill 전 스스로 드롭
         spike_limit_mib: 48   # soft=208, hard=256
+      probabilistic_sampler:
+        # 단위는 퍼센트(10 = 10%). Boot property(0~1 비율)와 스케일이 다름 —
+        # "0.1"이라 쓰면 0.1%가 되는 함정 주의. TraceID 해시 기반이라 같은 트레이스의
+        # 스팬이 쪼개지지 않는다(contrib v0.156.0 README 검증).
+        sampling_percentage: ${env:TRACES_SAMPLING_PERCENTAGE:-10}
       batch:
         timeout: 5s
         send_batch_size: 1024
@@ -133,7 +138,7 @@ data:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, batch, resource]
+          processors: [memory_limiter, probabilistic_sampler, batch, resource]
           exporters: [otlp/tempo]
         metrics:
           receivers: [prometheus]
@@ -165,6 +170,9 @@ spec:
         - name: otel-collector
           image: otel/opentelemetry-collector-contrib:0.156.0
           args: ["--config=/etc/otel/otel-collector.yaml"]
+          env:
+            # 트레이스 샘플링 단일 노브 — 값 변경 = 이 한 줄 → 머지 → collector 파드 1개만 롤링.
+            - { name: TRACES_SAMPLING_PERCENTAGE, value: "10" }
           ports:
             - { containerPort: 4317 }
             - { containerPort: 4318 }
