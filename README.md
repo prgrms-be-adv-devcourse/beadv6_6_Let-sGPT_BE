@@ -33,7 +33,7 @@
 
 ## 🏗️ 아키텍처
 
-각 서비스는 **클린 아키텍처**(`domain → application → infrastructure / presentation`)를 따르고, 의존성은 언제나 안쪽 도메인을 향한다. 서비스는 자기 데이터만 소유하며, 다른 도메인의 데이터에는 원칙적으로 **API 호출이나 이벤트로만** 접근한다(FK로 묶지 않고 값으로 참조한다). 관리자 집계는 팀이 합의한 예외로 `ai`가 소유하는 읽기 전용 `ai_read` view 계층에만 허용한다.
+각 서비스는 **클린 아키텍처**(`domain → application → infrastructure / presentation`)를 따르고, 의존성은 언제나 안쪽 도메인을 향한다. 서비스는 자기 데이터만 소유하며, 다른 도메인의 데이터에는 **API 호출이나 이벤트로만** 접근한다(FK로 묶지 않고 값으로 참조한다).
 
 ```mermaid
 flowchart TB
@@ -93,7 +93,7 @@ flowchart TB
 | **payment** | `9130` | PG(토스) 연동, 결제·환불, 결과 이벤트 발행, 민감정보 AES 암호화 |
 | **settlement** | `9140` | 이벤트 기반 판매 적재, **Spring Batch** 월 정산 |
 | **common** | — | 에러코드·공통 응답·보안 설정·인증 필터 등 서비스 간 계약 |
-| `search` · `ai` | _파이널_ | Elasticsearch 하이브리드 검색, 관리자 AI 어시스턴트·RAG·자체 추론 서버 연동 |
+| `search` · `ai` | _파이널_ | Elasticsearch 하이브리드 검색, Spring AI·RAG 챗봇 (예정) |
 
 > 포트 규칙 — 메인 도메인은 10단위로 올라가고, 파생 서비스는 부모 포트 + 1을 쓴다.
 
@@ -148,7 +148,7 @@ sequenceDiagram
 | **문서** | springdoc-openapi (Swagger UI) |
 | **인프라 · CI/CD** | Docker · GitHub Actions(paths 필터, GHCR) · Terraform(AWS) |
 | **부하 테스트** | k6 |
-| **파이널 추가** | Elasticsearch · 자체 추론 서버 · 관리자 AI 어시스턴트(MVC SSE · RAG · 외부 도구) |
+| **파이널 예정** | Elasticsearch · Spring AI · WebFlux(SSE) · RAG |
 
 ---
 

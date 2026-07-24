@@ -1,13 +1,10 @@
 package com.openat.apigateway.config;
 
+import com.openat.common.auth.UserHeaders;
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.ReactiveSecurityContextHolder;
-import org.springframework.security.core.context.SecurityContext;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
@@ -16,8 +13,9 @@ import reactor.core.publisher.Mono;
  *
  * <p>{@code #{@userIdKeyResolver}} / {@code #{@ipKeyResolver}}로 라우트별 참조한다.
  *
- * <p>빈 키 금지: SCG는 빈 키를 거부(deny-empty-key)하므로 두 리졸버 모두 항상 비어있지 않은 키를 돌려준다. confirm 계열은 검증된 JWT
- * subject로 제한하고, JWT 인증 정보가 없으면 IP로 폴백한다. 웹훅은 애초에 인증이 없어 IP 키만 쓴다.
+ * <p>빈 키 금지: SCG는 빈 키를 거부(deny-empty-key)하므로 두 리졸버 모두 항상 비어있지 않은 키를 돌려준다.
+ * confirm 계열은 유저별({@code X-User-Id}, {@code UserContextRelayFilter}가 주입)로 제한하되, 헤더가
+ * 없으면(비인증 등) IP로 폴백해 절대 빈 키를 반환하지 않는다. 웹훅은 애초에 인증이 없어 IP 키만 쓴다.
  */
 @Configuration
 public class RateLimiterKeyResolverConfig {
@@ -27,15 +25,13 @@ public class RateLimiterKeyResolverConfig {
   @Primary
   @Bean
   public KeyResolver userIdKeyResolver() {
-    return exchange ->
-        ReactiveSecurityContextHolder.getContext()
-            .mapNotNull(SecurityContext::getAuthentication)
-            .filter(Authentication::isAuthenticated)
-            .filter(JwtAuthenticationToken.class::isInstance)
-            .cast(JwtAuthenticationToken.class)
-            .mapNotNull(authentication -> authentication.getToken().getSubject())
-            .filter(subject -> !subject.isBlank())
-            .switchIfEmpty(Mono.fromSupplier(() -> clientIp(exchange)));
+    return exchange -> {
+      String userId = exchange.getRequest().getHeaders().getFirst(UserHeaders.USER_ID);
+      if (userId != null && !userId.isBlank()) {
+        return Mono.just(userId);
+      }
+      return Mono.just(clientIp(exchange));
+    };
   }
 
   @Bean

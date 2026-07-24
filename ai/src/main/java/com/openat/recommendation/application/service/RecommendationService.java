@@ -158,7 +158,9 @@ public class RecommendationService {
     }
 
     candidates =
-        candidates.stream().filter(candidate -> !candidate.id().equals(productId)).toList();
+        candidates.stream()
+            .filter(candidate -> !candidate.id().equals(productId))
+            .toList();
     if (candidates.isEmpty()) {
       log.info("recommendation empty: home=false, reason=no-candidates");
       return RecommendationResponse.empty();
@@ -268,7 +270,9 @@ public class RecommendationService {
                   .toList();
       for (int index = 0; index < sectionProductIds.size(); index++) {
         Optional<Product> product =
-            home ? product(true, sectionProductIds.get(index)) : productFutures.get(index).join();
+            home
+                ? product(true, sectionProductIds.get(index))
+                : productFutures.get(index).join();
         product.ifPresent(products::add);
       }
       if (!products.isEmpty()) {
@@ -280,7 +284,10 @@ public class RecommendationService {
   }
 
   private Set<UUID> purchasedProductIds(List<Seed> seeds) {
-    return seeds.stream().filter(Seed::buy).map(Seed::productId).collect(Collectors.toSet());
+    return seeds.stream()
+        .filter(Seed::buy)
+        .map(Seed::productId)
+        .collect(Collectors.toSet());
   }
 
   private Optional<Product> product(boolean home, UUID productId) {

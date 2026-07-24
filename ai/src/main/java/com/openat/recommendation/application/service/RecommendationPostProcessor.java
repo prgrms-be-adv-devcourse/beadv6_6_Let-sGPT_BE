@@ -52,7 +52,10 @@ public class RecommendationPostProcessor {
       LinkedHashSet<UUID> retained = new LinkedHashSet<>();
       for (JsonNode rawItem : section.items()) {
         Integer index = parseIndex(rawItem);
-        if (index != null && index >= 1 && index <= orderedCandidateIds.size() && seen.add(index)) {
+        if (index != null
+            && index >= 1
+            && index <= orderedCandidateIds.size()
+            && seen.add(index)) {
           retained.add(orderedCandidateIds.get(index - 1));
         }
       }
