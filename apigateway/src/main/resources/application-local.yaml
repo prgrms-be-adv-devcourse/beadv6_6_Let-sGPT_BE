@@ -13,6 +13,10 @@ spring:
       server:
         webflux:
           routes:
+            - id: admin-chat-api
+              uri: http://localhost:9160
+              predicates:
+                - Path=/api/v1/ai/chats,/api/v1/ai/chats/**
             - id: queue-api
               uri: http://localhost:9150
               predicates:

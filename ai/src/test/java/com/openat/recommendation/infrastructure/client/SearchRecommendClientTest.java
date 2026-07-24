@@ -111,12 +111,9 @@ class SearchRecommendClientTest {
   @Test
   @DisplayName("유사 상품 조회 응답 본문이 비어 있으면 예외를 던진다")
   void recommend_withEmptyResponseBody_throwsRestClientException() {
-    server
-        .expect(requestTo(BASE_URL + "/api/v1/searchs/recommand"))
-        .andRespond(withSuccess());
+    server.expect(requestTo(BASE_URL + "/api/v1/searchs/recommand")).andRespond(withSuccess());
 
-    assertThatThrownBy(
-            () -> client.recommend(List.of(new Seed(UUID.randomUUID(), 0.5, false))))
+    assertThatThrownBy(() -> client.recommend(List.of(new Seed(UUID.randomUUID(), 0.5, false))))
         .isInstanceOf(RestClientException.class)
         .hasMessage("Search recommendation response body is empty");
     server.verify();

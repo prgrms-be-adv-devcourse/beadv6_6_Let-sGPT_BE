@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="360" viewBox="0 0 1600 360" role="img" aria-labelledby="title desc">
+  <title id="title">관리자 챗봇 구현 진행 순서</title>
+  <desc id="desc">실제 추론 서버 검증부터 구조 조정, 책임 협의, 최소 구현, 화면 검증과 최종 조정까지 이어지는 여섯 단계</desc>
+  <defs>
+    <style>
+      .text {
+        font-family: Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Segoe UI", sans-serif;
+        font-size: 21px;
+        font-weight: 400;
+        fill: #222222;
+        text-anchor: middle;
+      }
+      .number {
+        font-size: 18px;
+        font-weight: 500;
+      }
+      .summary {
+        font-size: 19px;
+        fill: #555555;
+      }
+      .base {
+        stroke: #D3D3D3;
+        stroke-width: 2;
+      }
+      .dot {
+        fill: #FFFFFF;
+        stroke: #333333;
+        stroke-width: 2;
+      }
+      .endpoint {
+        fill: #333333;
+        stroke: #333333;
+        stroke-width: 2;
+      }
+    </style>
+  </defs>
+
+  <rect width="1600" height="360" fill="#FFFFFF"/>
+  <line class="base" x1="115" y1="150" x2="1485" y2="150"/>
+
+  <circle class="endpoint" cx="130" cy="150" r="9"/>
+  <circle class="dot" cx="398" cy="150" r="9"/>
+  <circle class="dot" cx="666" cy="150" r="9"/>
+  <circle class="dot" cx="934" cy="150" r="9"/>
+  <circle class="dot" cx="1202" cy="150" r="9"/>
+  <circle class="endpoint" cx="1470" cy="150" r="9"/>
+
+  <text class="text number" x="130" y="91">01</text>
+  <text class="text number" x="398" y="91">02</text>
+  <text class="text number" x="666" y="91">03</text>
+  <text class="text number" x="934" y="91">04</text>
+  <text class="text number" x="1202" y="91">05</text>
+  <text class="text number" x="1470" y="91">06</text>
+
+  <text class="text" x="130" y="202">실추론 검증</text>
+  <text class="text" x="398" y="202">구조 조정</text>
+  <text class="text" x="666" y="202">책임 협의</text>
+  <text class="text" x="934" y="202">최소 구현</text>
+  <text class="text" x="1202" y="202">화면 검증</text>
+  <text class="text" x="1470" y="202">조정 · 완료</text>
+
+  <text class="text summary" x="800" y="290">가장 불확실한 추론을 먼저 확인하고, 검증된 범위만 구현한다</text>
+</svg>

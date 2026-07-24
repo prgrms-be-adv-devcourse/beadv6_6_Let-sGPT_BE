@@ -4,6 +4,9 @@ kind: Deployment
 metadata:
   name: ai
   namespace: openat
+  annotations:
+    # read-model 적용 Hook(wave 9)이 성공한 다음 새 조회 자격증명을 소비한다.
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   replicas: 1
   strategy:
@@ -16,7 +19,7 @@ spec:
       labels: { app: ai }
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9160"
+        prometheus.io/port: "9161"
         prometheus.io/path: "/actuator/prometheus"
     spec:
       imagePullSecrets:
@@ -24,11 +27,23 @@ spec:
       containers:
         - name: ai
           image: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/ai:latest
-          ports: [{ containerPort: 9160 }]
+          ports:
+            - { name: application, containerPort: 9160 }
+            - { name: management, containerPort: 9161 }
           envFrom:
             - configMapRef: { name: app-config }
             - secretRef: { name: db-secrets }
           env:
+            - name: AI_QUERY_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ai-query-secrets
+                  key: AI_QUERY_DB_PASSWORD
+            - name: CHAT_INFERENCE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-inference-secrets
+                  key: CHAT_INFERENCE_API_KEY
             # MaxMetaspaceSize 캡 없음(qna.md Q116) — 서브리밋 안 걸고 pod limit 하나로 통제.
             # 캡이 있으면 메타스페이스만 먼저 자기 상한에 부딪혀 OutOfMemoryError: Metaspace를
             # 스레드 단위로 던지는데, 이건 JVM도 컨테이너도 안 죽여서 파드가 좀비로 남는다.
@@ -37,15 +52,15 @@ spec:
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
           startupProbe:
-            httpGet: { path: /actuator/health/liveness, port: 9160 }
+            httpGet: { path: /actuator/health/liveness, port: 9161 }
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
-            httpGet: { path: /actuator/health/readiness, port: 9160 }
+            httpGet: { path: /actuator/health/readiness, port: 9161 }
             periodSeconds: 5
             failureThreshold: 3
           livenessProbe:
-            httpGet: { path: /actuator/health/liveness, port: 9160 }
+            httpGet: { path: /actuator/health/liveness, port: 9161 }
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 5

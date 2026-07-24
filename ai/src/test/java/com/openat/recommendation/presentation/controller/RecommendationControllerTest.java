@@ -4,8 +4,8 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -34,17 +34,19 @@ class RecommendationControllerTest {
     RecommendationResponse response =
         new RecommendationResponse(
             List.of(
-                new Section(
-                    "추천", List.of(new Product(productId, "상품", "판매자", 1000L, "thumb")))));
+                new Section("추천", List.of(new Product(productId, "상품", "판매자", 1000L, "thumb")))));
     when(recommendationService.recommend(isNull())).thenReturn(response);
 
-    mvc().perform(get("/api/v1/recommendations")).andExpect(status().isOk())
+    mvc()
+        .perform(get("/api/v1/recommendations"))
+        .andExpect(status().isOk())
         .andExpect(jsonPath("$.sections", hasSize(1)));
   }
 
   @Test
   void recommendations_whenProductIdIsMalformed_returnsEmptyWithOkStatus() throws Exception {
-    mvc().perform(get("/api/v1/recommendations").param("productId", "not-a-uuid"))
+    mvc()
+        .perform(get("/api/v1/recommendations").param("productId", "not-a-uuid"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.sections", hasSize(0)));
   }
@@ -52,10 +54,10 @@ class RecommendationControllerTest {
   @Test
   void recommendations_forDetailRequest_passesParsedProductIdToService() throws Exception {
     UUID productId = UUID.randomUUID();
-    when(recommendationService.recommend(eq(productId)))
-        .thenReturn(RecommendationResponse.empty());
+    when(recommendationService.recommend(eq(productId))).thenReturn(RecommendationResponse.empty());
 
-    mvc().perform(get("/api/v1/recommendations").param("productId", productId.toString()))
+    mvc()
+        .perform(get("/api/v1/recommendations").param("productId", productId.toString()))
         .andExpect(status().isOk());
 
     verify(recommendationService).recommend(eq(productId));
@@ -65,7 +67,9 @@ class RecommendationControllerTest {
   void recommendations_whenServiceThrows_returnsEmptyWithOkStatus() throws Exception {
     when(recommendationService.recommend(any())).thenThrow(new RuntimeException("boom"));
 
-    mvc().perform(get("/api/v1/recommendations")).andExpect(status().isOk())
+    mvc()
+        .perform(get("/api/v1/recommendations"))
+        .andExpect(status().isOk())
         .andExpect(jsonPath("$.sections", hasSize(0)));
   }
 

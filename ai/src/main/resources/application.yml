@@ -13,6 +13,36 @@ spring:
     active: local
   application:
     name: ai-service
+  ai:
+    model:
+      chat: openai
+    openai:
+      base-url: ${CHAT_ADMIN_INFERENCE_BASE_URL:${CHAT_INFERENCE_BASE_URL:http://127.0.0.1:11434/v1}}
+      api-key: ${CHAT_INFERENCE_API_KEY:${OPENAI_API_KEY:local-inference}}
+      timeout: ${CHAT_INFERENCE_STAGE_TIMEOUT:55s}
+      max-retries: 0
+      chat:
+        model: ${CHAT_ADMIN_INFERENCE_MODEL:${CHAT_INFERENCE_MODEL:gemma4:12b-it-qat}}
+        max-retries: 0
+        max-tokens: ${CHAT_INFERENCE_MAX_TOKENS:1500}
+        temperature: 0
+        parallel-tool-calls: true
+        store: false
+    retry:
+      max-attempts: 0
+    chat:
+      client:
+        enabled: true
+        tool-calling:
+          enabled: true
+        observations:
+          log-prompt: false
+          log-completion: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${MEMBER_JWKS_URI:http://localhost:9100/auth/jwks}
   jpa:
     hibernate:
       ddl-auto: update
@@ -31,7 +61,51 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: method
 
+chat:
+  data:
+    enabled: ${CHAT_DATA_ENABLED:false}
+    url: ${AI_QUERY_DB_URL:}
+    username: ${AI_QUERY_DB_USERNAME:ai_query_app}
+    password: ${AI_QUERY_DB_PASSWORD:}
+  stream:
+    deadline: ${CHAT_STREAM_DEADLINE:170s}
+    emitter-timeout: ${CHAT_STREAM_EMITTER_TIMEOUT:180s}
+    heartbeat-interval: ${CHAT_STREAM_HEARTBEAT_INTERVAL:15s}
+  inference:
+    enabled: ${CHAT_INFERENCE_ENABLED:true}
+    base-url: ${CHAT_ADMIN_INFERENCE_BASE_URL:${CHAT_INFERENCE_BASE_URL:http://127.0.0.1:11434/v1}}
+    model: ${CHAT_ADMIN_INFERENCE_MODEL:${CHAT_INFERENCE_MODEL:gemma4:12b-it-qat}}
+    local-only-route: ${CHAT_INFERENCE_LOCAL_ONLY_ROUTE:false}
+    reasoning-effort: ${CHAT_INFERENCE_REASONING_EFFORT:none}
+    stage-timeout: ${CHAT_INFERENCE_STAGE_TIMEOUT:55s}
+    routing-max-tokens: ${CHAT_INFERENCE_ROUTING_MAX_TOKENS:700}
+    binding-max-tokens: ${CHAT_INFERENCE_BINDING_MAX_TOKENS:1400}
+    answer-max-tokens: ${CHAT_INFERENCE_ANSWER_MAX_TOKENS:1500}
+    context:
+      input-token-limit: ${CHAT_INFERENCE_INPUT_TOKEN_LIMIT:6000}
+      answer-token-reserve: ${CHAT_INFERENCE_ANSWER_TOKEN_RESERVE:1500}
+      safety-token-reserve: ${CHAT_INFERENCE_SAFETY_TOKEN_RESERVE:692}
+      max-schema-shards: ${CHAT_INFERENCE_MAX_SCHEMA_SHARDS:6}
+      previous-question-max-characters: 300
+      previous-answer-max-characters: 800
+  weather:
+    enabled: ${CHAT_WEATHER_ENABLED:true}
+    connect-timeout: ${CHAT_WEATHER_CONNECT_TIMEOUT:2s}
+    read-timeout: ${CHAT_WEATHER_READ_TIMEOUT:5s}
+  crypto-price:
+    enabled: ${CHAT_CRYPTO_PRICE_ENABLED:true}
+    connect-timeout: ${CHAT_CRYPTO_PRICE_CONNECT_TIMEOUT:2s}
+    read-timeout: ${CHAT_CRYPTO_PRICE_READ_TIMEOUT:5s}
+  web-search:
+    enabled: ${CHAT_WEB_SEARCH_ENABLED:true}
+    api-key: ${TAVILY_API_KEY:}
+    connect-timeout: ${CHAT_WEB_SEARCH_CONNECT_TIMEOUT:2s}
+    read-timeout: ${CHAT_WEB_SEARCH_READ_TIMEOUT:5s}
+
+# k8s probe + Prometheus 메트릭
 management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9161}
   endpoints:
     web:
       exposure:

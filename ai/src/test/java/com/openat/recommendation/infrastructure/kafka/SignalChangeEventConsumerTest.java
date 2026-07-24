@@ -83,8 +83,7 @@ class SignalChangeEventConsumerTest {
         "{\"productId\":\"%s\",\"type\":\"CREATE\",\"occurredAt\":\"%s\"}"
             .formatted(UUID.randomUUID(), Instant.EPOCH);
 
-    assertThatCode(() -> consumer().onWishlistChanged(record(payload)))
-        .doesNotThrowAnyException();
+    assertThatCode(() -> consumer().onWishlistChanged(record(payload))).doesNotThrowAnyException();
     verify(seedService, never()).refreshWeightsCache(any());
     verify(resultCache, never()).invalidateMember(any());
   }

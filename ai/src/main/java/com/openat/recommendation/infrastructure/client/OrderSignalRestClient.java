@@ -28,19 +28,20 @@ public class OrderSignalRestClient implements OrderSignalClient {
 
   @Override
   public List<PurchaseSignal> getPurchaseSignals(UUID memberId) {
-    List<PurchaseSignalResponse> response = requireBody(
-        restClient
-            .get()
-            .uri(
-                uriBuilder ->
-                    uriBuilder
-                        .path("/internal/v1/orders/purchase-signals")
-                        .queryParam("memberId", memberId)
-                        .queryParam("limit", purchaseLimit)
-                        .build())
-            .retrieve()
-            .body(new ParameterizedTypeReference<>() {}),
-        "Order purchase signal response body is empty");
+    List<PurchaseSignalResponse> response =
+        requireBody(
+            restClient
+                .get()
+                .uri(
+                    uriBuilder ->
+                        uriBuilder
+                            .path("/internal/v1/orders/purchase-signals")
+                            .queryParam("memberId", memberId)
+                            .queryParam("limit", purchaseLimit)
+                            .build())
+                .retrieve()
+                .body(new ParameterizedTypeReference<>() {}),
+            "Order purchase signal response body is empty");
     return response.stream().map(PurchaseSignalResponse::toDomain).toList();
   }
 
