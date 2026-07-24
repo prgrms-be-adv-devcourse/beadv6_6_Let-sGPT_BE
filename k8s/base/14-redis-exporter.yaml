@@ -5,6 +5,11 @@
 # exporter를 Redis와 같은 openat에 두어 이 차단을 회피한다(NetworkPolicy는 수정하지 않는다).
 # 이 파드 자신은 app: redis-exporter라 redis-ingress(podSelector: app: redis)에 걸리지 않으므로
 # otel-collector의 스크레이프가 그대로 통과한다.
+#
+# 대시보드 참고: k8s/observability/dashboards/redis-overview.json은 아직 어떤 Grafana
+# provisioning ConfigMap에도 편입되지 않아, 지금 배포해도 Grafana에 로드되지 않는다.
+# 이 JSON은 대시보드 개편(전체 개요/도메인 서비스 폴더 편입) 시 platform CM에 편입 예정이며,
+# 그 배선은 개편 브랜치 소관이다(여기서 배선하지 않는다).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -28,9 +33,23 @@ spec:
         prometheus.io/port: "9121"
         prometheus.io/path: "/metrics"
     spec:
+      # 파드 하드닝 — 비루트 고정. redis_exporter 이미지는 UID/GID 59000(비루트)으로 도는
+      # 정적 바이너리(FROM scratch)라 runAsUser 59000이 이미지 기본과 일치한다.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 59000
+        runAsGroup: 59000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: redis-exporter
           image: oliver006/redis_exporter:v1.87.0
+          # 컨테이너 하드닝 — 권한 상승 차단, 전 capability 제거, 루트 FS 읽기전용.
+          # redis_exporter는 상태 없이 메모리에서만 동작하고 디스크에 쓰지 않아 ro rootfs로 충분하다
+          # (임시 파일 미사용이라 /tmp emptyDir도 불필요).
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
           env:
             - { name: REDIS_ADDR, value: "redis://redis:6379" }
             # 커맨드별 로그스케일 버킷 히스토그램(redis_commands_latencies_usec)을 끈다.
