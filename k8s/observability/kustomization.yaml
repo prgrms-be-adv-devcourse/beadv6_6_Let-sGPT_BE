@@ -15,3 +15,24 @@ resources:
   - 33-grafana-ratelimit-middleware.yaml
   - 34-grafana-ingress.yaml
   - 40-networkpolicy.yaml
+
+# 기동 시 1회 읽는 설정 CM은 generator로 관리해 내용 해시를 이름 서픽스로 붙인다.
+# 내용이 바뀌면 CM 이름이 바뀌고, 이를 참조하는 워크로드 파드 템플릿이 자동 재작성되어
+# 롤아웃이 트리거된다(Helm의 checksum/config 어노테이션에 대응). 대시보드 CM(31/32)은
+# grafana 파일 프로바이더가 재시작 없이 라이브 리로드하므로 여기서 제외한다.
+configMapGenerator:
+  - name: tempo-config
+    files:
+      - config/tempo.yaml
+  - name: otel-collector-config
+    files:
+      - config/otel-collector.yaml
+  - name: prometheus-config
+    files:
+      - config/prometheus.yml
+  - name: grafana-datasources
+    files:
+      - config/datasources.yaml
+  - name: grafana-dashboard-providers
+    files:
+      - config/providers.yaml

@@ -1,60 +1,6 @@
 # WS-D(7/10 observability plan) — Grafana. 이제 Ingress로 외부 노출(34-grafana-ingress.yaml,
 # Traefik rate-limit/inflight + HTTPS 리다이렉트 체인). admin 비밀번호는 하드코딩 금지(create-secrets.sh
 # 참고) — "실패는 시끄럽게" 원칙상 Secret(grafana-admin) 미존재 시 파드가 뜨지 않는 편이 낫다.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-datasources
-  namespace: observability
-data:
-  datasources.yaml: |
-    apiVersion: 1
-    datasources:
-      # uid 고정 — 대시보드 JSON이 datasource를 uid로 참조(prometheus/tempo). 미지정 시 랜덤 uid가
-      # 배정되어 프로비저닝 대시보드의 datasource 참조가 깨진다. 기존 name 참조("Prometheus")도 계속 유효.
-      - name: Prometheus
-        uid: prometheus
-        type: prometheus
-        access: proxy
-        url: "http://prometheus:9090"
-        isDefault: true
-      - name: Tempo
-        uid: tempo
-        type: tempo
-        access: proxy
-        url: "http://tempo:3200"
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-dashboard-providers
-  namespace: observability
-data:
-  providers.yaml: |
-    apiVersion: 1
-    providers:
-      # 폴더 소유권을 provider가 가짐 — 폴더 2개(전체 개요 vs 도메인 서비스), path는 마운트 디렉토리와 1:1.
-      - name: 전체 개요
-        orgId: 1
-        folder: 전체 개요
-        type: file
-        disableDeletion: false
-        allowUiUpdates: false
-        updateIntervalSeconds: 30
-        options:
-          path: /var/lib/grafana/dashboards/platform
-          foldersFromFilesStructure: false
-      - name: 도메인 서비스
-        orgId: 1
-        folder: 도메인 서비스
-        type: file
-        disableDeletion: false
-        allowUiUpdates: false
-        updateIntervalSeconds: 30
-        options:
-          path: /var/lib/grafana/dashboards/domain
-          foldersFromFilesStructure: false
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
