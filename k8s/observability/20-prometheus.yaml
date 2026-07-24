@@ -41,6 +41,8 @@ spec:
             - --storage.tsdb.path=/prometheus
             - --storage.tsdb.retention.time=3d
             - --web.enable-remote-write-receiver
+          env:
+            - { name: GOMEMLIMIT, value: "240MiB" }   # limit 288Mi − 비힙 쿠션
           ports: [{ containerPort: 9090 }]
           readinessProbe:
             httpGet: { path: /-/ready, port: 9090 }
