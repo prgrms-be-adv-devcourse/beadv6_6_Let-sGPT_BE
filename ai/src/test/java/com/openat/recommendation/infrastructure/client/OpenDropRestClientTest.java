@@ -75,7 +75,10 @@ class OpenDropRestClientTest {
                 ],"page":0,"size":100,"totalElements":2,"totalPages":1}
                 """
                     .formatted(
-                        UUID.randomUUID(), openProductId, UUID.randomUUID(), soldOutProductId),
+                        UUID.randomUUID(),
+                        openProductId,
+                        UUID.randomUUID(),
+                        soldOutProductId),
                 MediaType.APPLICATION_JSON));
 
     var result = client.getAllOpenDrops();
@@ -169,7 +172,13 @@ class OpenDropRestClientTest {
                 "closeAt":null}],"page":%d,"size":100,"totalElements":2,"totalPages":%d}
                 """
                     .formatted(
-                        dropId, productId, productName, thumbnailKey, dropPrice, page, totalPages),
+                        dropId,
+                        productId,
+                        productName,
+                        thumbnailKey,
+                        dropPrice,
+                        page,
+                        totalPages),
                 MediaType.APPLICATION_JSON));
   }
 }

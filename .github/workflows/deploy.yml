@@ -1,8 +1,7 @@
 name: CD
 
-# CI(이미지 빌드/푸시)가 main 브랜치에서 성공했거나 FE 이미지가 준비되면 배포한다.
-# 코드 변경 없는 AI 조회 자격증명 회전만 수동 workflow_dispatch로 허용한다.
-# dev는 각자 로컬 스택에서 돌리고 일반 EC2 배포는 main 머지 시점에만 일어난다.
+# CI(이미지 빌드/푸시)가 main 브랜치(머지)에서 성공적으로 끝났을 때만 배포 트리거.
+# dev는 각자 로컬 스택에서 돌리고, EC2 배포는 main 머지 시점에만 일어난다.
 #
 # 배포 방식(2026-07-09 k3s 전환, 2026-07-09 ArgoCD 편입): docker compose → k3s → GitOps.
 # 러너(self-hosted, ec2-deploy)는 서버 노드 위에서 돌며 k3s kubeconfig(644)에 접근 가능하다.
@@ -11,11 +10,10 @@ name: CD
 # 러너는 마지막에 ArgoCD의 Synced/Healthy 수렴만 확인한다(plan argocd_ci_smoke_plan WS-C).
 #
 # GitOps: main은 PR 머지 전용이라 봇이 직접 push 못 함 → 이미지 pin 커밋백은 전용
-# deploy/state 브랜치로 한다. 이 브랜치는 GitHub ruleset/branch protection으로 CD identity만
-# push할 수 있어야 하며, 그 설정은 이 workflow의 필수 운영 전제다. 이 브랜치가 클러스터
-# desired-state의 단일 출처이며 ArgoCD의 watch 대상이다(plan k3s_deploy_automation §4-2).
+# deploy/state 브랜치(비보호, 봇 전용)로 한다. 이 브랜치가 클러스터 desired-state의
+# 단일 출처이며 ArgoCD의 watch 대상이다(plan k3s_deploy_automation §4-2).
 # FE 리포는 자체 workflow_run 아티팩트가 없으므로 repository_dispatch(fe-image-built)로
-# 별도 트리거 — client_payload.sha와 단조 증가 run_number를 함께 받아 오래된 완료 이벤트를 거부한다.
+# 별도 트리거 — client_payload.sha가 곧 이번에 핀할 프론트 이미지 태그.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -23,8 +21,6 @@ on:
     branches: [main]
   repository_dispatch:
     types: [fe-image-built]
-  # ENV_SECRETS의 조회 전용 DB 비밀번호를 코드 변경 없이 회전할 때 사용한다.
-  workflow_dispatch:
 
 permissions:
   contents: write   # deploy/state 브랜치에 이미지 pin 커밋백
@@ -37,84 +33,23 @@ env:
 
 jobs:
   deploy:
-    if: github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'repository_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, ec2-deploy]
-    # 실제 배포 job만 직렬화한다. queue:max으로 대기 실행을 보존해 서비스별 pin 이벤트가
-    # 기본 single-pending 정책에 의해 유실되지 않게 한다.
-    concurrency:
-      group: openat-production-cd
-      queue: max
     steps:
       - uses: actions/checkout@v4
         with:
-          # workflow_run은 CI가 검증한 정확한 SHA를, FE/수동 실행은 현재 운영 desired-state를 쓴다.
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || 'deploy/state' }}
           fetch-depth: 0   # deploy/state 머지 위해 전체 히스토리 필요
-
-      # deploy/state는 desired-state 데이터일 뿐 실행 코드의 신뢰 원천이 아니다. workflow_run은
-      # CI 검증 SHA, FE/수동은 이 workflow 파일의 정확한 SHA를 별도 checkout한다.
-      - name: Checkout trusted workflow source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.workflow_sha }}
-          fetch-depth: 1
-          persist-credentials: false
-          path: .trusted-workflow-source
-
-      # 이후 worktree가 deploy/state로 바뀌어도 운영 Secret/kubeconfig 권한으로 실행되는 셸은
-      # 검증된 source checkout에서 RUNNER_TEMP로 복사한 이 다섯 파일뿐이다.
-      - name: Stage trusted deployment scripts
-        env:
-          WORKFLOW_SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.workflow_sha }}
-        run: |
-          [[ "$WORKFLOW_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "ERROR: trusted workflow source SHA가 올바르지 않습니다." >&2
-            exit 1
-          }
-          [ "$(git -C .trusted-workflow-source rev-parse HEAD)" = "$WORKFLOW_SOURCE_SHA" ] || {
-            echo "ERROR: trusted workflow source checkout이 요청 SHA와 다릅니다." >&2
-            exit 1
-          }
-          TRUSTED_SCRIPT_DIR="$RUNNER_TEMP/openat-deploy-scripts"
-          mkdir -p "$TRUSTED_SCRIPT_DIR"
-          for script in create-secrets.sh rotate-ai-query-secret.sh reconcile-ai-query-rotation.sh \
-            secret-manifest.sh prove-ai-query-rollout.sh; do
-            install -m 0700 ".trusted-workflow-source/k8s/bootstrap/$script" "$TRUSTED_SCRIPT_DIR/$script"
-          done
 
       # 이벤트별로 "main에 merge할 SHA"와 "FE 핀 대상 SHA"가 다른 곳에서 옴 — 여기서 통일.
       - name: Resolve trigger context
         id: ctx
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          FE_SHA_INPUT: ${{ github.event.client_payload.sha }}
-          FE_SEQUENCE_INPUT: ${{ github.event.client_payload.run_number }}
-          BE_SHA_INPUT: ${{ github.event.workflow_run.head_sha }}
         run: |
-          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
-            # FE dispatch는 CI 검증된 BE revision을 섞지 않고 현재 deploy/state의 FE 핀만 바꾼다.
-            [[ "$FE_SHA_INPUT" =~ ^[0-9a-f]{40}$ ]] || {
-              echo "ERROR: FE dispatch sha는 소문자 40자리 Git SHA여야 합니다." >&2
-              exit 1
-            }
-            [[ "$FE_SEQUENCE_INPUT" =~ ^[1-9][0-9]{0,17}$ ]] || {
-              echo "ERROR: FE dispatch run_number는 1~18자리 양의 정수여야 합니다." >&2
-              exit 1
-            }
-            printf 'sha=\n' >> "$GITHUB_OUTPUT"
-            printf 'fe_sha=%s\n' "$FE_SHA_INPUT" >> "$GITHUB_OUTPUT"
-            printf 'fe_sequence=%s\n' "$FE_SEQUENCE_INPUT" >> "$GITHUB_OUTPUT"
-          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            # 수동 실행은 자격증명 회전 전용이며 현재 deploy/state 위에서만 동작한다.
-            printf 'sha=\nfe_sha=\nfe_sequence=\n' >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "fe_sha=${{ github.event.client_payload.sha }}" >> "$GITHUB_OUTPUT"
           else
-            [[ "$BE_SHA_INPUT" =~ ^[0-9a-f]{40}$ ]] || {
-              echo "ERROR: CI workflow_run head_sha가 올바른 Git SHA가 아닙니다." >&2
-              exit 1
-            }
-            printf 'sha=%s\n' "$BE_SHA_INPUT" >> "$GITHUB_OUTPUT"
-            printf 'fe_sha=\n' >> "$GITHUB_OUTPUT"
-            printf 'fe_sequence=\n' >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            echo "fe_sha=" >> "$GITHUB_OUTPUT"
           fi
 
       # CI가 main에서 계산한 "이번에 실제로 바뀐 도메인" 매트릭스. FE dispatch에는 없음.
@@ -136,28 +71,22 @@ jobs:
             SERVICES=""
             K8S_CHANGED=false
           fi
-          SECRET_REFRESH=false
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            SECRET_REFRESH=true
-          fi
           echo "list=$SERVICES" >> "$GITHUB_OUTPUT"
           echo "k8s_changed=$K8S_CHANGED" >> "$GITHUB_OUTPUT"
-          echo "secret_refresh=$SECRET_REFRESH" >> "$GITHUB_OUTPUT"
           FE_SHA="${{ steps.ctx.outputs.fe_sha }}"
-          if [ -z "$SERVICES" ] && [ "$K8S_CHANGED" != "true" ] && [ -z "$FE_SHA" ] && [ "$SECRET_REFRESH" != "true" ]; then
+          if [ -z "$SERVICES" ] && [ "$K8S_CHANGED" != "true" ] && [ -z "$FE_SHA" ]; then
             echo "변경된 도메인/매니페스트/FE 이미지가 없어 배포를 스킵합니다."
           else
-            echo "배포 대상 서비스: ${SERVICES:-(BE 이미지 변경 없음)} / 매니페스트(k8s/**) 변경: $K8S_CHANGED / FE SHA: ${FE_SHA:-(없음)} / 시크릿 갱신: $SECRET_REFRESH"
+            echo "배포 대상 서비스: ${SERVICES:-(BE 이미지 변경 없음)} / 매니페스트(k8s/**) 변경: $K8S_CHANGED / FE SHA: ${FE_SHA:-(없음)}"
           fi
 
       # ENV_SECRETS(JSON 또는 KEY=VALUE) → .env. create-secrets.sh 입력.
       - name: Render .env from ENV_SECRETS
-        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != '' || steps.services.outputs.secret_refresh == 'true'
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != ''
         env:
           ENV_SECRETS: ${{ secrets.ENV_SECRETS }}
           OPENAI_INFERENCEAI_EMBEDDING_ENABLED: ${{ vars.OPENAI_INFERENCEAI_EMBEDDING_ENABLED }}
         run: |
-          umask 077
           if printf '%s' "$ENV_SECRETS" | jq -e 'type=="object"' >/dev/null 2>&1; then
             # @sh로 값을 셸 안전하게 단일따옴표 이스케이프 — 값에 ", $, 개행(PEM 등)이 있어도
             # .env를 깨지 않는다(create-secrets.sh가 `. "$ENV_FILE"`로 소싱하므로 필수).
@@ -184,86 +113,21 @@ jobs:
       # app-secrets + ghcr-pull(imagePullSecret) + default SA 부착 — 전부 멱등.
       # ghcr-pull을 매 배포 보장 → 노드 교체/신규 클러스터에서도 kubelet이 정석 pull(Q83-6).
       - name: Provision k8s secrets (idempotent)
-        id: provision
-        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != '' || steps.services.outputs.secret_refresh == 'true'
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != ''
         env:
-          EVENT_NAME: ${{ github.event_name }}
           GHCR_USER: ${{ github.actor }}
           GHCR_PAT: ${{ secrets.GHCR_PULL_PAT }}
-          AI_QUERY_ROTATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          BEFORE_ACTIVE_RV=$(kubectl get secret ai-query-secrets -n openat --ignore-not-found \
-            -o jsonpath='{.metadata.resourceVersion}')
-          PROVISION_STATUS="$RUNNER_TEMP/ai-query-provision-status"
-          : > "$PROVISION_STATUS"
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            bash "$RUNNER_TEMP/openat-deploy-scripts/rotate-ai-query-secret.sh" .env \
-              | tee "$PROVISION_STATUS"
-          else
-            GHCR_USER="$GHCR_USER" GHCR_PAT="$GHCR_PAT" \
-              bash "$RUNNER_TEMP/openat-deploy-scripts/create-secrets.sh" .env \
-              | tee "$PROVISION_STATUS"
-          fi
-          [ "$(grep -c '^AI_QUERY_ROTATION_STARTED=' "$PROVISION_STATUS")" -eq 1 ] \
-            && [ "$(grep -c '^AI_QUERY_RECONCILE_REQUIRED=' "$PROVISION_STATUS")" -eq 1 ] \
-            && [ "$(grep -c '^ACTIVE_RESOURCE_VERSION=' "$PROVISION_STATUS")" -eq 1 ] || {
-            echo "ERROR: trusted Secret script의 상태 출력 계약이 올바르지 않습니다." >&2
-            exit 1
-          }
-          ROTATION_STARTED=$(sed -n 's/^AI_QUERY_ROTATION_STARTED=//p' "$PROVISION_STATUS")
-          RECONCILE_REQUIRED=$(sed -n 's/^AI_QUERY_RECONCILE_REQUIRED=//p' "$PROVISION_STATUS")
-          SCRIPT_ACTIVE_RV=$(sed -n 's/^ACTIVE_RESOURCE_VERSION=//p' "$PROVISION_STATUS")
-          case "$ROTATION_STARTED:$RECONCILE_REQUIRED" in
-            true:true|true:false|false:false) ;;
-            *) echo "ERROR: trusted Secret script의 회전 상태 조합이 올바르지 않습니다." >&2; exit 1 ;;
-          esac
-          ACTIVE_RV=$(kubectl get secret ai-query-secrets -n openat \
-            -o jsonpath='{.metadata.resourceVersion}')
-          ROTATION_METADATA=$(kubectl get secret ai-query-rollback-secrets -n openat \
-            -o jsonpath='{.metadata.annotations.openat\.io/rotation-run-id}{"|"}{.metadata.annotations.openat\.io/target-active-resource-version}')
-          ROTATION_OWNER="${ROTATION_METADATA%%|*}"
-          ROTATION_ACTIVE_RV="${ROTATION_METADATA##*|}"
-          case "$ACTIVE_RV" in
-            ''|*[!A-Za-z0-9._-]*) echo "ERROR: active Secret resourceVersion이 올바르지 않습니다." >&2; exit 1 ;;
-          esac
-          [ "$SCRIPT_ACTIVE_RV" = "$ACTIVE_RV" ] || {
-            echo "ERROR: trusted Secret script 출력과 active Secret resourceVersion이 다릅니다." >&2
-            exit 1
-          }
-          [ "$ROTATION_ACTIVE_RV" = "$ACTIVE_RV" ] || {
-            echo "ERROR: rollback marker와 active Secret resourceVersion이 다릅니다." >&2
-            exit 1
-          }
-          if [ "$ROTATION_STARTED:$RECONCILE_REQUIRED" = true:true ] \
-            && [ "$ROTATION_OWNER" = "$AI_QUERY_ROTATION_RUN_ID" ]; then
-            ROTATION_IDENTITY="$AI_QUERY_ROTATION_RUN_ID"
-          elif [ "$ROTATION_STARTED:$RECONCILE_REQUIRED" = true:false ] \
-            && [ "$ROTATION_OWNER" = steady ] && [ -z "$BEFORE_ACTIVE_RV" ]; then
-            # 최초 bootstrap은 되돌릴 이전 값이 없어 marker가 이미 steady다. Hook/AI 수렴은
-            # 필요하지만 실패 보상 reconciler는 실행하지 않는다.
-            ROTATION_IDENTITY="$AI_QUERY_ROTATION_RUN_ID"
-          elif [ "$ROTATION_STARTED:$RECONCILE_REQUIRED" = false:false ] \
-            && [ "$ROTATION_OWNER" = steady ] && [ "$BEFORE_ACTIVE_RV" = "$ACTIVE_RV" ]; then
-            ROTATION_IDENTITY=steady
-          else
-            echo "ERROR: active Secret 전후 상태와 AI 조회 회전 marker가 일치하지 않습니다." >&2
-            exit 1
-          fi
-          printf 'active_rv=%s\n' "$ACTIVE_RV" >> "$GITHUB_OUTPUT"
-          printf 'rotation_started=%s\n' "$ROTATION_STARTED" >> "$GITHUB_OUTPUT"
-          printf 'reconcile_required=%s\n' "$RECONCILE_REQUIRED" >> "$GITHUB_OUTPUT"
-          printf 'rotation_identity=%s\n' "$ROTATION_IDENTITY" >> "$GITHUB_OUTPUT"
+          GHCR_USER="$GHCR_USER" GHCR_PAT="$GHCR_PAT" ./k8s/bootstrap/create-secrets.sh .env
 
-      # self-hosted runner image가 제공하는 kustomize만 사용한다. 누락된 도구를 네트워크에서
-      # 동적으로 내려받아 실행하지 않고 fail-closed한다.
-      - name: Verify preinstalled kustomize CLI
+      - name: Ensure kustomize CLI
         if: steps.services.outputs.list != '' || steps.ctx.outputs.fe_sha != ''
         run: |
-          command -v kustomize >/dev/null 2>&1 || {
-            echo "ERROR: self-hosted runner에 사전 설치된 kustomize가 없습니다." >&2
-            exit 1
-          }
-          kustomize version
+          if ! command -v kustomize >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/bin"
+            ( cd "$RUNNER_TEMP/bin" && curl -sfL https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash )
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          fi
 
       # deploy/state = openat 앱의 desired-state 단일 출처. 두 관심사를 분리한다(Q100 갭 수정):
       #  (1) main→deploy/state 구조 병합(merge)은 "항상" 수행 — 매니페스트(probe·sync-wave·configmap
@@ -272,172 +136,37 @@ jobs:
       # 이전 구조는 (1)이 (2)와 한 스텝에 묶여, 이미지 변경이 없으면 merge/push 자체가 스킵됐다.
       - name: Sync deploy/state (merge main + pin changed images)
         id: pin
-        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != '' || steps.services.outputs.secret_refresh == 'true'
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != ''
         env:
           SHA: ${{ steps.ctx.outputs.sha }}
           SVCS: ${{ steps.services.outputs.list }}
           FE_SHA: ${{ steps.ctx.outputs.fe_sha }}
-          FE_SEQUENCE: ${{ steps.ctx.outputs.fe_sequence }}
-          AI_QUERY_ROTATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-          EXPECTED_ACTIVE_RV: ${{ steps.provision.outputs.active_rv }}
-          ROTATION_STARTED: ${{ steps.provision.outputs.rotation_started }}
-          RECONCILE_REQUIRED: ${{ steps.provision.outputs.reconcile_required }}
-          ROTATION_IDENTITY: ${{ steps.provision.outputs.rotation_identity }}
         run: |
           git config user.name  "deploy-bot"
           git config user.email "deploy-bot@users.noreply.github.com"
-          git fetch origin deploy/state
-          git checkout -B deploy/state origin/deploy/state
-
-          commit_staged() {
-            local message="$1"
-            local diff_status
-            set +e
-            git diff --cached --quiet
-            diff_status=$?
-            set -e
-            case "$diff_status" in
-              0) echo "no staged change to commit: $message" ;;
-              1) git commit -m "$message" ;;
-              *) echo "ERROR: staged diff 확인에 실패했습니다." >&2; exit "$diff_status" ;;
-            esac
-          }
-
-          current_image_tag() {
-            local image="$1"
-            awk -v target="$image" '
-              $1 == "-" && $2 == "name:" { selected = ($3 == target); next }
-              selected && $1 == "newTag:" {
-                gsub(/^"|"$/, "", $2)
-                print $2
-                exit
-              }
-            ' k8s/overlay/kustomization.yaml
-          }
-          # CI 성공 workflow_run만 main의 구조 변경을 흡수한다. FE·자격증명 전용 dispatch는
-          # 현재 deploy/state 위에서 필요한 state만 갱신해 미검증 BE revision을 우회 배포하지 않는다.
-          if [ -n "$SHA" ]; then
-            git merge -X ours --no-edit "$SHA"
-          fi
+          git fetch origin deploy/state || true
+          git checkout deploy/state 2>/dev/null || git checkout -b deploy/state
+          # main의 구조 변경(매니페스트 추가/삭제, probe, sync-wave, configmap 등)을 흡수.
+          # 이미지 pin 충돌은 deploy/state 것 유지(-X ours). 매니페스트-only여도 이 merge로 전파된다.
+          git merge -X ours --no-edit "$SHA"
           # BE 이미지 SHA 핀은 재빌드된 서비스가 있을 때만(매니페스트-only 변경이면 SVCS가 비어 스킵).
           if [ -n "$SVCS" ]; then
             for svc in $SVCS; do
-              case "$svc" in
-                apigateway|member|product|order|payment|settlement|search|queue|ai) ;;
-                *) echo "ERROR: 허용되지 않은 배포 서비스: $svc" >&2; exit 1 ;;
-              esac
-              current_tag=$(current_image_tag "$IMG_BASE/$svc")
-              [ -n "$current_tag" ] || {
-                echo "ERROR: $svc 현재 이미지 pin을 읽지 못했습니다." >&2
-                exit 1
-              }
-              if [[ "$current_tag" =~ ^[0-9a-f]{40}$ ]]; then
-                git cat-file -e "${current_tag}^{commit}" || {
-                  echo "ERROR: $svc 현재 pin commit $current_tag 를 로컬 이력에서 찾지 못했습니다." >&2
-                  exit 1
-                }
-                if [ "$current_tag" != "$SHA" ] && git merge-base --is-ancestor "$SHA" "$current_tag"; then
-                  echo "SKIP: $svc 의 현재 pin $current_tag 이 후보 $SHA 보다 최신입니다."
-                  continue
-                fi
-                if [ "$current_tag" != "$SHA" ] && ! git merge-base --is-ancestor "$current_tag" "$SHA"; then
-                  echo "ERROR: $svc pin 이력과 후보 SHA가 분기되어 자동 갱신하지 않습니다." >&2
-                  exit 1
-                fi
-              elif [ "$current_tag" != "latest" ]; then
-                echo "ERROR: $svc 현재 이미지 tag 형식이 올바르지 않습니다: $current_tag" >&2
-                exit 1
-              fi
               ( cd k8s/overlay && kustomize edit set image "$IMG_BASE/$svc=$IMG_BASE/$svc:$SHA" )
             done
             git add k8s/overlay/kustomization.yaml
-            commit_staged "chore(deploy): pin $SVCS to $SHA [skip ci]"
+            git commit -m "chore(deploy): pin $SVCS to $SHA [skip ci]" || echo "no image change to commit"
           fi
           # FE repository_dispatch로 넘어온 SHA 핀 — FE 리포 CI 완료 시에만 값이 있음.
           if [ -n "$FE_SHA" ]; then
-            FE_SEQUENCE_FILE=k8s/overlay/frontend-image-sequence.txt
-            CURRENT_FE_SEQUENCE=$(tr -d '[:space:]' < "$FE_SEQUENCE_FILE" 2>/dev/null || echo 0)
-            [[ "$CURRENT_FE_SEQUENCE" =~ ^[0-9]{1,18}$ ]] || {
-              echo "ERROR: 현재 FE 배포 sequence 형식이 올바르지 않습니다." >&2
-              exit 1
-            }
-            if [ "$FE_SEQUENCE" -le "$CURRENT_FE_SEQUENCE" ]; then
-              echo "SKIP: FE run_number $FE_SEQUENCE 는 현재 $CURRENT_FE_SEQUENCE 보다 최신이 아닙니다."
-            else
-              ( cd k8s/overlay && kustomize edit set image "$FE_IMG=$FE_IMG:$FE_SHA" )
-              printf '%s\n' "$FE_SEQUENCE" > "$FE_SEQUENCE_FILE"
-              git add k8s/overlay/kustomization.yaml "$FE_SEQUENCE_FILE"
-              commit_staged "chore(deploy): pin frontend to $FE_SHA [skip ci]"
-            fi
-          fi
-          # Secret 값은 Git에 넣지 않는다. Kubernetes의 불투명 resourceVersion만 pod template에
-          # 반영하면, wave 9 read-model Hook 성공 뒤 wave 10 AI rollout이 일어난다.
-          AI_QUERY_SECRET_REVISION=$(kubectl get secret ai-query-secrets -n openat -o jsonpath='{.metadata.resourceVersion}')
-          case "$AI_QUERY_SECRET_REVISION" in
-            ''|*[!A-Za-z0-9._-]*)
-              echo "ERROR: ai-query-secrets resourceVersion을 안전하게 읽지 못했습니다." >&2
-              exit 1
-              ;;
-          esac
-          [ "$AI_QUERY_SECRET_REVISION" = "$EXPECTED_ACTIVE_RV" ] || {
-            echo "ERROR: provision 이후 active Secret resourceVersion이 바뀌었습니다." >&2
-            exit 1
-          }
-          REVISION_PATCH=k8s/overlay/ai-query-secret-revision.yaml
-          [ "$(grep -c '^[[:space:]]*openat.io/ai-query-secret-revision:' "$REVISION_PATCH")" -eq 1 ] || {
-            echo "ERROR: AI query Secret revision patch가 정확히 한 항목이 아닙니다." >&2
-            exit 1
-          }
-          sed -i -E "s#(openat.io/ai-query-secret-revision: ).*#\1\"${AI_QUERY_SECRET_REVISION}\"#" "$REVISION_PATCH"
-          grep -Fq "openat.io/ai-query-secret-revision: \"${AI_QUERY_SECRET_REVISION}\"" "$REVISION_PATCH" || {
-            echo "ERROR: AI query Secret revision patch 반영을 검증하지 못했습니다." >&2
-            exit 1
-          }
-          git add "$REVISION_PATCH"
-          commit_staged "chore(deploy): refresh ai query credentials [skip ci]"
-
-          # 최종 commit은 자기 SHA를 자기 manifest에 넣을 수 없으므로, 먼저 workload revision을
-          # 고정하고 Hook manifest에는 workload revision + run id + active RV를 묶는다. 최종
-          # deploy revision은 아래 Argo operation revision과 별도로 정확히 검증한다.
-          WORKLOAD_REVISION=$(git rev-parse HEAD)
-          ACTIVE_RV_HASH=$(printf '%s' "$AI_QUERY_SECRET_REVISION" | sha256sum | cut -c1-63)
-          IDENTITY_PATCH=k8s/overlay/ai-read-model-deployment-identity.yaml
-          [ "$(grep -c '^[[:space:]]*openat.io/target-workload-revision:' "$IDENTITY_PATCH")" -eq 2 ] \
-            && [ "$(grep -c '^[[:space:]]*openat.io/deployment-run-id:' "$IDENTITY_PATCH")" -eq 2 ] \
-            && [ "$(grep -c '^[[:space:]]*openat.io/rotation-identity:' "$IDENTITY_PATCH")" -eq 2 ] \
-            && [ "$(grep -c '^[[:space:]]*openat.io/target-active-resource-version-identity:' "$IDENTITY_PATCH")" -eq 2 ] \
-            && [ "$(grep -c '^[[:space:]]*openat.io/target-active-rv-hash:' "$IDENTITY_PATCH")" -eq 1 ] || {
-            echo "ERROR: read-model Hook identity patch 구조가 계약과 다릅니다." >&2
-            exit 1
-          }
-          sed -i -E \
-            -e "s#(openat.io/target-workload-revision: ).*#\\1\"${WORKLOAD_REVISION}\"#" \
-            -e "s#(openat.io/deployment-run-id: ).*#\\1\"${AI_QUERY_ROTATION_RUN_ID}\"#" \
-            -e "s#(openat.io/rotation-identity: ).*#\\1\"${ROTATION_IDENTITY}\"#" \
-            -e "s#(openat.io/target-active-resource-version-identity: ).*#\\1\"${AI_QUERY_SECRET_REVISION}\"#" \
-            -e "s#(openat.io/target-active-rv-hash: ).*#\\1\"${ACTIVE_RV_HASH}\"#" \
-            "$IDENTITY_PATCH"
-          git add "$IDENTITY_PATCH"
-          commit_staged "chore(deploy): bind read model hook identity [skip ci]"
-          DEPLOY_REVISION=$(git rev-parse HEAD)
-          if [ "$RECONCILE_REQUIRED" = true ]; then
-            ROTATION_METADATA=$(kubectl get secret ai-query-rollback-secrets -n openat \
-              -o jsonpath='{.metadata.annotations.openat\.io/rotation-run-id}{"|"}{.metadata.annotations.openat\.io/target-active-resource-version}')
-            [ "$ROTATION_METADATA" = "${AI_QUERY_ROTATION_RUN_ID}|${AI_QUERY_SECRET_REVISION}" ] || {
-              echo "ERROR: AI query Secret 회전 소유권 또는 resourceVersion이 바뀌었습니다." >&2
-              exit 1
-            }
-            kubectl annotate secret ai-query-rollback-secrets -n openat \
-              openat.io/target-deploy-revision="$DEPLOY_REVISION" --overwrite >/dev/null
+            ( cd k8s/overlay && kustomize edit set image "$FE_IMG=$FE_IMG:$FE_SHA" )
+            git add k8s/overlay/kustomization.yaml
+            git commit -m "chore(deploy): pin frontend to $FE_SHA [skip ci]" || echo "no FE image change to commit"
           fi
           # merge가 새 커밋을 만들었으면(매니페스트 전파) 또는 핀 커밋이 있으면 push. 없으면 no-op이라
           # revision=현재 HEAD가 되고 아래 수렴확인이 즉시 통과한다.
           git push origin deploy/state
-          printf 'revision=%s\n' "$DEPLOY_REVISION" >> "$GITHUB_OUTPUT"
-          printf 'workload_revision=%s\n' "$WORKLOAD_REVISION" >> "$GITHUB_OUTPUT"
-          printf 'active_rv=%s\n' "$AI_QUERY_SECRET_REVISION" >> "$GITHUB_OUTPUT"
-          printf 'active_rv_hash=%s\n' "$ACTIVE_RV_HASH" >> "$GITHUB_OUTPUT"
-          printf 'rotation_identity=%s\n' "$ROTATION_IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # push된 deploy/state를 ArgoCD가 auto-sync — 러너는 apply 없이 수렴 확인만 한다
       # (도구 추가 없음, kubectl만 사용. 리서치 argocd_ci_smoke_research §3.8-A).
@@ -446,7 +175,7 @@ jobs:
       # CD 1회차에서 재현 확인 — payment 파드가 갱신 안 된 채 convergence 스텝만 성공 처리됨),
       # ① hard refresh로 즉시 재조회를 강제하고 ② status.sync.revision이 이번에 push한
       # 커밋과 정확히 일치할 때만 수렴으로 인정한다.
-      # 수렴 대기는 "성공 확인"만이 아니라 "실패 조기 감지"도 한다. 아래 항목을 매 폴링
+      # 수렴 대기는 "성공 확인"만이 아니라 "실패 조기 감지"도 한다. 아래 5가지를 매 폴링
       # 검사하고, 감지 즉시 진단을 덤프(::group::)한 뒤 exit 1 한다 — 600초 blind wait 제거:
       #  ① sync 작업 실패: operationState.phase=Failed/Error (단, 이번 revision과 일치할 때만 —
       #     이전 sync의 잔존 Failed를 오인하지 않도록 revision 일치가 필수 조건)
@@ -454,25 +183,12 @@ jobs:
       #  ③ 이미지 풀 실패: ImagePullBackOff/ErrImagePull이 2회 연속 폴링 관측(일시 GHCR 히컵 오탐 방지)
       #  ④ OOMKilled: lastState.terminated=OOMKilled & 현재 waiting
       #  ⑤ Unschedulable: PodScheduled=False가 90초 이상 지속(PostSync warmup Job stuck 등)
-      #  ⑥ read-model Hook: 현재 run/workload revision/active RV identity + HookSucceeded
-      #  ⑦ AI rollout: target Secret RV annotation을 가진 template이 observed/updated/available
-      #  ⑧ target AI pod: 같은 Secret RV annotation을 소비한 Ready pod 수가 desired replica와 일치
       # 성공/타임아웃/조기감지 모두 공통 dump_diagnostics로 원인을 Actions 로그에 남긴다.
       - name: Wait for ArgoCD convergence
-        id: convergence
-        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != '' || steps.services.outputs.secret_refresh == 'true'
+        if: steps.services.outputs.list != '' || steps.services.outputs.k8s_changed == 'true' || steps.ctx.outputs.fe_sha != ''
         env:
           TARGET_REV: ${{ steps.pin.outputs.revision }}
-          EXPECTED_WORKLOAD_REV: ${{ steps.pin.outputs.workload_revision }}
-          EXPECTED_ACTIVE_RV: ${{ steps.pin.outputs.active_rv }}
-          EXPECTED_ACTIVE_RV_HASH: ${{ steps.pin.outputs.active_rv_hash }}
-          EXPECTED_ROTATION_IDENTITY: ${{ steps.pin.outputs.rotation_identity }}
-          EXPECTED_DEPLOYMENT_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          # deploy/state worktree가 아니라 검증된 workflow source에서 staging한 read-only proof만 사용한다.
-          # shellcheck source=/dev/null
-          . "$RUNNER_TEMP/openat-deploy-scripts/prove-ai-query-rollout.sh"
-
           # 진단 덤프: 조기감지·타임아웃 공통 호출. 실패 사유를 ::error:: 로 Actions UI 상단에 띄우고
           # 섹션별로 ::group:: 접는다. -e/pipefail 아래에서 조회 실패에 죽지 않도록 전부 || true 감쌈.
           dump_diagnostics() {
@@ -527,11 +243,6 @@ jobs:
               esac
             done
             echo "::endgroup::"
-
-            echo "::group::AI read-model Hook and Deployment identity"
-            kubectl get job ai-read-model-apply -n openat -o yaml 2>&1 | tail -100 || true
-            kubectl get deployment ai -n openat -o yaml 2>&1 | tail -120 || true
-            echo "::endgroup::"
           }
 
           kubectl -n argocd annotate application openat argocd.argoproj.io/refresh=hard --overwrite || true
@@ -543,37 +254,9 @@ jobs:
           while [ "$SECONDS" -lt "$deadline" ]; do
             REV=$(kubectl -n argocd get application openat -o jsonpath='{.status.sync.revision}' 2>/dev/null || echo "?")
             S=$(kubectl -n argocd get application openat -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "?")
-            OPINFO=$(kubectl -n argocd get application openat -o jsonpath='{.status.operationState.operation.sync.revision}|{.status.operationState.phase}' 2>/dev/null || echo "|")
-            OPREV="${OPINFO%%|*}"; OPPHASE="${OPINFO##*|}"
-            HOOK_PHASE=$(kubectl -n argocd get application openat \
-              -o jsonpath='{.status.operationState.syncResult.resources[?(@.name=="ai-read-model-apply")].hookPhase}' \
-              2>/dev/null || echo "?")
-            HOOK_STATE=$(kubectl get job ai-read-model-apply -n openat \
-              -o jsonpath='{.metadata.annotations.openat\.io/target-workload-revision}{"|"}{.metadata.annotations.openat\.io/deployment-run-id}{"|"}{.metadata.annotations.openat\.io/rotation-identity}{"|"}{.metadata.annotations.openat\.io/target-active-resource-version-identity}{"|"}{.spec.template.metadata.labels.openat\.io/target-active-rv-hash}{"|"}{.status.conditions[?(@.type=="Complete")].status}' \
-              2>/dev/null || echo "|||||")
-            EXPECTED_HOOK_STATE="${EXPECTED_WORKLOAD_REV}|${EXPECTED_DEPLOYMENT_RUN_ID}|${EXPECTED_ROTATION_IDENTITY}|${EXPECTED_ACTIVE_RV}|${EXPECTED_ACTIVE_RV_HASH}|True"
-            ACTIVE_RV=$(kubectl get secret ai-query-secrets -n openat \
-              -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null || echo "?")
-            AI_STATE=$(kubectl get deployment ai -n openat \
-              -o jsonpath='{.metadata.uid}{"|"}{.spec.template.metadata.annotations.openat\.io/ai-query-secret-revision}{"|"}{.metadata.generation}{"|"}{.status.observedGeneration}{"|"}{.spec.replicas}{"|"}{.status.updatedReplicas}{"|"}{.status.readyReplicas}{"|"}{.status.availableReplicas}{"|"}{.status.unavailableReplicas}' \
-              2>/dev/null || echo "||||||||")
-            AI_ROLLOUT_PROOF=UNKNOWN
-            AI_TARGET_RS_UID=?
-            AI_READY_TARGET_PODS=0
-            if AI_ROLLOUT_RESULT=$(prove_ai_rollout "$AI_STATE" "$EXPECTED_ACTIVE_RV"); then
-              IFS='|' read -r AI_TARGET_RS_UID AI_READY_TARGET_PODS <<<"$AI_ROLLOUT_RESULT"
-              AI_ROLLOUT_PROOF=PROVEN
-            fi
 
-            # ── 성공: 대상 Hook identity/DB Secret/AI rollout까지 같은 revision으로 수렴 ──
-            if [ "$REV" = "$TARGET_REV" ] \
-              && [ "$S" = "Synced/Healthy" ] \
-              && [ "$OPREV" = "$TARGET_REV" ] \
-              && [ "$OPPHASE" = "Succeeded" ] \
-              && [ "$HOOK_PHASE" = "Succeeded" ] \
-              && [ "$HOOK_STATE" = "$EXPECTED_HOOK_STATE" ] \
-              && [ "$ACTIVE_RV" = "$EXPECTED_ACTIVE_RV" ] \
-              && [ "$AI_ROLLOUT_PROOF" = PROVEN ]; then
+            # ── 성공: 이번에 push한 revision으로 Synced/Healthy 수렴 ──
+            if [ "$REV" = "$TARGET_REV" ] && [ "$S" = "Synced/Healthy" ]; then
               echo "ArgoCD converged at $REV."
               # openat 수렴 후: 자기감시·관측 Application도 건강한지 확인.
               # OutOfSync/Degraded/Progressing "고착"만 잡는다 — 두 앱은 main 직추적이라
@@ -595,12 +278,9 @@ jobs:
               exit 0
             fi
 
-            if [ "$ACTIVE_RV" != "?" ] && [ "$ACTIVE_RV" != "$EXPECTED_ACTIVE_RV" ]; then
-              dump_diagnostics "active AI query Secret resourceVersion이 배포 중 바뀜"
-              exit 1
-            fi
-
             # ── ① sync 작업 실패 (반드시 이번 revision일 때만 — 잔존 Failed 오인 방지) ──
+            OPINFO=$(kubectl -n argocd get application openat -o jsonpath='{.status.operationState.operation.sync.revision}|{.status.operationState.phase}' 2>/dev/null || echo "|")
+            OPREV="${OPINFO%%|*}"; OPPHASE="${OPINFO##*|}"
             if [ "$OPREV" = "$TARGET_REV" ] && { [ "$OPPHASE" = "Failed" ] || [ "$OPPHASE" = "Error" ]; }; then
               OPMSG=$(kubectl -n argocd get application openat -o jsonpath='{.status.operationState.message}' 2>/dev/null || echo "")
               echo "operationState.message: $OPMSG"
@@ -660,33 +340,10 @@ jobs:
               fi
             done < <(kubectl get pods -n openat -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.conditions[?(@.type=="PodScheduled")]}{.status}{","}{.reason}{end}{"\n"}{end}' 2>/dev/null)
 
-            echo "waiting... (rev=$REV, want=$TARGET_REV, status=$S, operation=$OPREV/$OPPHASE, hook=$HOOK_PHASE, ai=$AI_STATE, targetRS=$AI_TARGET_RS_UID, readyTarget=$AI_READY_TARGET_PODS)"
+            echo "waiting... (rev=$REV, want=$TARGET_REV, status=$S)"
             sleep 5
           done
 
           # ── 타임아웃: 600초 내 미수렴 ── (실패는 시끄럽게)
           dump_diagnostics "ArgoCD가 600초 내 ${TARGET_REV}로 수렴하지 못함 (last rev=${REV} status=${S})"
           exit 1
-
-      - name: Reconcile AI query Secret after failed or cancelled deployment
-        if: ${{ always() && steps.provision.outputs.reconcile_required == 'true' && steps.convergence.outcome != 'success' }}
-        env:
-          TARGET_REV: ${{ steps.pin.outputs.revision }}
-          EXPECTED_WORKLOAD_REV: ${{ steps.pin.outputs.workload_revision }}
-          EXPECTED_ACTIVE_RV: ${{ steps.pin.outputs.active_rv }}
-          EXPECTED_ACTIVE_RV_HASH: ${{ steps.pin.outputs.active_rv_hash }}
-          EXPECTED_ROTATION_IDENTITY: ${{ steps.pin.outputs.rotation_identity }}
-          EXPECTED_DEPLOYMENT_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-          AI_QUERY_ROTATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-        run: bash "$RUNNER_TEMP/openat-deploy-scripts/reconcile-ai-query-rotation.sh" failure "$TARGET_REV" "$AI_QUERY_ROTATION_RUN_ID"
-
-      - name: Normalize AI query rollback Secret after successful deployment
-        if: ${{ always() && steps.provision.outputs.reconcile_required == 'true' && steps.convergence.outcome == 'success' }}
-        env:
-          TARGET_REV: ${{ steps.pin.outputs.revision }}
-          AI_QUERY_ROTATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-        run: bash "$RUNNER_TEMP/openat-deploy-scripts/reconcile-ai-query-rotation.sh" success "$TARGET_REV" "$AI_QUERY_ROTATION_RUN_ID"
-
-      - name: Remove rendered secret file
-        if: always()
-        run: rm -f .env
