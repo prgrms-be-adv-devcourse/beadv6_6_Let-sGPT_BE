@@ -54,8 +54,15 @@ jobs:
           # 디프는 GitHub 기준과 정확히 일치하도록 gh pr diff로 받는다. git diff의 3-dot은
           # base 브랜치에 merge base가 여러 개면("multiple merge bases") 빈 디프를 낸다.
           gh pr diff "$PR_NUMBER" > /tmp/pr.diff
-          # 디프가 비면(문서만 변경 등도 리뷰는 하되) 크기 상한으로 폭주 방지
           DIFF_BYTES=$(wc -c < /tmp/pr.diff)
+          # 0바이트 가드: PR에는 변경 파일이 반드시 존재하므로 빈 디프는 정상 상태가
+          # 아니라 디프 취득 실패(인증/API 이상) 신호다. 여기서 멈추지 않으면 빈 디프를
+          # 그대로 리뷰에 넘겨 "성공한 빈 리뷰"로 실패를 위장하게 된다.
+          if [ "$DIFF_BYTES" -eq 0 ]; then
+            echo "::error::gh pr diff 결과가 0바이트 — PR에는 변경 파일이 존재해야 하므로 디프 취득 실패(인증/API 이상)로 간주" >&2
+            exit 1
+          fi
+          # 디프가 크면 상한으로 폭주 방지
           if [ "$DIFF_BYTES" -gt 400000 ]; then
             head -c 400000 /tmp/pr.diff > /tmp/pr.diff.clip
             mv /tmp/pr.diff.clip /tmp/pr.diff
