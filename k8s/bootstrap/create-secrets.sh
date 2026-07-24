@@ -22,7 +22,7 @@ set -a
 . "$ENV_FILE"
 set +a
 
-for key in DB_USER DB_PASSWORD JWT_KEY_ID JWT_PRIVATE_KEY JWT_PUBLIC_KEY PG_CLIENT_KEY PG_SECRET_KEY PAYMENT_FIELD_ENCRYPTION_KEY OPENAI_API_KEY; do
+for key in DB_USER DB_PASSWORD JWT_KEY_ID JWT_PRIVATE_KEY JWT_PUBLIC_KEY PG_CLIENT_KEY PG_SECRET_KEY PAYMENT_FIELD_ENCRYPTION_KEY OPENAI_API_KEY OPENAI_INFERENCEAI_BASE_URL OPENAI_INFERENCEAI_API_KEY; do
   [ -n "${!key:-}" ] || { echo "ERROR: $ENV_FILE 에 $key 없음/빈값 — 실패를 조용히 넘기지 않는다" >&2; exit 1; }
 done
 
@@ -49,9 +49,12 @@ echo "OK: member-secrets 적용 완료"
   --dry-run=client -o yaml | "$KUBECTL" apply -f -
 echo "OK: payment-secrets 적용 완료"
 
-# search 전용
+# search 전용 — GitHub의 OPENAI_INFERENCEAI_* 값을 같은 이름 그대로 파드에 주입.
 "$KUBECTL" create secret generic search-secrets -n "$NS" \
   --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --from-literal=OPENAI_INFERENCEAI_BASE_URL="$OPENAI_INFERENCEAI_BASE_URL" \
+  --from-literal=OPENAI_INFERENCEAI_API_KEY="$OPENAI_INFERENCEAI_API_KEY" \
+  --from-literal=OPENAI_INFERENCEAI_EMBEDDING_ENABLED="${OPENAI_INFERENCEAI_EMBEDDING_ENABLED:-true}" \
   --dry-run=client -o yaml | "$KUBECTL" apply -f -
 echo "OK: search-secrets 적용 완료"
 
