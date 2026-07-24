@@ -79,13 +79,66 @@ receivers:
 processors:
   memory_limiter:
     check_interval: 1s
-    limit_mib: 256        # gate2 A-1: resources.limits.memory(320Mi)−64Mi(Go 비힙 쿠션). OOMKill 전 스스로 드롭
-    spike_limit_mib: 48   # soft=208, hard=256
-  probabilistic_sampler:
-    # 단위는 퍼센트(10 = 10%). Boot property(0~1 비율)와 스케일이 다름 —
-    # "0.1"이라 쓰면 0.1%가 되는 함정 주의. TraceID 해시 기반이라 같은 트레이스의
-    # 스팬이 쪼개지지 않는다(contrib v0.156.0 README 검증).
-    sampling_percentage: ${env:TRACES_SAMPLING_PERCENTAGE:-10}
+    limit_mib: 400        # tail_sampling 버퍼링 상향: resources.limits.memory(512Mi)−112Mi(Go 비힙 쿠션). OOMKill 전 스스로 드롭
+    spike_limit_mib: 100  # soft=300, hard=400
+  # 헬스/프로브 노이즈 스팬 드롭 — 속성 없으면 무시(ignore)해 크래시 방지.
+  filter/noise:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.target"] != nil and IsMatch(attributes["http.target"], "(/actuator|/health|/readiness|/liveness)")'
+        - 'attributes["http.route"] != nil and IsMatch(attributes["http.route"], "(/actuator|/health|/readiness|/liveness)")'
+        - 'attributes["url.path"] != nil and IsMatch(attributes["url.path"], "(/actuator|/health|/readiness|/liveness)")'
+        - 'attributes["http.url"] != nil and IsMatch(attributes["http.url"], "(/actuator|/health|/readiness|/liveness)")'
+        - 'IsMatch(name, "(/actuator|/health|/readiness|/liveness)")'
+  # 최소 PII 스크럽 — db.statement 삭제 + URL 쿼리스트링(? 이후) 제거.
+  transform/scrub:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(attributes, "db.statement")
+          - replace_pattern(attributes["http.url"], "[?].*", "")
+          - replace_pattern(attributes["url.full"], "[?].*", "")
+  # 파드/네임스페이스/노드/디플로이먼트 메타 부착. pod.uid(resource) 우선, 없으면 IP(connection)로 연결.
+  k8sattributes:
+    passthrough: false
+    extract:
+      metadata:
+        - k8s.pod.name
+        - k8s.namespace.name
+        - k8s.node.name
+        - k8s.deployment.name
+        - k8s.pod.uid
+      labels:
+        # 카디널리티 방어 — pod-template-hash(롤아웃마다 무한 증가) 등 catch-all 라벨 추출 제거.
+        # app 라벨만 부착(나머지 catch-all 및 annotations 전체 드롭).
+        - { tag_name: k8s.pod.label.app, key: app, from: pod }
+    pod_association:
+      - sources:
+          - { from: resource_attribute, name: k8s.pod.uid }
+      - sources:
+          - { from: connection }
+  # tail 샘플링 — 에러/5xx/느린(>2s) 트레이스 100%, 나머지는 확률 폴백(기본 5%).
+  # 정책은 OR 결합: 하나라도 sample이면 트레이스 유지.
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 50000
+    expected_new_traces_per_sec: 100
+    policies:
+      - name: errors
+        type: status_code
+        status_code: { status_codes: [ERROR] }
+      - name: http-5xx
+        type: numeric_attribute
+        numeric_attribute: { key: http.response.status_code, min_value: 500 }
+      - name: slow
+        type: latency
+        latency: { threshold_ms: 2000 }
+      - name: fallback-probabilistic
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: ${env:OTEL_TAIL_SAMPLING_PERCENT:-5}
   batch:
     timeout: 5s
     send_batch_size: 1024
@@ -110,7 +163,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, probabilistic_sampler, batch, resource]
+      processors: [memory_limiter, filter/noise, transform/scrub, k8sattributes, tail_sampling, batch, resource]
       exporters: [otlp/tempo]
     metrics:
       receivers: [prometheus]
