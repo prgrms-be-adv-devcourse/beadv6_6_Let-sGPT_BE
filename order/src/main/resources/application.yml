@@ -57,6 +57,16 @@ management:
     health:
       probes:
         enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화
+  metrics:
+    distribution:
+      # 지연 퍼센타일·SLO 준수율 계산용 누적 버킷. 대상은 HTTP 서버 타이머 하나로 한정.
+      percentiles-histogram:
+        "[http.server.requests]": true
+      # 버킷 51개로 클램프(무클램프 69개). 하한은 빠른 엔드포인트 해상도, 상한은 재고 차감 read 여유.
+      minimum-expected-value:
+        "[http.server.requests]": 5ms
+      maximum-expected-value:
+        "[http.server.requests]": 10s
   tracing:
     export:
       otlp:
