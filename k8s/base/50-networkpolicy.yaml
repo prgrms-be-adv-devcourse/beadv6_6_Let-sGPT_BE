@@ -1,7 +1,7 @@
 # 데이터 tier(postgres/kafka/redis/elasticsearch) ingress-only 격리.
 # NetworkPolicy는 선택된 파드에 정책이 하나라도 붙으면 그 파드는 명시 허용 외 전부 차단하므로,
-# 이 4개 정책만으로 데이터 tier가 잠긴다. 앱 파드에는 정책을 걸지 않아(무정책=전면 허용)
-# traefik->apigateway->서비스 경로와 관측 스택의 앱 스크레이프 경로는 그대로 통과한다.
+# 아래 4개 정책으로 데이터 tier를 잠그고, AI는 application·management 포트를 분리해
+# Gateway와 OTel Collector가 서로의 경로에 접근할 수 없게 한다.
 # 신규 리소스 추가만 — 기존 워크로드 selector는 절대 변경하지 않는다(라이브 데드락 전례).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -68,3 +68,28 @@ spec:
         - podSelector: {}
       ports:
         - { port: 9200, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-ingress
+  namespace: openat
+spec:
+  podSelector:
+    matchLabels: { app: ai }
+  policyTypes: [Ingress]
+  ingress:
+    # 외부 애플리케이션 API는 JWT를 검증한 Gateway만 호출한다.
+    - from:
+        - podSelector:
+            matchLabels: { app: apigateway }
+      ports:
+        - { port: 9160, protocol: TCP }
+    # 관측 주체는 별도 management 포트만 조회한다.
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: observability }
+          podSelector:
+            matchLabels: { app: otel-collector }
+      ports:
+        - { port: 9161, protocol: TCP }

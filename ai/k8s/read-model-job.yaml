@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ai-read-model-apply
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    # CD가 실패 시 hookPhase를 확인해 active Secret 복구 여부를 결정할 수 있도록 TTL까지 유지한다.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    # queue(wave 8)를 포함한 일반 workload가 모두 Healthy가 된 뒤 이 Hook만 실행한다.
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  activeDeadlineSeconds: 180
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: ai-read-model-apply
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: apply
+          # 관리자 자격증명을 받는 migration client라 patch tag와 운영 노드의 amd64 digest를 함께 고정한다.
+          image: postgres:16.14@sha256:da8cf245a60506e50a0a8cbb0f39c559ca622d92490605b67fcadc74ca1ea8e4
+          command: ["/workspace/ai/scripts/apply-read-model.sh"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: AI_READ_MODEL_DB_HOST
+              valueFrom: { configMapKeyRef: { name: app-config, key: DB_HOST } }
+            - name: AI_READ_MODEL_DB_PORT
+              valueFrom: { configMapKeyRef: { name: app-config, key: DB_PORT } }
+            - name: AI_READ_MODEL_DB_NAME
+              valueFrom: { configMapKeyRef: { name: app-config, key: DB_NAME } }
+            - name: AI_READ_MODEL_ADMIN_USER
+              valueFrom: { secretKeyRef: { name: db-secrets, key: DB_USER } }
+            - name: AI_READ_MODEL_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: db-secrets, key: DB_PASSWORD } }
+            - name: AI_QUERY_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ai-query-secrets
+                  key: AI_QUERY_DB_PASSWORD
+            - name: AI_QUERY_DB_PREVIOUS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ai-query-rollback-secrets
+                  key: AI_QUERY_DB_PREVIOUS_PASSWORD
+          volumeMounts:
+            - name: artifacts
+              mountPath: /workspace
+              readOnly: true
+      volumes:
+        - name: artifacts
+          configMap:
+            name: ai-read-model-artifacts
+            defaultMode: 0555
+            items:
+              - key: apply-read-model.sh
+                path: ai/scripts/apply-read-model.sh
+              - key: 01-ai-read-model.sql
+                path: ai/src/main/resources/db/read-model/01-ai-read-model.sql
+              - key: verify-ai-read-model.sql
+                path: ai/src/main/resources/db/read-model/verify-ai-read-model.sql
