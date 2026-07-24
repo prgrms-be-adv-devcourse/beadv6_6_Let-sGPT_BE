@@ -90,18 +90,24 @@ for path, d in docs:
         grafana_deploy = d
 
 provider_paths = []
-if providers_cm is None:
-    errors.append("grafana-dashboard-providers ConfigMap 을 찾지 못함")
-else:
+# providers.yaml 은 configMapGenerator 로 이관되어 inline ConfigMap 이 아니라
+# config/providers.yaml 파일로 존재할 수 있다. inline CM 이 있으면 그걸, 없으면 파일을 읽는다.
+prov_raw = None
+if providers_cm is not None:
     prov_raw = (providers_cm.get("data") or {}).get("providers.yaml")
-    if not prov_raw:
-        errors.append("providers.yaml 키가 grafana-dashboard-providers 에 없음")
-    else:
-        prov = yaml.safe_load(prov_raw)
-        for p in (prov.get("providers") or []):
-            path_opt = (p.get("options") or {}).get("path")
-            if path_opt:
-                provider_paths.append((p.get("name"), path_opt))
+if not prov_raw:
+    cfg_path = os.path.join(obs_dir, "config", "providers.yaml")
+    if os.path.exists(cfg_path):
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            prov_raw = f.read()
+if not prov_raw:
+    errors.append("grafana-dashboard-providers 의 providers.yaml 을 찾지 못함 (inline CM 또는 config/providers.yaml)")
+else:
+    prov = yaml.safe_load(prov_raw)
+    for p in (prov.get("providers") or []):
+        path_opt = (p.get("options") or {}).get("path")
+        if path_opt:
+            provider_paths.append((p.get("name"), path_opt))
 
 # Deployment 에서 volumeMounts(name->mountPath), volumes(name->configMap.name) 추출
 mount_by_path = {}   # mountPath -> volume name
