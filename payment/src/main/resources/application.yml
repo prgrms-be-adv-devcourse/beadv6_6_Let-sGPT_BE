@@ -69,6 +69,19 @@ management:
     health:
       probes:
         enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화
+  metrics:
+    distribution:
+      # 지연 퍼센타일·SLO 준수율 계산용 누적 버킷. HTTP 서버 타이머와 PG 호출 타이머로 한정.
+      percentiles-histogram:
+        "[http.server.requests]": true
+        "[payment.pg.call]": true
+      # 버킷 51개로 클램프(무클램프 69개). 하한은 해상도, 상한은 PG 슬로우콜 3s 여유.
+      minimum-expected-value:
+        "[http.server.requests]": 5ms
+        "[payment.pg.call]": 5ms
+      maximum-expected-value:
+        "[http.server.requests]": 10s
+        "[payment.pg.call]": 10s
   tracing:
     export:
       otlp:
