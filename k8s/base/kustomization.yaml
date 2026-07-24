@@ -16,6 +16,7 @@ resources:
   - 12-redis.yaml
   - 13-elasticsearch.yaml
   - 14-redis-exporter.yaml
+  - 15-postgres-exporter.yaml
   - 20-apigateway.yaml
   - 21-member.yaml
   - 22-product.yaml
