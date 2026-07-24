@@ -38,6 +38,23 @@ public class ProductSearchService {
   private static final float VECTOR_SCORE_WEIGHT = 0.85F;
   private static final float LEXICAL_SCORE_WEIGHT = 0.15F;
   private static final float MIN_RELATIVE_RELEVANCE_RATIO = 0.90F;
+  private static final String[] KOREAN_PARTICLE_SUFFIXES = {
+    "으로", "에서", "에게", "까지", "부터", "처럼", "보다", "과", "와", "이", "가",
+    "은", "는", "을", "를", "의", "에", "로", "도", "만"
+  };
+  private static final Set<String> SEARCH_STOP_WORDS =
+      Set.of(
+          "들어간",
+          "들어있는",
+          "포함된",
+          "있는",
+          "없는",
+          "어울리는",
+          "사용하는",
+          "사용할",
+          "좋은",
+          "제품",
+          "상품");
   private static final String[] VECTOR_SEARCH_SOURCE_INCLUDES = {
     "id",
     "sellerId",
@@ -325,35 +342,14 @@ public class ProductSearchService {
       return 0.0F;
     }
 
-    String normalizedQuery = normalizeText(queryText);
-    String name = normalizeText(document.name());
-    String description = normalizeText(document.description());
-    String imgDescription = normalizeText(document.imgDescription());
-
-    float score = 0.0F;
-    if (!normalizedQuery.isBlank() && containsSearchExpression(name, normalizedQuery)) {
-      score += 0.4F;
-    }
-    if (!normalizedQuery.isBlank() && containsSearchExpression(description, normalizedQuery)) {
-      score += 0.2F;
-    }
-    if (!normalizedQuery.isBlank() && containsSearchExpression(imgDescription, normalizedQuery)) {
-      score += 0.25F;
-    }
-
-    for (String term : terms) {
-      if (containsSearchTerm(name, term)) {
-        score += 0.35F;
-      }
-      if (containsSearchTerm(description, term)) {
-        score += 0.12F;
-      }
-      if (containsSearchTerm(imgDescription, term)) {
-        score += 0.18F;
-      }
-    }
-
-    return Math.min(1.0F, score);
+    String productContext =
+        String.join(
+            " ",
+            normalizeText(document.name()),
+            normalizeText(document.description()),
+            normalizeText(document.imgDescription()));
+    long matchedTerms = terms.stream().filter(productContext::contains).count();
+    return (float) matchedTerms / terms.size();
   }
 
   private boolean containsSearchExpression(String text, String expression) {
@@ -407,12 +403,29 @@ public class ProductSearchService {
     }
 
     for (String token : normalizedQuery.split("\\s+")) {
-      if (isMeaningfulSearchTerm(token)) {
-        terms.add(token);
+      Set<String> colorAliases = ColorFamily.findExplicitAliasesIn(token);
+      if (!colorAliases.isEmpty()) {
+        terms.addAll(colorAliases);
+        continue;
+      }
+
+      String normalizedToken = stripKoreanParticle(token);
+      if (!SEARCH_STOP_WORDS.contains(normalizedToken)
+          && isMeaningfulSearchTerm(normalizedToken)) {
+        terms.add(normalizedToken);
       }
     }
 
     return terms;
+  }
+
+  private String stripKoreanParticle(String token) {
+    for (String suffix : KOREAN_PARTICLE_SUFFIXES) {
+      if (token.endsWith(suffix) && token.length() - suffix.length() >= 2) {
+        return token.substring(0, token.length() - suffix.length());
+      }
+    }
+    return token;
   }
 
   private boolean isMeaningfulSearchTerm(String token) {
@@ -524,6 +537,17 @@ public class ProductSearchService {
         }
       }
       return colors;
+    }
+
+    private static Set<String> findExplicitAliasesIn(String text) {
+      String normalizedText = text == null ? "" : text.toLowerCase(Locale.ROOT);
+      Set<String> aliases = new LinkedHashSet<>();
+      for (ColorFamily color : values()) {
+        color.aliases.stream()
+            .filter(alias -> containsExplicitAlias(normalizedText, alias))
+            .forEach(aliases::add);
+      }
+      return aliases;
     }
   }
 
