@@ -1,0 +1,171 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+  prometheus:
+    config:
+      global:
+        scrape_interval: 30s        # gate2 A-1: 수신량·staleness 메모리 절반 (인프라 대시보드 30s 해상도 충분)
+      scrape_configs:
+        - job_name: kubernetes-pods
+          kubernetes_sd_configs:
+            - role: pod
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+              action: keep
+              regex: "true"
+            - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+              action: replace
+              target_label: __metrics_path__
+              regex: (.+)
+            - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+              action: replace
+              regex: ([^:]+)(?::\d+)?;(\d+)
+              replacement: $1:$2
+              target_label: __address__
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: namespace
+            - source_labels: [__meta_kubernetes_pod_label_app]
+              target_label: app
+            # 파드 단위 드릴다운용 — instance(IP:포트)는 사람이 못 읽어서 pod명을 라벨로.
+            - source_labels: [__meta_kubernetes_pod_name]
+              target_label: pod
+          metric_relabel_configs:
+            # cert-manager 네임스페이스 전량 드롭 — 대시보드 참조 0건, 실측 712~975 시리즈.
+            # 인증서 만료는 패널이 아니라 cert-manager 이벤트/로그로 본다.
+            - source_labels: [namespace]
+              regex: cert-manager
+              action: drop
+            # kube-system(traefik) 전량 드롭 — 대시보드 참조 0건, 실측 48~356 시리즈.
+            - source_labels: [namespace]
+              regex: kube-system
+              action: drop
+            # postgres-exporter는 1,702 시리즈를 내보내는데 대시보드가 쓰는 건 8개 이름 30 시리즈뿐.
+            # RE2에 부정 전방탐색이 없어 "허용 표시 후 미표시분 드롭" 2단 구성으로 처리한다.
+            - source_labels: [__name__]
+              regex: pg_up|pg_database_size_bytes|pg_stat_activity_count|pg_stat_database_deadlocks|pg_stat_database_tup_fetched|pg_stat_database_tup_returned|pg_stat_database_xact_commit|pg_stat_database_xact_rollback
+              target_label: __tmp_pg_keep
+              replacement: "yes"
+            - source_labels: [__name__, __tmp_pg_keep]
+              regex: pg_.*;
+              action: drop
+        # k3s kubelet 내장 cAdvisor — 별도 파드 없이 컨테이너별 메모리/CPU 확보.
+        # Prometheus 288Mi 보호를 위해 keep 필터로 시리즈 최소화.
+        - job_name: kubernetes-cadvisor
+          scheme: https
+          tls_config:
+            insecure_skip_verify: true
+          authorization:
+            credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+          kubernetes_sd_configs:
+            - role: node
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_node_name]
+              target_label: node
+            - target_label: __metrics_path__
+              replacement: /metrics/cadvisor
+          metric_relabel_configs:
+            # 카디널리티 방어 — 필요한 시리즈만 keep
+            - source_labels: [__name__]
+              regex: container_memory_working_set_bytes|container_cpu_usage_seconds_total|container_spec_memory_limit_bytes|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total|machine_memory_bytes
+              action: keep
+            # 파드 아닌 cgroup 중간노드(빈 pod 라벨) 제거. 단 machine_*는 pod 라벨이 없으므로 예외 통과.
+            - source_labels: [__name__, pod]
+              regex: "machine_.*;|[^;]*;.+"
+              action: keep
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400        # tail_sampling 버퍼링 상향: resources.limits.memory(512Mi)−112Mi(Go 비힙 쿠션). OOMKill 전 스스로 드롭
+    spike_limit_mib: 100  # soft=300, hard=400
+  # 헬스/프로브 노이즈 스팬 드롭 — 속성 없으면 무시(ignore)해 크래시 방지.
+  filter/noise:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.target"] != nil and IsMatch(attributes["http.target"], "(/actuator|/health|/readiness|/liveness)")'
+        - 'attributes["http.route"] != nil and IsMatch(attributes["http.route"], "(/actuator|/health|/readiness|/liveness)")'
+        - 'attributes["url.path"] != nil and IsMatch(attributes["url.path"], "(/actuator|/health|/readiness|/liveness)")'
+        - 'attributes["http.url"] != nil and IsMatch(attributes["http.url"], "(/actuator|/health|/readiness|/liveness)")'
+        - 'IsMatch(name, "(/actuator|/health|/readiness|/liveness)")'
+  # 최소 PII 스크럽 — db.statement 삭제 + URL 쿼리스트링(? 이후) 제거.
+  transform/scrub:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(attributes, "db.statement")
+          - replace_pattern(attributes["http.url"], "[?].*", "")
+          - replace_pattern(attributes["url.full"], "[?].*", "")
+  # 파드/네임스페이스/노드/디플로이먼트 메타 부착. pod.uid(resource) 우선, 없으면 IP(connection)로 연결.
+  k8sattributes:
+    passthrough: false
+    extract:
+      metadata:
+        - k8s.pod.name
+        - k8s.namespace.name
+        - k8s.node.name
+        - k8s.deployment.name
+        - k8s.pod.uid
+      labels:
+        # 카디널리티 방어 — pod-template-hash(롤아웃마다 무한 증가) 등 catch-all 라벨 추출 제거.
+        # app 라벨만 부착(나머지 catch-all 및 annotations 전체 드롭).
+        - { tag_name: k8s.pod.label.app, key: app, from: pod }
+    pod_association:
+      - sources:
+          - { from: resource_attribute, name: k8s.pod.uid }
+      - sources:
+          - { from: connection }
+  # tail 샘플링 — 에러/5xx/느린(>2s) 트레이스 100%, 나머지는 확률 폴백(기본 5%).
+  # 정책은 OR 결합: 하나라도 sample이면 트레이스 유지.
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 50000
+    expected_new_traces_per_sec: 100
+    policies:
+      - name: errors
+        type: status_code
+        status_code: { status_codes: [ERROR] }
+      - name: http-5xx
+        type: numeric_attribute
+        numeric_attribute: { key: http.response.status_code, min_value: 500 }
+      - name: slow
+        type: latency
+        latency: { threshold_ms: 2000 }
+      - name: fallback-probabilistic
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: ${env:OTEL_TAIL_SAMPLING_PERCENT:-5}
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+  resource:
+    attributes:
+      - { key: k8s.cluster.name, value: "openat-k3s", action: upsert }
+      - { key: deployment.environment, value: "production", action: upsert }
+exporters:
+  otlp/tempo:
+    endpoint: "tempo.observability.svc.cluster.local:4317"
+    tls:
+      insecure: true
+  prometheusremotewrite:
+    endpoint: "http://prometheus.observability.svc.cluster.local:9090/api/v1/write"
+    tls:
+      insecure: true
+extensions:
+  health_check:
+    endpoint: "0.0.0.0:13133"
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/noise, transform/scrub, k8sattributes, tail_sampling, batch, resource]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [prometheus]
+      processors: [memory_limiter, batch, resource]
+      exporters: [prometheusremotewrite]

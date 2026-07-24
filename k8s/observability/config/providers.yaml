@@ -1,0 +1,23 @@
+apiVersion: 1
+providers:
+  # 폴더 소유권을 provider가 가짐 — 폴더 2개(전체 개요 vs 도메인 서비스), path는 마운트 디렉토리와 1:1.
+  - name: 전체 개요
+    orgId: 1
+    folder: 전체 개요
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/platform
+      foldersFromFilesStructure: false
+  - name: 도메인 서비스
+    orgId: 1
+    folder: 도메인 서비스
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/domain
+      foldersFromFilesStructure: false

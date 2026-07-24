@@ -13,11 +13,9 @@ spec:
     matchLabels: { app: postgres }
   policyTypes: [Ingress]
   ingress:
-    # openat 전체 파드(앱) + observability ns(postgres-exporter)만 5432 허용.
+    # openat 내부 파드만 5432 허용(postgres-exporter도 이제 openat에 있어 여기 포함된다).
     - from:
         - podSelector: {}
-        - namespaceSelector:
-            matchLabels: { kubernetes.io/metadata.name: observability }
       ports:
         - { port: 5432, protocol: TCP }
 ---
@@ -68,3 +66,78 @@ spec:
         - podSelector: {}
       ports:
         - { port: 9200, protocol: TCP }
+---
+# redis-exporter 전용 최소권한 정책(신규 추가 — 위 데이터 tier 정책들은 건드리지 않는다).
+# 이 파드는 openat에 있어 무정책=전면허용 상태였으나, 하드닝을 위해 명시적으로 격리한다.
+# ingress는 스크레이프 경로만, egress는 redis 접속과 DNS만 연다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-exporter-policy
+  namespace: openat
+spec:
+  podSelector:
+    matchLabels: { app: redis-exporter }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # observability 네임스페이스에서 오는 9121 스크레이프만 허용. otel-collector가
+    # role: pod로 이 파드를 발견해 pull하며(prometheus는 scrape_configs: []로 직접 스크레이프
+    # 안 함), 둘 다 observability에 있다. 이 셀렉터는 postgres-ingress가 observability→postgres
+    # 5432를 여는 것과 동일한 검증된 패턴을 미러링한 것이라 스크레이프가 끊기지 않는다.
+    # readinessProbe(9121, kubelet발)는 NetworkPolicy 적용 대상이 아니라 영향 없다
+    # — redis의 tcpSocket 6379 probe가 ingress-only 정책 아래 정상 동작하는 것으로 검증됨.
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: observability }
+      ports:
+        - { port: 9121, protocol: TCP }
+  egress:
+    # redis 접속 — openat 내 app: redis 파드 6379.
+    - to:
+        - podSelector:
+            matchLabels: { app: redis }
+      ports:
+        - { port: 6379, protocol: TCP }
+    # DNS — kube-system CoreDNS. REDIS_ADDR의 redis 호스트명 해석에 필요.
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+---
+# postgres-exporter 전용 최소권한 정책(신규 추가 — 위 데이터 tier 정책들은 건드리지 않는다).
+# redis-exporter-policy와 대칭. 이 파드는 openat에 있어 무정책=전면허용 상태였으나, 하드닝을
+# 위해 명시적으로 격리한다. ingress는 스크레이프 경로만, egress는 postgres 접속과 DNS만 연다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-exporter-policy
+  namespace: openat
+spec:
+  podSelector:
+    matchLabels: { app: postgres-exporter }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # observability 네임스페이스에서 오는 9187 스크레이프만 허용. otel-collector가
+    # role: pod로 이 파드를 발견해 pull하며, collector는 observability에 있다.
+    # readinessProbe는 이 배포에 없고, kubelet발 probe는 NetworkPolicy 대상이 아니라 무관하다.
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: observability }
+      ports:
+        - { port: 9187, protocol: TCP }
+  egress:
+    # postgres 접속 — openat 내 app: postgres 파드 5432.
+    - to:
+        - podSelector:
+            matchLabels: { app: postgres }
+      ports:
+        - { port: 5432, protocol: TCP }
+    # DNS — kube-system CoreDNS. DSN의 postgres 호스트명 해석에 필요.
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }

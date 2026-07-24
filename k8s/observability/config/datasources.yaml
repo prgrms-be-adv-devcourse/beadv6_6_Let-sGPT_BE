@@ -1,0 +1,15 @@
+apiVersion: 1
+datasources:
+  # uid 고정 — 대시보드 JSON이 datasource를 uid로 참조(prometheus/tempo). 미지정 시 랜덤 uid가
+  # 배정되어 프로비저닝 대시보드의 datasource 참조가 깨진다. 기존 name 참조("Prometheus")도 계속 유효.
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: "http://prometheus:9090"
+    isDefault: true
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: "http://tempo:3200"
