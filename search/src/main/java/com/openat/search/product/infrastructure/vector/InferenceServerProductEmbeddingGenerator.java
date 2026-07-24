@@ -28,9 +28,9 @@ public class InferenceServerProductEmbeddingGenerator implements ProductEmbeddin
 
   public InferenceServerProductEmbeddingGenerator(
       RestClient restClient,
-      @Value("${openai.base-url:https://api.openai.com/v1}") String baseUrl,
-      @Value("${openai.api-key:}") String apiKey,
-      @Value("${openai.embedding.model:text-embedding-3-small}") String model) {
+      @Value("${openai.inferenceai.base-url:https://api.openai.com/v1}") String baseUrl,
+      @Value("${openai.inferenceai.api-key:}") String apiKey,
+      @Value("${openai.inferenceai.embedding.model:text-embedding-3-small}") String model) {
     this.restClient = restClient;
     this.embeddingsUri = endpoint(baseUrl, "embeddings");
     this.apiKey = apiKey;
