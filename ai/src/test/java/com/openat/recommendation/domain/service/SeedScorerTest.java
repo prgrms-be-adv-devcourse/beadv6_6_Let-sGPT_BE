@@ -3,7 +3,6 @@ package com.openat.recommendation.domain.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.openat.recommendation.domain.model.PurchaseSignal;
-import com.openat.recommendation.domain.model.Seed;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
