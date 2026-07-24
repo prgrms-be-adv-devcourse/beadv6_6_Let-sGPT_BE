@@ -75,11 +75,9 @@ data:
                   target_label: namespace
                 - source_labels: [__meta_kubernetes_pod_label_app]
                   target_label: app
-                # 대시보드 JSON이 {application="..."}로 필터하는데 실제 라벨은 app뿐이라 전 패널
-                # No data였음(7/20 확진). 같은 값을 application으로도 복제 — 시리즈 수 불변.
-                # 대시보드를 app 기준으로 정리하면 이 줄은 제거 가능.
-                - source_labels: [__meta_kubernetes_pod_label_app]
-                  target_label: application
+                # 파드 단위 드릴다운용 — instance(IP:포트)는 사람이 못 읽어서 pod명을 라벨로.
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: pod
             # k3s kubelet 내장 cAdvisor — 별도 파드 없이 컨테이너별 메모리/CPU 확보.
             # Prometheus 288Mi 보호를 위해 keep 필터로 시리즈 최소화.
             - job_name: kubernetes-cadvisor

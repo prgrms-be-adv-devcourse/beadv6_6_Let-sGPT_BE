@@ -11,11 +11,8 @@ resources:
   - 20-prometheus.yaml
   - 21-postgres-exporter.yaml
   - 30-grafana.yaml
-  - 31-grafana-dashboard-common.yaml
+  - 31-grafana-dashboard-platform.yaml
   - 32-grafana-dashboard-domain.yaml
   - 33-grafana-ratelimit-middleware.yaml
   - 34-grafana-ingress.yaml
-  - 35-grafana-dashboard-payment.yaml
-  - 36-grafana-dashboard-e2e.yaml
-  - 37-grafana-dashboard-infra.yaml
   - 40-networkpolicy.yaml

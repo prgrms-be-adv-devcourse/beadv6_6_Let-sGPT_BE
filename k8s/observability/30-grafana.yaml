@@ -33,57 +33,26 @@ data:
   providers.yaml: |
     apiVersion: 1
     providers:
-      # 폴더 소유권을 ConfigMap(provider)이 가짐 — 폴더당 provider 1개, 폴더는 프로비저닝 시 자동 생성.
-      # 각 path는 Deployment에서 해당 폴더 ConfigMap을 마운트한 디렉토리와 1:1 대응.
-      - name: 공통
+      # 폴더 소유권을 provider가 가짐 — 폴더 2개(전체 개요 vs 도메인 서비스), path는 마운트 디렉토리와 1:1.
+      - name: 전체 개요
         orgId: 1
-        folder: 공통
+        folder: 전체 개요
         type: file
         disableDeletion: false
         allowUiUpdates: false
         updateIntervalSeconds: 30
         options:
-          path: /var/lib/grafana/dashboards/common
+          path: /var/lib/grafana/dashboards/platform
           foldersFromFilesStructure: false
-      - name: 도메인
+      - name: 도메인 서비스
         orgId: 1
-        folder: 도메인
+        folder: 도메인 서비스
         type: file
         disableDeletion: false
         allowUiUpdates: false
         updateIntervalSeconds: 30
         options:
           path: /var/lib/grafana/dashboards/domain
-          foldersFromFilesStructure: false
-      - name: 결제
-        orgId: 1
-        folder: 결제
-        type: file
-        disableDeletion: false
-        allowUiUpdates: false
-        updateIntervalSeconds: 30
-        options:
-          path: /var/lib/grafana/dashboards/payment
-          foldersFromFilesStructure: false
-      - name: E2E
-        orgId: 1
-        folder: E2E
-        type: file
-        disableDeletion: false
-        allowUiUpdates: false
-        updateIntervalSeconds: 30
-        options:
-          path: /var/lib/grafana/dashboards/e2e
-          foldersFromFilesStructure: false
-      - name: 인프라
-        orgId: 1
-        folder: 인프라
-        type: file
-        disableDeletion: false
-        allowUiUpdates: false
-        updateIntervalSeconds: 30
-        options:
-          path: /var/lib/grafana/dashboards/infra
           foldersFromFilesStructure: false
 ---
 apiVersion: apps/v1
@@ -136,26 +105,17 @@ spec:
             - { name: datasources, mountPath: /etc/grafana/provisioning/datasources }
             - { name: dashboard-providers, mountPath: /etc/grafana/provisioning/dashboards }
             # 폴더별 ConfigMap을 provider path와 1:1로 마운트(폴더당 디렉토리 1개).
-            - { name: dash-common, mountPath: /var/lib/grafana/dashboards/common }
+            - { name: dash-platform, mountPath: /var/lib/grafana/dashboards/platform }
             - { name: dash-domain, mountPath: /var/lib/grafana/dashboards/domain }
-            - { name: dash-payment, mountPath: /var/lib/grafana/dashboards/payment }
-            - { name: dash-e2e, mountPath: /var/lib/grafana/dashboards/e2e }
-            - { name: dash-infra, mountPath: /var/lib/grafana/dashboards/infra }
       volumes:
         - name: datasources
           configMap: { name: grafana-datasources }
         - name: dashboard-providers
           configMap: { name: grafana-dashboard-providers }
-        - name: dash-common
-          configMap: { name: grafana-dashboard-common }
+        - name: dash-platform
+          configMap: { name: grafana-dashboard-platform }
         - name: dash-domain
           configMap: { name: grafana-dashboard-domain }
-        - name: dash-payment
-          configMap: { name: grafana-dashboard-payment }
-        - name: dash-e2e
-          configMap: { name: grafana-dashboard-e2e }
-        - name: dash-infra
-          configMap: { name: grafana-dashboard-infra }
 ---
 apiVersion: v1
 kind: Service
