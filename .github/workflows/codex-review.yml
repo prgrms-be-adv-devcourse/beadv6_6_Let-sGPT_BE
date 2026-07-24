@@ -51,15 +51,23 @@ jobs:
           # ("Missing bearer" 401). --with-api-key 로 stdin에서 키를 읽어 로그인해야 한다
           # (키가 argv·로그에 노출되지 않는 경로).
           echo "$OPENAI_API_KEY" | codex login --with-api-key
-          # 디프는 GitHub 기준과 정확히 일치하도록 gh pr diff로 받는다. git diff의 3-dot은
-          # base 브랜치에 merge base가 여러 개면("multiple merge bases") 빈 디프를 낸다.
-          gh pr diff "$PR_NUMBER" > /tmp/pr.diff
+          # 디프는 파일 단위 API(/pulls/{n}/files)로 받아 재구성한다. gh pr diff(통짜 .diff
+          # 미디어타입)는 20000줄 초과 시 GitHub가 HTTP 406("too_large")로 거부한다. files
+          # 엔드포인트는 페이지당 100개로 쪼개 받으므로 그 상한에 걸리지 않는다. 각 파일의
+          # .patch(헤더 없는 헌크)에 diff --git 헤더를 붙여 표준 디프 형태로 이어붙인다.
+          # patch가 null인 파일(바이너리·개별 파일이 과대)은 자동 제외된다.
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate \
+            --jq '.[] | select(.patch != null) | "diff --git a/\(.filename) b/\(.filename)\n\(.patch)"' \
+            > /tmp/pr.diff
           DIFF_BYTES=$(wc -c < /tmp/pr.diff)
+          # 제외된(patch null) 파일 수를 표기 — 리뷰가 일부 파일을 못 본다는 사실을 숨기지 않는다.
+          SKIPPED=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate \
+            --jq '[.[] | select(.patch == null)] | length' | awk '{s+=$1} END{print s+0}')
           # 0바이트 가드: PR에는 변경 파일이 반드시 존재하므로 빈 디프는 정상 상태가
           # 아니라 디프 취득 실패(인증/API 이상) 신호다. 여기서 멈추지 않으면 빈 디프를
           # 그대로 리뷰에 넘겨 "성공한 빈 리뷰"로 실패를 위장하게 된다.
           if [ "$DIFF_BYTES" -eq 0 ]; then
-            echo "::error::gh pr diff 결과가 0바이트 — PR에는 변경 파일이 존재해야 하므로 디프 취득 실패(인증/API 이상)로 간주" >&2
+            echo "::error::files API 결과가 0바이트 — PR에는 변경 파일이 존재해야 하므로 디프 취득 실패(인증/API 이상)로 간주" >&2
             exit 1
           fi
           # 디프가 크면 상한으로 폭주 방지
@@ -75,6 +83,9 @@ jobs:
             echo "$PR_TITLE"
             echo
             echo "## 이 PR의 디프 (base: $BASE_REF)"
+            if [ "$SKIPPED" -gt 0 ]; then
+              echo "(주의: patch를 못 받은 파일 ${SKIPPED}개는 디프에서 제외됨 — 바이너리 또는 과대 파일. 필요 시 에이전트가 워킹트리에서 직접 확인.)"
+            fi
             echo '```diff'
             cat /tmp/pr.diff
             echo '```'
