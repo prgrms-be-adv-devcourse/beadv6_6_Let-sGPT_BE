@@ -78,8 +78,8 @@ class AiReadModelDeploymentContractTest {
   }
 
   @Test
-  @DisplayName("read-model Hook은 일반 workload 뒤 단독 wave에서 immutable image와 배포 identity를 쓴다")
-  void readModelHook_runsBetweenQueueAndAiWithBoundIdentity() throws IOException {
+  @DisplayName("read-model Hook은 기본 workload 뒤 단독 wave에서 immutable image와 배포 identity를 쓴다")
+  void readModelHook_runsAfterDefaultWorkloadsAndBeforeAiWithBoundIdentity() throws IOException {
     Map<String, Object> queue =
         YamlDocuments.read("k8s", "base", "27-queue.yaml").document("Deployment", "queue");
     Map<String, Object> ai =
@@ -103,8 +103,7 @@ class AiReadModelDeploymentContractTest {
     Map<String, Object> podAnnotations =
         YamlDocuments.asMap(value(identity, "spec", "template", "metadata", "annotations"));
 
-    assertThat(value(queue, "metadata", "annotations", "argocd.argoproj.io/sync-wave"))
-        .isEqualTo("8");
+    assertThat(YamlDocuments.asMap(queue.get("metadata")).get("annotations")).isNull();
     assertThat(value(hook, "metadata", "annotations", "argocd.argoproj.io/sync-wave"))
         .isEqualTo("9");
     assertThat(applyContainer.get("image"))

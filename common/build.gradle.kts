@@ -9,4 +9,8 @@ dependencies {
 
     compileOnly("org.springframework.boot:spring-boot-starter-web")
     compileOnly("org.springframework.data:spring-data-commons")
+
+    // 전역 예외 처리기 단위테스트가 servlet MVC 예외/HTTP 타입을 참조하므로 테스트 클래스패스에만 web 제공
+    // (main은 compileOnly라 테스트가 상속받지 못함).
+    testImplementation("org.springframework.boot:spring-boot-starter-web")
 }

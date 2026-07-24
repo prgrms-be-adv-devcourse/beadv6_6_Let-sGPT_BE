@@ -6,7 +6,7 @@ metadata:
     argocd.argoproj.io/hook: Sync
     # CD가 실패 시 hookPhase를 확인해 active Secret 복구 여부를 결정할 수 있도록 TTL까지 유지한다.
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-    # queue(wave 8)를 포함한 일반 workload가 모두 Healthy가 된 뒤 이 Hook만 실행한다.
+    # 기본 wave의 일반 workload가 모두 Healthy가 된 뒤 이 Hook만 실행한다.
     argocd.argoproj.io/sync-wave: "9"
 spec:
   activeDeadlineSeconds: 180

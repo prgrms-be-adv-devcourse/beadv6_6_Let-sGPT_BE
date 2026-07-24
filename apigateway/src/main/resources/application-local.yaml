@@ -108,6 +108,10 @@ spring:
                 - Path=/settlement/**
               filters:
                 - StripPrefix=1
+            - id: recommendation-api
+              uri: http://localhost:9160
+              predicates:
+                - Path=/api/v1/recommendations/**
             - id: ai
               uri: http://localhost:9160
               predicates:

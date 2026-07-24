@@ -1,5 +1,8 @@
 server:
   port: 9240
+  tomcat:
+    mbeanregistry:
+      enabled: true   # tomcat_threads_* 메트릭(Micrometer TomcatMetrics) 노출에 필요
 
 spring:
   profiles:
@@ -130,11 +133,14 @@ spring:
   elasticsearch:
     uris: ${ELASTICSEARCH_URIS}
 
-# 배포 환경은 환경변수로만 제어한다. embedding.enabled 기본값은 false라
-# OPENAI_EMBEDDING_ENABLED=true를 설정해야 상품 임베딩·벡터 검색이 켜진다.
+# 배포 환경은 추론 서버 전용 환경변수로 제어한다.
 openai:
-  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
-  api-key: ${OPENAI_API_KEY:${OPEN_API_KEY:}}
-  embedding:
-    enabled: ${OPENAI_EMBEDDING_ENABLED:true}
+  inferenceai:
+    base-url: ${OPENAI_INFERENCEAI_BASE_URL}
+    api-key: ${OPENAI_INFERENCEAI_API_KEY}
+    embedding:
+      enabled: ${OPENAI_INFERENCEAI_EMBEDDING_ENABLED:true}
+      model: text-embedding-3-small
+    image-analysis:
+      model: gpt-5.4-nano
 

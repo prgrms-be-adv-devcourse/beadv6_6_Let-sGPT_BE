@@ -364,6 +364,10 @@ class AiQueryCredentialRotationStateMachineTest {
             + "OPENAI_API_KEY="
             + SECRET_CANARY
             + "-openai\n"
+            + "OPENAI_INFERENCEAI_BASE_URL=https://inference.example.test/v1\n"
+            + "OPENAI_INFERENCEAI_API_KEY="
+            + SECRET_CANARY
+            + "-search-inference\n"
             + "CHAT_INFERENCE_API_KEY="
             + SECRET_CANARY
             + "-inference\n"

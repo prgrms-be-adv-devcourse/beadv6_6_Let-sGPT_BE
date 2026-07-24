@@ -1,5 +1,8 @@
 server:
   port: 9100
+  tomcat:
+    mbeanregistry:
+      enabled: true   # tomcat_threads_* 메트릭(Micrometer TomcatMetrics) 노출에 필요
 
 # IntelliJ/Gradle bootRun 둘 다 작업 디렉토리가 모듈 폴더(member/)라
 # 한 단계 위(repo 루트)의 .env를 가리켜야 ${DB_USER} 같은 placeholder가 풀린다.

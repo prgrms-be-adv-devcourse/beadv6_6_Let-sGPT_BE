@@ -8,3 +8,9 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: ${MEMBER_JWKS_URI:http://member:9100/auth/jwks}
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKER}
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}

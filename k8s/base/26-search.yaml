@@ -6,9 +6,6 @@ metadata:
   name: search
   namespace: openat
   annotations:
-    # k3s_node_coldboot_contention_plan §2-C — 순차 롤아웃(wave 낮은 순). final 노드 배치라
-    # semi(hotpath)의 콜드부트 경합과는 무관하나 일관성을 위해 wave 부여.
-    argocd.argoproj.io/sync-wave: "7"
     # 라이브 Deployment에 kubectl-client-side-apply 소유의 serviceAccountName(search-sa 참조)이
     # 잔존해 SSA가 못 지우고 ReplicaSet FailedCreate(SA 삭제됨)로 파드 생성이 막혔음(7/21 실측).
     # Replace 동기화로 객체를 통째로 갈아 낡은 필드를 제거한다. 드리프트 해소 확인 후 제거 가능.

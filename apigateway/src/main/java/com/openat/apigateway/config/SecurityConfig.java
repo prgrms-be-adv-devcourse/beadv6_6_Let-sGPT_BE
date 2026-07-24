@@ -199,6 +199,10 @@ public class SecurityConfig {
                         "/api/v1/categories/**")
                     .permitAll()
 
+                    // 개인화 추천 읽기 — 비회원도 기본 추천 조회 가능
+                    .pathMatchers(HttpMethod.GET, "/api/v1/recommendations")
+                    .permitAll()
+
                     // product 판매자 write — scoped 토큰(typ=scoped, aud=openat-product)만 허용 (GET은 위에서
                     // 공개)
                     .pathMatchers("/product/products", "/product/products/**")

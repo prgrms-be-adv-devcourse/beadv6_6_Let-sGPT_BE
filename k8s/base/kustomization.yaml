@@ -28,6 +28,8 @@ resources:
   - 31-ingress.yaml
   - 32-https-redirect-middleware.yaml
   - 33-oidc-discovery.yaml
+  - 34-webhook-ipallowlist-middleware.yaml
+  - 35-webhook-ingress.yaml
   - 50-networkpolicy.yaml
   - 60-warmup.yaml
   # AI 모듈이 소유하는 read-model DDL·적용 스크립트와 Sync Job.
