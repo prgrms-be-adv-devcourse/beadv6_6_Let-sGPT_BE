@@ -19,8 +19,7 @@ class RecommendationPostProcessorTest {
     UUID second = UUID.randomUUID();
     var result =
         processor.process(
-            "{\"sections\":[{\"title\":\"추천\",\"items\":[2,1]}]}",
-            List.of(first, second));
+            "{\"sections\":[{\"title\":\"추천\",\"items\":[2,1]}]}", List.of(first, second));
 
     assertThat(result)
         .singleElement()
@@ -85,8 +84,7 @@ class RecommendationPostProcessorTest {
   @Test
   void process_whenResponseIsWrappedInCodeFence_stripsFenceBeforeParsing() {
     UUID id = UUID.randomUUID();
-    String fenced =
-        "```json\n{\"sections\":[{\"title\":\"추천\",\"items\":[1]}]}\n```";
+    String fenced = "```json\n{\"sections\":[{\"title\":\"추천\",\"items\":[1]}]}\n```";
 
     var result = processor.process(fenced, List.of(id));
 

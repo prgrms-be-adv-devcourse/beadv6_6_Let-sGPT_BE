@@ -85,14 +85,7 @@ public class OpenDropRestClient implements OpenDropClient {
       Instant closeAt) {
     DropMeta toDomain() {
       return new DropMeta(
-          id,
-          productId,
-          productName,
-          sellerName,
-          dropPrice,
-          thumbnailKey,
-          categoryId,
-          closeAt);
+          id, productId, productName, sellerName, dropPrice, thumbnailKey, categoryId, closeAt);
     }
   }
 }

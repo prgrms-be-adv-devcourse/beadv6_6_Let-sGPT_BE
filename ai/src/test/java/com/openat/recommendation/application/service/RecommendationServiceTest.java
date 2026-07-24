@@ -44,9 +44,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class RecommendationServiceTest {
 
   @Mock RecommendationSeedService seedService;
-  @Spy
-  SeedScorer seedScorer =
-      new SeedScorer(0.3, 0.5, 0.1, 0.85, 10, 10);
+  @Spy SeedScorer seedScorer = new SeedScorer(0.3, 0.5, 0.1, 0.85, 10, 10);
   @Mock SearchRecommendClient searchClient;
   @Mock OpenDropCache openDropCache;
   @Mock RecommendationPromptBuilder promptBuilder;
@@ -97,8 +95,7 @@ class RecommendationServiceTest {
     UUID productId = UUID.randomUUID();
     RecommendationResponse cached = new RecommendationResponse(List.of());
     UserContextHolder.set(new UserContext(memberId.toString(), Set.of("USER")));
-    when(resultCache.find("rec:detail:" + productId))
-        .thenReturn(Optional.of(cached));
+    when(resultCache.find("rec:detail:" + productId)).thenReturn(Optional.of(cached));
 
     assertThat(service.recommend(productId)).isSameAs(cached);
     UserContextHolder.clear();
@@ -277,7 +274,8 @@ class RecommendationServiceTest {
   }
 
   @Test
-  void recommend_forDetail_fetchesProductsConcurrentlyAndPreservesSelectionOrder() throws Exception {
+  void recommend_forDetail_fetchesProductsConcurrentlyAndPreservesSelectionOrder()
+      throws Exception {
     UUID currentId = UUID.randomUUID();
     UUID firstId = UUID.randomUUID();
     UUID secondId = UUID.randomUUID();
@@ -285,7 +283,8 @@ class RecommendationServiceTest {
     CountDownLatch started = new CountDownLatch(2);
     CountDownLatch release = new CountDownLatch(1);
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
-    when(searchClient.recommend(any())).thenReturn(List.of(candidate(firstId), candidate(secondId)));
+    when(searchClient.recommend(any()))
+        .thenReturn(List.of(candidate(firstId), candidate(secondId)));
     when(promptBuilder.build(current, List.of(candidate(firstId), candidate(secondId))))
         .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
@@ -391,7 +390,8 @@ class RecommendationServiceTest {
     var response = service.recommend(null);
 
     assertThat(response.sections()).hasSize(3);
-    assertThat(response.sections()).allSatisfy(section -> assertThat(section.products()).hasSize(4));
+    assertThat(response.sections())
+        .allSatisfy(section -> assertThat(section.products()).hasSize(4));
     assertThat(response.sections())
         .flatExtracting(RecommendationResponse.Section::products)
         .hasSize(12);
@@ -474,7 +474,8 @@ class RecommendationServiceTest {
     UUID currentId = UUID.randomUUID();
     UUID memberId = UUID.randomUUID();
     UserContextHolder.set(new UserContext(memberId.toString(), Set.of("USER")));
-    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, UUID.randomUUID()));
+    when(productDetailClient.getProduct(currentId))
+        .thenReturn(product(currentId, UUID.randomUUID()));
     when(searchClient.recommend(any())).thenReturn(List.of());
 
     service.recommend(currentId);
@@ -612,8 +613,9 @@ class RecommendationServiceTest {
 
     var response = service.recommend(currentId);
 
-    assertThat(response.sections()).singleElement().satisfies(
-        section -> assertThat(section.products()).hasSize(6));
+    assertThat(response.sections())
+        .singleElement()
+        .satisfies(section -> assertThat(section.products()).hasSize(6));
     for (int i = 0; i < 6; i++) {
       verify(productDetailClient).getProduct(tenIds.get(i));
     }
@@ -648,15 +650,7 @@ class RecommendationServiceTest {
   }
 
   private DropMeta drop(UUID id, UUID categoryId) {
-    return new DropMeta(
-        UUID.randomUUID(),
-        id,
-        "드롭 상품",
-        "판매자",
-        900L,
-        "thumb",
-        categoryId,
-        null);
+    return new DropMeta(UUID.randomUUID(), id, "드롭 상품", "판매자", 900L, "thumb", categoryId, null);
   }
 
   private void assertFallback(RecommendationResponse response, String title, UUID productId) {

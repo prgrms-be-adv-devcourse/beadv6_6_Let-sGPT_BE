@@ -18,16 +18,21 @@ data:
               endpoint: "0.0.0.0:4318"
             grpc:
               endpoint: "0.0.0.0:4317"
+    ingester:
+      max_block_duration: ${TEMPO_ING_MAX_BLOCK_DURATION:-30m}
+      max_block_bytes: ${TEMPO_ING_MAX_BLOCK_BYTES:-524288000}
+      complete_block_timeout: ${TEMPO_ING_COMPLETE_BLOCK_TIMEOUT:-15m}
     storage:
       trace:
         backend: local
+        blocklist_poll: ${TEMPO_BLOCKLIST_POLL:-5m}
         local:
           path: /var/tempo/blocks
         wal:
           path: /var/tempo/wal
     compactor:
       compaction:
-        block_retention: 48h
+        block_retention: ${TEMPO_COMPACTOR_BLOCK_RETENTION:-48h}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -42,6 +47,10 @@ spec:
   template:
     metadata:
       labels: { app: tempo }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3200"
+        prometheus.io/path: "/metrics"
     spec:
       nodeSelector: { tier: observability }
       tolerations:
@@ -49,7 +58,16 @@ spec:
       containers:
         - name: tempo
           image: grafana/tempo:2.10.7
-          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          args: ["-config.file=/etc/tempo/tempo.yaml", "-config.expand-env=true"]
+          env:
+            # Go GC를 limit(768Mi)의 83% 지점에서 조여 786Mi 도달 자체를 차단.
+            # 소프트 리밋 — 라이브 힙이 이 값을 넘으면 GC 스래싱(CPU 급증)으로 나타난다.
+            - { name: GOMEMLIMIT, value: "640MiB" }
+            # 블록 라이프사이클 튜닝 — 상주 창 45분 → 7분(5m+2m)으로 축소, 폴링 1m 페어.
+            - { name: TEMPO_ING_MAX_BLOCK_DURATION, value: "5m" }
+            - { name: TEMPO_ING_MAX_BLOCK_BYTES, value: "52428800" }   # 50MiB
+            - { name: TEMPO_ING_COMPLETE_BLOCK_TIMEOUT, value: "2m" }
+            - { name: TEMPO_BLOCKLIST_POLL, value: "1m" }
           ports:
             - { containerPort: 3200 }
             - { containerPort: 4318 }

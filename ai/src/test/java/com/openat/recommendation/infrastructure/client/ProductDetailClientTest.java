@@ -68,9 +68,7 @@ class ProductDetailClientTest {
   @DisplayName("상품 상세 응답 본문이 비어 있으면 예외를 던진다")
   void getProduct_withEmptyResponseBody_throwsRestClientException() {
     UUID productId = UUID.randomUUID();
-    server
-        .expect(requestTo(BASE_URL + "/api/v1/products/" + productId))
-        .andRespond(withSuccess());
+    server.expect(requestTo(BASE_URL + "/api/v1/products/" + productId)).andRespond(withSuccess());
 
     assertThatThrownBy(() -> client.getProduct(productId))
         .isInstanceOf(RestClientException.class)

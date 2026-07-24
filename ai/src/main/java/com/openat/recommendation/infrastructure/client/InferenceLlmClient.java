@@ -29,29 +29,29 @@ public class InferenceLlmClient implements LlmClient {
 
   @Override
   public String complete(String prompt) {
-    ChatCompletionResponse response = requireBody(
-        restClient
-            .post()
-            .uri("/chat/completions")
-            .header("Authorization", "Bearer " + apiKey)
-            .body(
-                new ChatCompletionRequest(
-                    model,
-                    List.of(new Message("user", prompt)),
-                    0.3,
-                    1000,
-                    new ResponseFormat("json_object")))
-            .retrieve()
-            .body(ChatCompletionResponse.class),
-        "Inference response content is empty");
+    ChatCompletionResponse response =
+        requireBody(
+            restClient
+                .post()
+                .uri("/chat/completions")
+                .header("Authorization", "Bearer " + apiKey)
+                .body(
+                    new ChatCompletionRequest(
+                        model,
+                        List.of(new Message("user", prompt)),
+                        0.3,
+                        1000,
+                        new ResponseFormat("json_object")))
+                .retrieve()
+                .body(ChatCompletionResponse.class),
+            "Inference response content is empty");
     if (response.choices() == null
         || response.choices().isEmpty()
         || response.choices().getFirst().message() == null) {
       throw new RestClientException("Inference response content is empty");
     }
     return requireBody(
-        response.choices().getFirst().message().content(),
-        "Inference response content is empty");
+        response.choices().getFirst().message().content(), "Inference response content is empty");
   }
 
   private record ChatCompletionRequest(

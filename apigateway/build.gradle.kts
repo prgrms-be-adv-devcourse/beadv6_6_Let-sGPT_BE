@@ -38,6 +38,7 @@ dependencies {
     runtimeOnly("io.micrometer:micrometer-registry-prometheus")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.boot:spring-boot-webflux-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
 }
