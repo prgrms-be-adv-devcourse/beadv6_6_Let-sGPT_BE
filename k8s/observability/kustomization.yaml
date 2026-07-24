@@ -10,7 +10,6 @@ resources:
   - 11-otel-collector.yaml
   - 20-prometheus.yaml
   - 21-postgres-exporter.yaml
-  - 22-redis-exporter.yaml
   - 30-grafana.yaml
   - 31-grafana-dashboard-platform.yaml
   - 32-grafana-dashboard-domain.yaml

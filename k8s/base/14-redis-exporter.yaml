@@ -1,16 +1,18 @@
-# Redis 서버 관측. postgres-exporter(21-*.yaml)와 함께 observability 네임스페이스에 두고,
-# 노드는 semi(tier: hotpath)에 배치한다. observability 전용 노드인 final은 memory-pressure
-# 상태라 tempo가 스케줄되지 못하고 있어, 가벼운 exporter 두 개를 semi로 offload해 final의
-# 스케줄 여유를 확보한다. exporter는 TCP로 집계 통계만 pull하므로 DB와 같은 노드에 있을 로컬리티
+# Redis 서버 관측. exporter는 openat 네임스페이스에 그대로 두되(postgres-exporter는
+# observability에 있어 배치는 어긋나지만 이유가 있다), 노드만 semi(tier: hotpath)로 고정한다.
+# 네임스페이스와 노드는 직교하는 축이라 둘을 따로 고를 수 있다. openat에 두는 이유는
+# k8s/base/50-networkpolicy.yaml의 redis-ingress가 from에 podSelector:{}만 두어 openat 내부
+# 접속만 6379로 열기 때문이다 — exporter를 openat에 두면 이 정책 그대로 redis에 붙을 수 있어
+# 크로스 네임스페이스 redis 구멍을 뚫지 않아도 된다.
+# 노드를 semi로 고정하는 이유는 observability 전용 노드인 final이 memory-pressure 상태라
+# tempo가 스케줄되지 못하고 있어, 가벼운 exporter를 semi로 offload해 final의 스케줄 여유를
+# 확보하기 위해서다. exporter는 TCP로 집계 통계만 pull하므로 redis와 같은 노드에 있을 로컬리티
 # 이득이 미미해 노드를 옮겨도 무방하다.
-# redis 접속은 크로스 네임스페이스 FQDN(redis.openat.svc.cluster.local:6379)으로 하고,
-# k8s/base/50-networkpolicy.yaml의 redis-ingress에 이 exporter 파드만 6379로 통과시키는
-# 예외를 두어 격리를 유지한다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis-exporter
-  namespace: observability
+  namespace: openat
 spec:
   replicas: 1
   strategy:
@@ -23,7 +25,8 @@ spec:
       labels: { app: redis-exporter }
       annotations:
         # ServiceMonitor/PodMonitor CRD는 이 클러스터에 없다. otel-collector의
-        # kubernetes-pods 잡이 이 세 어노테이션만 보고 수집한다.
+        # kubernetes-pods 잡이 이 세 어노테이션만 보고 수집한다. role: pod에 네임스페이스
+        # 제한이 없어 openat 파드도 발견 대상이다.
         prometheus.io/scrape: "true"
         prometheus.io/port: "9121"
         prometheus.io/path: "/metrics"
@@ -47,7 +50,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
           env:
-            - { name: REDIS_ADDR, value: "redis://redis.openat.svc.cluster.local:6379" }
+            - { name: REDIS_ADDR, value: "redis://redis:6379" }
             # 커맨드별 로그스케일 버킷 히스토그램(redis_commands_latencies_usec)을 끈다.
             # 커맨드 30종이면 이것만 400~500 시리즈인데, 같은 정보는
             # redis_latency_percentiles_usec가 p50/p99/p99.9로 이미 준다.
@@ -70,7 +73,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis-exporter
-  namespace: observability
+  namespace: openat
 spec:
   selector: { app: redis-exporter }
   ports: [{ port: 9121, targetPort: 9121 }]
