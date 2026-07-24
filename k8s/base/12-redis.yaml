@@ -1,3 +1,22 @@
+# Redis 서버 튜닝값. app-config(01-configmap.yaml)에 넣지 않는 이유 — 그건 앱 9종이
+# envFrom으로 통째 주입하는 ConfigMap이라, Redis 서버에만 필요한 값을 넣으면 전 앱 컨테이너에
+# 무의미한 환경변수가 퍼진다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: openat
+data:
+  # 컨테이너 limit 256Mi 대비 여유를 둔 논리 상한. 이 값이 차면 쓰기가 OOM 에러로 실패한다
+  # (아래 정책 참고) — OOMKill로 프로세스가 죽는 것보다 낫다는 판단.
+  REDIS_MAXMEMORY: "200mb"
+  # 명시적 noeviction. 지금까지는 "미지정 = 우연히 기본값"과 "의도한 선택"이 코드상 구분되지
+  # 않았다. 큐 상태(queue:/outstanding:/admitted:/confirmed:/reserved:/queue:active-drops)와
+  # 재고(drop:/order:)는 키가 하나만 축출돼도 정합성이 깨져 복구 경로가 없다. TTL이 붙은
+  # admission:{dropId}:{userId}조차 조기 축출되면 outstanding 몫이 스위퍼 전까지 회수되지
+  # 않으므로 volatile-* 계열도 안전하지 않다. 유일하게 성립하는 값이 noeviction이다.
+  REDIS_MAXMEMORY_POLICY: "noeviction"
+---
 # 영속성 불필요(리프레시 토큰은 TTL 있음) → PVC 없는 Deployment
 apiVersion: apps/v1
 kind: Deployment
@@ -15,9 +34,17 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
-          # k3s_memory_mitigation_plan.md §5(WS-M4) — maxmemory 미설정 시 커지면 유예 없이
-          # OOMKill. noeviction(기본 정책) 유지 = 가득 차면 쓰기 에러로 시끄럽게 실패.
-          args: ["redis-server", "--maxmemory", "200mb"]
+          # 설정은 redis-config ConfigMap이 소유한다. args의 $(VAR)는 같은 컨테이너 env를
+          # 치환하는 k8s 문법(${VAR}가 아니다). 치환 실패 시 redis-server가 인자를 못 읽고
+          # 죽으므로 오타는 CrashLoopBackOff로 시끄럽게 드러난다.
+          args:
+            - "redis-server"
+            - "--maxmemory"
+            - "$(REDIS_MAXMEMORY)"
+            - "--maxmemory-policy"
+            - "$(REDIS_MAXMEMORY_POLICY)"
+          envFrom:
+            - configMapRef: { name: redis-config }
           ports: [{ containerPort: 6379 }]
           readinessProbe:
             tcpSocket: { port: 6379 }
