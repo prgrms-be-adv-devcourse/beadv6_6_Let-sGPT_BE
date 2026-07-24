@@ -1,6 +1,7 @@
-# WS-C(7/10 observability plan) — postgres는 openat 네임스페이스(large 노드)에 떠 있지만
-# exporter는 TCP로 붙으므로 배치 노드는 무관(medium 권장, ~30Mi). 자격증명은 openat의
-# app-secrets를 cross-namespace로 참조할 수 없어 observability 전용 Secret으로 복제
+# postgres는 openat 네임스페이스에 떠 있지만 exporter는 TCP로 붙으므로 배치 노드는 무관.
+# final(observability 전용 노드)의 memory-pressure 완화를 위해 semi(tier: hotpath)로 이동했다
+# — TCP 접속이라 노드가 달라져도 동작에 영향이 없다. 자격증명은 openat의 app-secrets를
+# cross-namespace로 참조할 수 없어 observability 전용 Secret으로 복제
 # (k8s/bootstrap/create-secrets.sh 참고, 동일 ENV_SECRETS 소스).
 apiVersion: apps/v1
 kind: Deployment
@@ -23,9 +24,7 @@ spec:
         prometheus.io/port: "9187"
         prometheus.io/path: "/metrics"
     spec:
-      nodeSelector: { tier: observability }
-      tolerations:
-        - { key: dedicated, operator: Equal, value: observability, effect: NoSchedule }
+      nodeSelector: { tier: hotpath }
       containers:
         - name: postgres-exporter
           image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1

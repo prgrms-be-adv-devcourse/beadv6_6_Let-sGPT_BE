@@ -1,20 +1,16 @@
-# Redis 서버 관측. postgres-exporter(k8s/observability/21-*.yaml)는 observability에 있지만
-# 이 exporter는 openat 네임스페이스에 둔다 — 배치 일관성은 깨지지만 이유가 있다.
-# k8s/base/50-networkpolicy.yaml의 redis-ingress는 from에 podSelector:{}만 두어(postgres-ingress에
-# 있는 namespaceSelector가 없다) observability 네임스페이스발 6379 트래픽을 차단한다. 따라서
-# exporter를 Redis와 같은 openat에 두어 이 차단을 회피한다(NetworkPolicy는 수정하지 않는다).
-# 이 파드 자신은 app: redis-exporter라 redis-ingress(podSelector: app: redis)에 걸리지 않으므로
-# otel-collector의 스크레이프가 그대로 통과한다.
-#
-# 대시보드 참고: k8s/observability/dashboards/redis-overview.json은 아직 어떤 Grafana
-# provisioning ConfigMap에도 편입되지 않아, 지금 배포해도 Grafana에 로드되지 않는다.
-# 이 JSON은 대시보드 개편(전체 개요/도메인 서비스 폴더 편입) 시 platform CM에 편입 예정이며,
-# 그 배선은 개편 브랜치 소관이다(여기서 배선하지 않는다).
+# Redis 서버 관측. postgres-exporter(21-*.yaml)와 함께 observability 네임스페이스에 두고,
+# 노드는 semi(tier: hotpath)에 배치한다. observability 전용 노드인 final은 memory-pressure
+# 상태라 tempo가 스케줄되지 못하고 있어, 가벼운 exporter 두 개를 semi로 offload해 final의
+# 스케줄 여유를 확보한다. exporter는 TCP로 집계 통계만 pull하므로 DB와 같은 노드에 있을 로컬리티
+# 이득이 미미해 노드를 옮겨도 무방하다.
+# redis 접속은 크로스 네임스페이스 FQDN(redis.openat.svc.cluster.local:6379)으로 하고,
+# k8s/base/50-networkpolicy.yaml의 redis-ingress에 이 exporter 파드만 6379로 통과시키는
+# 예외를 두어 격리를 유지한다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis-exporter
-  namespace: openat
+  namespace: observability
 spec:
   replicas: 1
   strategy:
@@ -27,12 +23,12 @@ spec:
       labels: { app: redis-exporter }
       annotations:
         # ServiceMonitor/PodMonitor CRD는 이 클러스터에 없다. otel-collector의
-        # kubernetes-pods 잡이 이 세 어노테이션만 보고 수집한다. role: pod에 네임스페이스
-        # 제한이 없어 openat 파드도 발견 대상이다.
+        # kubernetes-pods 잡이 이 세 어노테이션만 보고 수집한다.
         prometheus.io/scrape: "true"
         prometheus.io/port: "9121"
         prometheus.io/path: "/metrics"
     spec:
+      nodeSelector: { tier: hotpath }
       # 파드 하드닝 — 비루트 고정. redis_exporter 이미지는 UID/GID 59000(비루트)으로 도는
       # 정적 바이너리(FROM scratch)라 runAsUser 59000이 이미지 기본과 일치한다.
       securityContext:
@@ -51,7 +47,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
           env:
-            - { name: REDIS_ADDR, value: "redis://redis:6379" }
+            - { name: REDIS_ADDR, value: "redis://redis.openat.svc.cluster.local:6379" }
             # 커맨드별 로그스케일 버킷 히스토그램(redis_commands_latencies_usec)을 끈다.
             # 커맨드 30종이면 이것만 400~500 시리즈인데, 같은 정보는
             # redis_latency_percentiles_usec가 p50/p99/p99.9로 이미 준다.
@@ -74,7 +70,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis-exporter
-  namespace: openat
+  namespace: observability
 spec:
   selector: { app: redis-exporter }
   ports: [{ port: 9121, targetPort: 9121 }]
