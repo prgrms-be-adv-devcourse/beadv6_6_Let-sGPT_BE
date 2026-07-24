@@ -19,20 +19,20 @@ data:
             grpc:
               endpoint: "0.0.0.0:4317"
     ingester:
-      max_block_duration: ${TEMPO_ING_MAX_BLOCK_DURATION:-30m}
-      max_block_bytes: ${TEMPO_ING_MAX_BLOCK_BYTES:-524288000}
-      complete_block_timeout: ${TEMPO_ING_COMPLETE_BLOCK_TIMEOUT:-15m}
+      max_block_duration: ${TEMPO_ING_MAX_BLOCK_DURATION}
+      max_block_bytes: ${TEMPO_ING_MAX_BLOCK_BYTES}
+      complete_block_timeout: ${TEMPO_ING_COMPLETE_BLOCK_TIMEOUT}
     storage:
       trace:
         backend: local
-        blocklist_poll: ${TEMPO_BLOCKLIST_POLL:-5m}
+        blocklist_poll: ${TEMPO_BLOCKLIST_POLL}
         local:
           path: /var/tempo/blocks
         wal:
           path: /var/tempo/wal
     compactor:
       compaction:
-        block_retention: ${TEMPO_COMPACTOR_BLOCK_RETENTION:-48h}
+        block_retention: ${TEMPO_COMPACTOR_BLOCK_RETENTION}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -68,6 +68,8 @@ spec:
             - { name: TEMPO_ING_MAX_BLOCK_BYTES, value: "52428800" }   # 50MiB
             - { name: TEMPO_ING_COMPLETE_BLOCK_TIMEOUT, value: "2m" }
             - { name: TEMPO_BLOCKLIST_POLL, value: "1m" }
+            # 보존 기간 — expand-env가 인라인 기본값(:-)을 지원하지 않아 명시 주입.
+            - { name: TEMPO_COMPACTOR_BLOCK_RETENTION, value: "48h" }
           ports:
             - { containerPort: 3200 }
             - { containerPort: 4318 }
