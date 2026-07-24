@@ -75,11 +75,9 @@ data:
                   target_label: namespace
                 - source_labels: [__meta_kubernetes_pod_label_app]
                   target_label: app
-                # 대시보드 JSON이 {application="..."}로 필터하는데 실제 라벨은 app뿐이라 전 패널
-                # No data였음(7/20 확진). 같은 값을 application으로도 복제 — 시리즈 수 불변.
-                # 대시보드를 app 기준으로 정리하면 이 줄은 제거 가능.
-                - source_labels: [__meta_kubernetes_pod_label_app]
-                  target_label: application
+                # 파드 단위 드릴다운용 — instance(IP:포트)는 사람이 못 읽어서 pod명을 라벨로.
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: pod
             # k3s kubelet 내장 cAdvisor — 별도 파드 없이 컨테이너별 메모리/CPU 확보.
             # Prometheus 288Mi 보호를 위해 keep 필터로 시리즈 최소화.
             - job_name: kubernetes-cadvisor
@@ -109,6 +107,11 @@ data:
         check_interval: 1s
         limit_mib: 256        # gate2 A-1: resources.limits.memory(320Mi)−64Mi(Go 비힙 쿠션). OOMKill 전 스스로 드롭
         spike_limit_mib: 48   # soft=208, hard=256
+      probabilistic_sampler:
+        # 단위는 퍼센트(10 = 10%). Boot property(0~1 비율)와 스케일이 다름 —
+        # "0.1"이라 쓰면 0.1%가 되는 함정 주의. TraceID 해시 기반이라 같은 트레이스의
+        # 스팬이 쪼개지지 않는다(contrib v0.156.0 README 검증).
+        sampling_percentage: ${env:TRACES_SAMPLING_PERCENTAGE:-10}
       batch:
         timeout: 5s
         send_batch_size: 1024
@@ -133,7 +136,7 @@ data:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, batch, resource]
+          processors: [memory_limiter, probabilistic_sampler, batch, resource]
           exporters: [otlp/tempo]
         metrics:
           receivers: [prometheus]
@@ -165,6 +168,9 @@ spec:
         - name: otel-collector
           image: otel/opentelemetry-collector-contrib:0.156.0
           args: ["--config=/etc/otel/otel-collector.yaml"]
+          env:
+            # 트레이스 샘플링 단일 노브 — 값 변경 = 이 한 줄 → 머지 → collector 파드 1개만 롤링.
+            - { name: TRACES_SAMPLING_PERCENTAGE, value: "10" }
           ports:
             - { containerPort: 4317 }
             - { containerPort: 4318 }
