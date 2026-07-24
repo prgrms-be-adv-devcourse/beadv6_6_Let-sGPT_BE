@@ -819,7 +819,7 @@ data:
           "targets": [
             {
               "datasource": { "type": "prometheus", "uid": "prometheus" },
-              "expr": "sum by (app, pod)(rate(jvm_classes_loaded_classes{app=~\"$app\",pod=~\"$pod\"}[5m]))",
+              "expr": "sum by (app, pod)(deriv(jvm_classes_loaded_classes{app=~\"$app\",pod=~\"$pod\"}[5m]))",
               "legendFormat": "{{app}}/{{pod}} class load rate",
               "refId": "A"
             },
@@ -2989,7 +2989,7 @@ data:
           "id": 24,
           "type": "gauge",
           "title": "노드 여유율 (노드별)",
-          "description": "free -h 요약판 — 1 − 파드합/노드총량. 낮을수록 위험.",
+          "description": "free -h 요약판 — 1 − 파드합/노드총량. 낮을수록 위험. 주의: 노드총량에서 파드 워킹셋 합만 뺀 상한 근사치라 OS·k3s·page cache 등 파드 외 호스트 메모리가 차감되지 않았다. 실제 가용은 이보다 작으므로 롤아웃 차단·용량 판단의 단독 기준으로 쓰지 말 것. 정확한 값은 node-exporter의 MemAvailable이나 kubelet eviction 신호 필요.",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -3276,7 +3276,7 @@ data:
           "id": 29,
           "type": "stat",
           "title": "eviction 여유 (노드별)",
-          "description": "노드총량 − 파드합. k3s 메모리 완화 안건의 상시 감시점 — 임계 근처면 롤아웃 금지 신호.",
+          "description": "노드총량 − 파드합. k3s 메모리 완화 안건의 상시 감시점. 주의: OS·k3s·page cache 등 파드 외 호스트 메모리가 차감되지 않은 상한 근사치라 실제 가용은 이보다 작다. 롤아웃 차단·용량 판단의 단독 기준으로 쓰지 말 것 — 정확한 값은 node-exporter의 MemAvailable이나 kubelet eviction 신호 필요.",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
