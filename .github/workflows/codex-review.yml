@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0        # base 브랜치와의 merge-base diff 계산에 전체 이력 필요
+          fetch-depth: 1        # 디프는 gh pr diff로 받고 에이전트는 워킹트리만 탐색 — 전체 이력 불요
 
       - uses: actions/setup-node@v4
         with:
@@ -40,14 +40,29 @@ jobs:
 
       - name: 에이전틱 리뷰 실행
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}   # env 인증만으로 codex exec 동작(별도 login 스텝 불요)
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # gh pr diff 인증용
           CODEX_MODEL: ${{ vars.CODEX_MODEL }}   # 모델 id는 리포 변수로 외부화 — 교체 시 워크플로 수정 불요
           BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          git diff origin/"$BASE_REF"...HEAD > /tmp/pr.diff
-          # 디프가 비면(문서만 변경 등도 리뷰는 하되) 크기 상한으로 폭주 방지
+          # 인증: codex 0.145는 env OPENAI_API_KEY만으로는 요청에 인증 헤더를 싣지 않는다
+          # ("Missing bearer" 401). --with-api-key 로 stdin에서 키를 읽어 로그인해야 한다
+          # (키가 argv·로그에 노출되지 않는 경로).
+          echo "$OPENAI_API_KEY" | codex login --with-api-key
+          # 디프는 GitHub 기준과 정확히 일치하도록 gh pr diff로 받는다. git diff의 3-dot은
+          # base 브랜치에 merge base가 여러 개면("multiple merge bases") 빈 디프를 낸다.
+          gh pr diff "$PR_NUMBER" > /tmp/pr.diff
           DIFF_BYTES=$(wc -c < /tmp/pr.diff)
+          # 0바이트 가드: PR에는 변경 파일이 반드시 존재하므로 빈 디프는 정상 상태가
+          # 아니라 디프 취득 실패(인증/API 이상) 신호다. 여기서 멈추지 않으면 빈 디프를
+          # 그대로 리뷰에 넘겨 "성공한 빈 리뷰"로 실패를 위장하게 된다.
+          if [ "$DIFF_BYTES" -eq 0 ]; then
+            echo "::error::gh pr diff 결과가 0바이트 — PR에는 변경 파일이 존재해야 하므로 디프 취득 실패(인증/API 이상)로 간주" >&2
+            exit 1
+          fi
+          # 디프가 크면 상한으로 폭주 방지
           if [ "$DIFF_BYTES" -gt 400000 ]; then
             head -c 400000 /tmp/pr.diff > /tmp/pr.diff.clip
             mv /tmp/pr.diff.clip /tmp/pr.diff
