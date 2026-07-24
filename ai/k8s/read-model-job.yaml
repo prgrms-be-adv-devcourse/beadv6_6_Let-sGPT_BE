@@ -3,15 +3,13 @@ kind: Job
 metadata:
   name: ai-read-model-apply
   annotations:
-    argocd.argoproj.io/hook: Sync
-    # CD가 실패 시 hookPhase를 확인해 active Secret 복구 여부를 결정할 수 있도록 TTL까지 유지한다.
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-    # 기본 wave의 일반 workload가 모두 Healthy가 된 뒤 이 Hook만 실행한다.
+    # 일반 리소스로 완료 상태를 유지한다. read-model 산출물이나 조회 Secret revision이 바뀌면
+    # deploy/state가 이름을 새 identity로 교체하고, 그때만 새 Job이 실행된다.
+    # 기본 wave의 일반 workload가 모두 Healthy가 된 뒤 적용하고 AI rollout보다 먼저 끝낸다.
     argocd.argoproj.io/sync-wave: "9"
 spec:
   activeDeadlineSeconds: 180
   backoffLimit: 2
-  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:

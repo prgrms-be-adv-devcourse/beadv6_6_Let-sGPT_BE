@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-read-model-job-name
+  namespace: openat
+data:
+  # deploy/state 전용 값. read-model 산출물 또는 조회 Secret revision이 달라질 때만 CD가 갱신한다.
+  identity: "bootstrap"
+  jobName: "ai-read-model-apply-bootstrap"

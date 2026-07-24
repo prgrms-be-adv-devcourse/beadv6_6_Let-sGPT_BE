@@ -6,10 +6,25 @@ kind: Kustomization
 
 resources:
   - ../base
+  - ai-read-model-job-name.yaml
 
 patches:
   - path: ai-query-secret-revision.yaml
   - path: ai-read-model-deployment-identity.yaml
+
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ai-read-model-job-name
+      fieldPath: data.jobName
+    targets:
+      - select:
+          group: batch
+          version: v1
+          kind: Job
+          name: ai-read-model-apply
+        fieldPaths:
+          - metadata.name
 
 images:
   - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway

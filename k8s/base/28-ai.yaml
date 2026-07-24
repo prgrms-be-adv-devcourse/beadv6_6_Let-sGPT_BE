@@ -5,7 +5,7 @@ metadata:
   name: ai
   namespace: openat
   annotations:
-    # read-model 적용 Hook(wave 9)이 성공한 다음 새 조회 자격증명을 소비한다.
+    # 현재 read-model identity의 적용 Job(wave 9)이 성공한 다음 새 조회 자격증명을 소비한다.
     argocd.argoproj.io/sync-wave: "10"
 spec:
   replicas: 1
@@ -44,6 +44,11 @@ spec:
                 secretKeyRef:
                   name: ai-inference-secrets
                   key: CHAT_INFERENCE_API_KEY
+            - name: TAVILY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-inference-secrets
+                  key: TAVILY_API_KEY
             # MaxMetaspaceSize 캡 없음(qna.md Q116) — 서브리밋 안 걸고 pod limit 하나로 통제.
             # 캡이 있으면 메타스페이스만 먼저 자기 상한에 부딪혀 OutOfMemoryError: Metaspace를
             # 스레드 단위로 던지는데, 이건 JVM도 컨테이너도 안 죽여서 파드가 좀비로 남는다.

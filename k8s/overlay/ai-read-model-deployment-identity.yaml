@@ -11,14 +11,16 @@ metadata:
     # 정해진 뒤 Job UID/생성 시각을 검증하고 runtime에 결합한다.
     openat.io/rotation-identity: "steady"
     openat.io/target-active-resource-version-identity: "bootstrap"
+    openat.io/read-model-identity: "bootstrap"
 spec:
   template:
     metadata:
       labels:
-        # Hook pod를 과거 실행과 구분할 수 있는 label-safe identity다.
+        # Job pod를 과거 실행과 구분할 수 있는 label-safe identity다.
         openat.io/deployment-run-id: "bootstrap"
         openat.io/rotation-identity: "steady"
         openat.io/target-active-rv-hash: "bootstrap"
       annotations:
         openat.io/target-workload-revision: "bootstrap"
         openat.io/target-active-resource-version-identity: "bootstrap"
+        openat.io/read-model-identity: "bootstrap"

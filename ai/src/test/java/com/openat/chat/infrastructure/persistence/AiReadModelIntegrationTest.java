@@ -741,6 +741,33 @@ class AiReadModelIntegrationTest {
   }
 
   @Test
+  @DisplayName("로컬 자동 구성기는 psql 없이 동일 DDL과 조회 비밀번호를 적용한다")
+  void localDdlApplier_appliesReadModelThroughJdbc() throws Exception {
+    // given
+    String localPassword = "local-bootstrap-password";
+    HikariDataSource adminDataSource = new HikariDataSource();
+    adminDataSource.setJdbcUrl(postgres.getJdbcUrl());
+    adminDataSource.setUsername(postgres.getUsername());
+    adminDataSource.setPassword(postgres.getPassword());
+    ReadModelDdlApplier applier = new ReadModelDdlApplier(adminDataSource);
+
+    try {
+      // when
+      applier.apply(localPassword);
+
+      // then
+      assertThat(verify(queryProperties(QUERY_ROLE, localPassword)))
+          .isEqualTo(Availability.AVAILABLE);
+    } finally {
+      try {
+        applier.apply(TEST_QUERY_PASSWORD);
+      } finally {
+        adminDataSource.close();
+      }
+    }
+  }
+
+  @Test
   @DisplayName("재적용 중 오류가 나면 기존 뷰와 자격 증명을 원자적으로 보존한다")
   void applyReadModel_failed_reapplicationRollsBack() throws Exception {
     // given
@@ -1121,6 +1148,8 @@ class AiReadModelIntegrationTest {
     // when & then
     assertThat(script)
         .contains("--single-transaction")
+        .contains("if verify_query_contract \"${AI_QUERY_DB_PASSWORD}\" >/dev/null 2>&1")
+        .contains("계약이 이미 최신이라 DDL 적용을 건너뛰었어")
         .contains("\\getenv AI_QUERY_DB_PASSWORD AI_QUERY_DB_PASSWORD")
         .contains("AI_QUERY_DB_PREVIOUS_PASSWORD")
         .contains("ALTER ROLE ai_query_app PASSWORD :'AI_QUERY_DB_PREVIOUS_PASSWORD'")

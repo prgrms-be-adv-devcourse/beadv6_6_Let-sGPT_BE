@@ -13,12 +13,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE + 1)
 public class ReadModelStartupVerifier implements ApplicationRunner, DataQueryCapabilityState {
 
   private static final String EXPECTED_QUERY_ROLE = "ai_query_app";

@@ -78,13 +78,13 @@ class AiReadModelDeploymentContractTest {
   }
 
   @Test
-  @DisplayName("read-model Hook은 기본 workload 뒤 단독 wave에서 immutable image와 배포 identity를 쓴다")
-  void readModelHook_runsAfterDefaultWorkloadsAndBeforeAiWithBoundIdentity() throws IOException {
+  @DisplayName("read-model Job은 계약 변경 때만 새 identity로 실행되고 AI보다 먼저 완료된다")
+  void readModelJob_runsOnlyForNewIdentityBeforeAi() throws IOException {
     Map<String, Object> queue =
         YamlDocuments.read("k8s", "base", "27-queue.yaml").document("Deployment", "queue");
     Map<String, Object> ai =
         YamlDocuments.read("k8s", "base", "28-ai.yaml").document("Deployment", "ai");
-    Map<String, Object> hook =
+    Map<String, Object> job =
         YamlDocuments.read("ai", "k8s", "read-model-job.yaml")
             .document("Job", "ai-read-model-apply");
     Map<String, Object> overlay =
@@ -93,7 +93,7 @@ class AiReadModelDeploymentContractTest {
         YamlDocuments.read("k8s", "overlay", "ai-read-model-deployment-identity.yaml")
             .document("Job", "ai-read-model-apply");
     Map<String, Object> applyContainer =
-        named(asMaps(value(hook, "spec", "template", "spec", "containers")), "apply");
+        named(asMaps(value(job, "spec", "template", "spec", "containers")), "apply");
     List<String> patchPaths =
         asMaps(overlay.get("patches")).stream().map(patch -> (String) patch.get("path")).toList();
     Map<String, Object> jobAnnotations =
@@ -104,8 +104,10 @@ class AiReadModelDeploymentContractTest {
         YamlDocuments.asMap(value(identity, "spec", "template", "metadata", "annotations"));
 
     assertThat(YamlDocuments.asMap(queue.get("metadata")).get("annotations")).isNull();
-    assertThat(value(hook, "metadata", "annotations", "argocd.argoproj.io/sync-wave"))
+    assertThat(value(job, "metadata", "annotations", "argocd.argoproj.io/sync-wave"))
         .isEqualTo("9");
+    assertThat(value(job, "metadata", "annotations", "argocd.argoproj.io/hook")).isNull();
+    assertThat(value(job, "spec", "ttlSecondsAfterFinished")).isNull();
     assertThat(applyContainer.get("image"))
         .isEqualTo(
             "postgres:16.14@sha256:da8cf245a60506e50a0a8cbb0f39c559ca622d92490605b67fcadc74ca1ea8e4");
@@ -117,21 +119,29 @@ class AiReadModelDeploymentContractTest {
             "openat.io/target-workload-revision",
             "openat.io/deployment-run-id",
             "openat.io/rotation-identity",
-            "openat.io/target-active-resource-version-identity");
+            "openat.io/target-active-resource-version-identity",
+            "openat.io/read-model-identity");
     assertThat(podAnnotations)
         .containsKeys(
             "openat.io/target-workload-revision",
-            "openat.io/target-active-resource-version-identity");
+            "openat.io/target-active-resource-version-identity",
+            "openat.io/read-model-identity");
     assertThat(podLabels)
         .containsKeys(
             "openat.io/deployment-run-id",
             "openat.io/rotation-identity",
             "openat.io/target-active-rv-hash");
+    assertThat(read("k8s", "overlay", "kustomization.yaml"))
+        .contains("ai-read-model-job-name.yaml", "fieldPath: data.jobName", "metadata.name");
+    assertThat(read(".github", "workflows", "deploy.yml"))
+        .contains("READ_MODEL_ARTIFACT_HASH", "CURRENT_READ_MODEL_IDENTITY")
+        .contains("완료된 Job을 재사용")
+        .doesNotContain("ai-read-model-apply\")].hookPhase");
   }
 
   @Test
-  @DisplayName("배포 성공은 대상 Hook과 AI pod가 같은 Secret revision을 소비한 뒤에만 인정한다")
-  void deploymentWorkflow_requiresHookAndAiRolloutIdentity() throws IOException {
+  @DisplayName("배포 성공은 대상 read-model Job과 AI pod가 같은 Secret revision을 소비한 뒤에만 인정한다")
+  void deploymentWorkflow_requiresReadModelJobAndAiRolloutIdentity() throws IOException {
     String workflow = read(".github", "workflows", "deploy.yml");
     Map<String, Object> convergence = step(workflow, "Wait for ArgoCD convergence");
     Map<String, Object> convergenceEnvironment = YamlDocuments.asMap(convergence.get("env"));
@@ -144,16 +154,19 @@ class AiReadModelDeploymentContractTest {
         .containsEntry("EXPECTED_ACTIVE_RV", "${{ steps.pin.outputs.active_rv }}")
         .containsEntry("EXPECTED_ACTIVE_RV_HASH", "${{ steps.pin.outputs.active_rv_hash }}")
         .containsEntry("EXPECTED_ROTATION_IDENTITY", "${{ steps.pin.outputs.rotation_identity }}")
+        .containsEntry("EXPECTED_DEPLOYMENT_RUN_ID", "${{ steps.pin.outputs.deployment_run_id }}")
+        .containsEntry("EXPECTED_READ_MODEL_JOB", "${{ steps.pin.outputs.read_model_job }}")
         .containsEntry(
-            "EXPECTED_DEPLOYMENT_RUN_ID", "${{ github.run_id }}-${{ github.run_attempt }}");
+            "EXPECTED_READ_MODEL_IDENTITY", "${{ steps.pin.outputs.read_model_identity }}");
     assertThat(convergenceScript)
-        .contains("ai-read-model-apply\")].hookPhase")
-        .contains("HOOK_STATE\" = \"$EXPECTED_HOOK_STATE")
+        .contains("READ_MODEL_STATE\" = \"$EXPECTED_READ_MODEL_STATE")
+        .contains("kubectl get job \"$EXPECTED_READ_MODEL_JOB\"")
         .contains("$RUNNER_TEMP/openat-deploy-scripts/prove-ai-query-rollout.sh")
         .contains("prove_ai_rollout \"$AI_STATE\" \"$EXPECTED_ACTIVE_RV\"")
         .contains("AI_ROLLOUT_PROOF=PROVEN")
         .doesNotContain("prove_ai_rollout()")
-        .doesNotContain("get replicasets -n openat -l app=ai");
+        .doesNotContain("get replicasets -n openat -l app=ai")
+        .doesNotContain("hookPhase");
     assertThat(rolloutProof)
         .contains("prove_ai_rollout()")
         .contains("deployment\\.kubernetes\\.io/revision")

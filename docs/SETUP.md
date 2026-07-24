@@ -51,6 +51,40 @@ docker compose up -d
 - IntelliJ Run/Debug Configuration에 환경변수를 따로 입력할 필요 없음 — 그냥 실행하면 됨
 - 실제 OS 환경변수가 있으면 그게 우선되고, 없을 때만 `.env` 값을 씀 (운영 환경에서는 안전)
 
+### AI 모듈 최초 기동
+
+팀원이 이미 사용하는 루트 `.env`의 `DB_USER`·`DB_PASSWORD`를 그대로 사용한다. 아래 AI 런타임
+설정만 팀 채널에서 공유받아 같은 `.env`에 추가하면 되고, `AI_READ_MODEL_*` 변수를 만들거나
+`ai/scripts/apply-read-model.sh`를 직접 실행할 필요는 없다.
+
+```dotenv
+CHAT_INFERENCE_ENABLED=true
+CHAT_INFERENCE_BASE_URL=<외부 fallback이 없는 것으로 확인된 OpenAI 호환 URL>
+CHAT_INFERENCE_MODEL=<해당 경로의 모델 별칭>
+CHAT_INFERENCE_LOCAL_ONLY_ROUTE=true
+CHAT_INFERENCE_API_KEY=<팀 공유 추론 키>
+
+CHAT_DATA_ENABLED=true
+AI_QUERY_DB_URL=jdbc:postgresql://127.0.0.1:5432/openat
+AI_QUERY_DB_USERNAME=ai_query_app
+AI_QUERY_DB_PASSWORD=<팀 공유 로컬 조회 비밀번호>
+
+CHAT_WEB_SEARCH_ENABLED=true
+TAVILY_API_KEY=<팀 공유 Tavily 키>
+```
+
+- `local` 프로필은 `CHAT_DATA_ENABLED=true`이고 조회 DB 설정이 완성되면 기존 주 DB 관리자
+  연결(`DB_USER`·`DB_PASSWORD`)로 `ai_read` view·함수와 `ai_query_app` 권한을 자동 구성한다.
+- 이미 정확한 계약이 있으면 DDL을 다시 실행하지 않는다. 최초 실행 순서 때문에 원본 도메인 테이블이
+  아직 없으면 AI 서버 기동을 막지 않고 15초 간격으로 다시 확인한다.
+- `CHAT_DATA_ENABLED`는 관리자 챗봇의 내부 DB 조회 기능 토글이다. `false`여도 일반 챗봇과 외부
+  도구는 기동할 수 있지만 주문·회원·정산 같은 내부 집계는 사용할 수 없다.
+- Tavily 키가 없으면 서버 자체는 기동하지만 공개 웹 검색 도구만 사용할 수 없다.
+- 원격 주소에서 `CHAT_INFERENCE_LOCAL_ONLY_ROUTE=true`는 단순 연결 옵션이 아니라 외부 provider
+  폴백이 없다는 운영자 확인이다. 현재 `https://api.inferway.xyz/v1`의 `chat` 별칭은 외부 폴백
+  가능 계약이므로 관리자 내부 데이터 질문에 그대로 사용하지 않는다. 인프라 담당자가 비폴백
+  경로를 제공하기 전에는 이 값을 `true`로 두지 않는다.
+
 ## 2. 로컬 통합 테스트 (`compose` 프로필)
 
 5개 모듈을 한 번에 컨테이너로 띄워서 통합 테스트할 때 사용. 직접 빌드하지 않고
@@ -80,6 +114,12 @@ docker compose -f legacy/docker-compose.full.yml up
 
 `dev` 브랜치 push 시 CI가 이미지를 GHCR에 올리고, 이후 배포 워크플로(`deploy.yml`, 구현 예정)가
 EC2에서 `docker compose pull && up`을 수행. 비밀값은 `.env` 대신 GitHub Secrets로 주입됨.
+
+현재 k3s 배포에서 AI read-model은 전체 배포마다 실행하는 Sync Hook이 아니다. DDL·검증
+스크립트와 `AI_QUERY_DB_PASSWORD` Secret revision으로 Job identity를 만들고, 둘 중 하나가
+바뀔 때만 새 Job을 실행한다. 완료된 동일 identity Job은 그대로 재사용하며, 적용 Job(wave 9)이
+성공한 뒤 AI Deployment(wave 10)가 진행된다. 운영 `ENV_SECRETS`에는
+`AI_QUERY_DB_PASSWORD`, `CHAT_INFERENCE_API_KEY`, `TAVILY_API_KEY`가 모두 필요하다.
 
 ## 4. CI 빌드 (`ci.yml`)
 

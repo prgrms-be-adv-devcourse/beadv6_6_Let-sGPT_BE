@@ -21,6 +21,8 @@ class AiQueryCredentialRotationStateMachineTest {
 
   private static final String TARGET_REVISION = "a".repeat(40);
   private static final String RUN_ID = "run-1";
+  private static final String READ_MODEL_IDENTITY = "b".repeat(20);
+  private static final String READ_MODEL_JOB = "ai-read-model-apply-" + READ_MODEL_IDENTITY;
   private static final String SECRET_CANARY = "secret-canary";
   private static final String OLD_PASSWORD = SECRET_CANARY + "-old";
   private static final String NEW_PASSWORD = SECRET_CANARY + "-new";
@@ -121,25 +123,25 @@ class AiQueryCredentialRotationStateMachineTest {
 
     // then
     assertThat(result.exitCode()).isNotZero();
-    assertThat(result.output()).contains("DB 상태가 UNKNOWN");
+    assertThat(result.output()).contains("UNKNOWN");
     assertThat(result.secretMutations()).isEmpty();
   }
 
   @Test
-  @DisplayName("Argo에 Hook 이력이 있는데 Job이 없으면 TTL 삭제 가능성 때문에 UNKNOWN으로 유지한다")
-  void reconcile_hookRecordedButJobMissing_keepsSecretsUnchanged() throws Exception {
+  @DisplayName("대상 identity의 read-model Job이 없으면 UNKNOWN으로 유지한다")
+  void reconcile_targetJobMissing_keepsSecretsUnchanged() throws Exception {
     // when
     ScriptResult result = runReconcile("reconcile-hook-job-missing");
 
     // then
     assertThat(result.exitCode()).isNotZero();
-    assertThat(result.output()).contains("DB 상태가 UNKNOWN");
+    assertThat(result.output()).contains("UNKNOWN");
     assertThat(result.secretMutations()).isEmpty();
   }
 
   @Test
-  @DisplayName("terminal operation에 Hook 실행 흔적이 없으면 UNKNOWN으로 유지한다")
-  void reconcile_terminalOperationWithNoHookObjects_keepsSecretsUnchanged() throws Exception {
+  @DisplayName("terminal operation에 대상 Job이 없으면 UNKNOWN으로 유지한다")
+  void reconcile_terminalOperationWithNoTargetJob_keepsSecretsUnchanged() throws Exception {
     // when
     ScriptResult result = runReconcile("reconcile-no-hook");
 
@@ -158,7 +160,7 @@ class AiQueryCredentialRotationStateMachineTest {
 
     // then
     assertThat(result.exitCode()).isNotZero();
-    assertThat(result.output()).contains("DB 상태가 UNKNOWN");
+    assertThat(result.output()).contains("UNKNOWN");
     assertThat(result.secretMutations()).isEmpty();
   }
 
@@ -181,13 +183,13 @@ class AiQueryCredentialRotationStateMachineTest {
 
     // then
     assertThat(result.exitCode()).isNotZero();
-    assertThat(result.output()).contains("DB 상태가 UNKNOWN");
+    assertThat(result.output()).contains("UNKNOWN");
     assertThat(result.secretMutations()).isEmpty();
   }
 
   @Test
-  @DisplayName("Hook이 성공해도 AI rollout의 target 비밀번호 소비를 증명하지 못하면 UNKNOWN으로 유지한다")
-  void reconcile_hookSucceededAiRolloutUnproven_keepsSecretsUnchanged() throws Exception {
+  @DisplayName("Job이 성공해도 AI rollout의 target 비밀번호 소비를 증명하지 못하면 UNKNOWN으로 유지한다")
+  void reconcile_jobSucceededAiRolloutUnproven_keepsSecretsUnchanged() throws Exception {
     // when
     ScriptResult result = runReconcile("reconcile-hook-succeeded-unproven");
 
@@ -198,8 +200,8 @@ class AiQueryCredentialRotationStateMachineTest {
   }
 
   @Test
-  @DisplayName("Hook과 AI rollout이 같은 target을 소비한 경우에만 NEW 상태를 정규화한다")
-  void reconcile_hookAndAiRolloutProven_normalizesNew() throws Exception {
+  @DisplayName("Job과 AI rollout이 같은 target을 소비한 경우에만 NEW 상태를 정규화한다")
+  void reconcile_jobAndAiRolloutProven_normalizesNew() throws Exception {
     // when
     ScriptResult result =
         run(
@@ -313,6 +315,8 @@ class AiQueryCredentialRotationStateMachineTest {
     processBuilder.environment().put("MUTATION_LOG", toBashPath(mutationLog));
     processBuilder.environment().put("TARGET_REVISION", TARGET_REVISION);
     processBuilder.environment().put("AI_QUERY_ROTATION_RUN_ID", RUN_ID);
+    processBuilder.environment().put("READ_MODEL_JOB", READ_MODEL_JOB);
+    processBuilder.environment().put("EXPECTED_READ_MODEL_IDENTITY", READ_MODEL_IDENTITY);
     processBuilder.environment().put("RECONCILE_TIMEOUT_SECONDS", "0");
     processBuilder.environment().put("RECONCILE_POLL_SECONDS", "0");
     processBuilder.environment().put("GHCR_USER", SECRET_CANARY + "-ghcr-user");
@@ -371,6 +375,9 @@ class AiQueryCredentialRotationStateMachineTest {
             + "CHAT_INFERENCE_API_KEY="
             + SECRET_CANARY
             + "-inference\n"
+            + "TAVILY_API_KEY="
+            + SECRET_CANARY
+            + "-tavily\n"
             + "WARMUP_EMAIL="
             + SECRET_CANARY
             + "-warmup@example.com\n"
@@ -564,19 +571,19 @@ class AiQueryCredentialRotationStateMachineTest {
         fi
 
         if [[ "$joined" == *" get application openat "* ]]; then
-          if [[ "$joined" == *"syncResult.resources"* ]]; then
+          if [[ "$joined" == *"operationState.startedAt"* ]]; then
             case "$SCENARIO" in
               reconcile-no-hook)
-                printf '%s|Failed|2026-01-01T00:01:00Z|2026-01-01T00:02:00Z|' "$TARGET_REVISION"
+                printf '%s|Failed|2026-01-01T00:01:00Z|2026-01-01T00:02:00Z' "$TARGET_REVISION"
                 ;;
               reconcile-success*)
-                printf '%s|Succeeded|2026-01-01T00:01:00Z|2026-01-01T00:02:00Z|Job,ai-read-model-apply,Succeeded' "$TARGET_REVISION"
+                printf '%s|Succeeded|2026-01-01T00:01:00Z|2026-01-01T00:02:00Z' "$TARGET_REVISION"
                 ;;
               reconcile-hook-succeeded-unproven)
-                printf '%s|Succeeded|2026-01-01T00:01:00Z|2026-01-01T00:02:00Z|Job,ai-read-model-apply,Succeeded' "$TARGET_REVISION"
+                printf '%s|Succeeded|2026-01-01T00:01:00Z|2026-01-01T00:02:00Z' "$TARGET_REVISION"
                 ;;
               *)
-                printf '%s|Failed|2026-01-01T00:01:00Z|2026-01-01T00:02:00Z|Job,ai-read-model-apply,Failed' "$TARGET_REVISION"
+                printf '%s|Failed|2026-01-01T00:01:00Z|2026-01-01T00:02:00Z' "$TARGET_REVISION"
                 ;;
             esac
           elif [[ "$joined" == *"status.sync.revision"* ]]; then
@@ -590,20 +597,23 @@ class AiQueryCredentialRotationStateMachineTest {
           exit 0
         fi
 
-        if [[ "$joined" == *" get job ai-read-model-apply "* ]]; then
+        if [[ "$joined" == *" get job __READ_MODEL_JOB__ "* ]]; then
           case "$SCENARIO" in
             reconcile-no-hook|reconcile-hook-job-missing) exit 0 ;;
           esac
           if [[ "$joined" == *"metadata.name"* ]]; then
             case "$SCENARIO" in
               reconcile-job-identity-mismatch)
-                printf 'ai-read-model-apply|uid-1|2026-01-01T00:01:01Z|other-run|run-1|rv2|%s' "$TARGET_REVISION"
+                printf '__READ_MODEL_JOB__|uid-1|2026-01-01T00:01:01Z|other-run|run-1|rv2|%s|__READ_MODEL_IDENTITY__||True' "$TARGET_REVISION"
                 ;;
               reconcile-replacement-job)
-                printf 'ai-read-model-apply|uid-1|2026-01-01T00:02:01Z|run-1|run-1|rv2|%s' "$TARGET_REVISION"
+                printf '__READ_MODEL_JOB__|uid-1|2026-01-01T00:02:01Z|run-1|run-1|rv2|%s|__READ_MODEL_IDENTITY__||True' "$TARGET_REVISION"
+                ;;
+              reconcile-success*|reconcile-hook-succeeded-unproven)
+                printf '__READ_MODEL_JOB__|uid-1|2026-01-01T00:01:01Z|run-1|run-1|rv2|%s|__READ_MODEL_IDENTITY__|True|' "$TARGET_REVISION"
                 ;;
               *)
-                printf 'ai-read-model-apply|uid-1|2026-01-01T00:01:01Z|run-1|run-1|rv2|%s' "$TARGET_REVISION"
+                printf '__READ_MODEL_JOB__|uid-1|2026-01-01T00:01:01Z|run-1|run-1|rv2|%s|__READ_MODEL_IDENTITY__||True' "$TARGET_REVISION"
                 ;;
             esac
           else
@@ -664,19 +674,29 @@ class AiQueryCredentialRotationStateMachineTest {
             exit 42
           fi
           case "$SCENARIO" in
-            reconcile-previous|reconcile-job-identity-mismatch) printf 'pod-1\\n' ;;
+            reconcile-no-hook|reconcile-hook-job-missing|reconcile-replacement-job|reconcile-job-identity-mismatch) ;;
+            reconcile-*) printf 'pod-1\\n' ;;
           esac
           exit 0
         fi
         if [[ "$joined" == *" get pod pod-1 "* ]]; then
-          printf 'pod-1|uid-1|2026-01-01T00:01:02Z|DB_STATE=PREVIOUS||2026-01-01T00:01:03Z'
+          case "$SCENARIO" in
+            reconcile-success*|reconcile-hook-succeeded-unproven)
+              printf 'pod-1|uid-1|2026-01-01T00:01:02Z|DB_STATE=NEW||2026-01-01T00:01:03Z'
+              ;;
+            *)
+              printf 'pod-1|uid-1|2026-01-01T00:01:02Z|DB_STATE=PREVIOUS||2026-01-01T00:01:03Z'
+              ;;
+          esac
           exit 0
         fi
 
         exit 0
         """
         .replace("__OLD__", oldEncoded)
-        .replace("__NEW__", newEncoded);
+        .replace("__NEW__", newEncoded)
+        .replace("__READ_MODEL_JOB__", READ_MODEL_JOB)
+        .replace("__READ_MODEL_IDENTITY__", READ_MODEL_IDENTITY);
   }
 
   private record ScriptResult(int exitCode, String output, List<String> secretMutations) {}

@@ -239,7 +239,7 @@ jobs:
             ROTATION_IDENTITY="$AI_QUERY_ROTATION_RUN_ID"
           elif [ "$ROTATION_STARTED:$RECONCILE_REQUIRED" = true:false ] \
             && [ "$ROTATION_OWNER" = steady ] && [ -z "$BEFORE_ACTIVE_RV" ]; then
-            # 최초 bootstrap은 되돌릴 이전 값이 없어 marker가 이미 steady다. Hook/AI 수렴은
+            # 최초 bootstrap은 되돌릴 이전 값이 없어 marker가 이미 steady다. Job/AI 수렴은
             # 필요하지만 실패 보상 reconciler는 실행하지 않는다.
             ROTATION_IDENTITY="$AI_QUERY_ROTATION_RUN_ID"
           elif [ "$ROTATION_STARTED:$RECONCILE_REQUIRED" = false:false ] \
@@ -371,7 +371,7 @@ jobs:
             fi
           fi
           # Secret 값은 Git에 넣지 않는다. Kubernetes의 불투명 resourceVersion만 pod template에
-          # 반영하면, wave 9 read-model Hook 성공 뒤 wave 10 AI rollout이 일어난다.
+          # 반영하면, wave 9 read-model Job 확인 뒤 wave 10 AI rollout이 일어난다.
           AI_QUERY_SECRET_REVISION=$(kubectl get secret ai-query-secrets -n openat -o jsonpath='{.metadata.resourceVersion}')
           case "$AI_QUERY_SECRET_REVISION" in
             ''|*[!A-Za-z0-9._-]*)
@@ -396,29 +396,91 @@ jobs:
           git add "$REVISION_PATCH"
           commit_staged "chore(deploy): refresh ai query credentials [skip ci]"
 
-          # 최종 commit은 자기 SHA를 자기 manifest에 넣을 수 없으므로, 먼저 workload revision을
-          # 고정하고 Hook manifest에는 workload revision + run id + active RV를 묶는다. 최종
-          # deploy revision은 아래 Argo operation revision과 별도로 정확히 검증한다.
+          # read-model Job은 전체 Sync의 Hook이 아니다. 산출물 계약과 조회 Secret revision을 묶은
+          # identity가 바뀔 때만 새 이름으로 생성하고, 그 외 배포에서는 완료된 기존 Job을 재사용한다.
+          # 따라서 다른 서비스 배포가 관리자 DDL을 반복 실행하거나 그 Job을 매번 추가하지 않는다.
           WORKLOAD_REVISION=$(git rev-parse HEAD)
+          READ_MODEL_ARTIFACT_HASH=$(
+            sha256sum \
+              ai/kustomization.yaml \
+              ai/k8s/read-model-job.yaml \
+              ai/scripts/apply-read-model.sh \
+              ai/src/main/resources/db/read-model/01-ai-read-model.sql \
+              ai/src/main/resources/db/read-model/verify-ai-read-model.sql \
+              | sha256sum | cut -c1-20
+          )
+          READ_MODEL_IDENTITY=$(
+            printf '%s|%s' "$READ_MODEL_ARTIFACT_HASH" "$AI_QUERY_SECRET_REVISION" \
+              | sha256sum | cut -c1-20
+          )
+          READ_MODEL_JOB_NAME="ai-read-model-apply-${READ_MODEL_IDENTITY}"
           ACTIVE_RV_HASH=$(printf '%s' "$AI_QUERY_SECRET_REVISION" | sha256sum | cut -c1-63)
+          JOB_NAME_STATE=k8s/overlay/ai-read-model-job-name.yaml
           IDENTITY_PATCH=k8s/overlay/ai-read-model-deployment-identity.yaml
+          [ "$(grep -c '^[[:space:]]*identity:' "$JOB_NAME_STATE")" -eq 1 ] \
+            && [ "$(grep -c '^[[:space:]]*jobName:' "$JOB_NAME_STATE")" -eq 1 ] || {
+            echo "ERROR: read-model Job name state 구조가 계약과 다릅니다." >&2
+            exit 1
+          }
           [ "$(grep -c '^[[:space:]]*openat.io/target-workload-revision:' "$IDENTITY_PATCH")" -eq 2 ] \
             && [ "$(grep -c '^[[:space:]]*openat.io/deployment-run-id:' "$IDENTITY_PATCH")" -eq 2 ] \
             && [ "$(grep -c '^[[:space:]]*openat.io/rotation-identity:' "$IDENTITY_PATCH")" -eq 2 ] \
             && [ "$(grep -c '^[[:space:]]*openat.io/target-active-resource-version-identity:' "$IDENTITY_PATCH")" -eq 2 ] \
-            && [ "$(grep -c '^[[:space:]]*openat.io/target-active-rv-hash:' "$IDENTITY_PATCH")" -eq 1 ] || {
-            echo "ERROR: read-model Hook identity patch 구조가 계약과 다릅니다." >&2
+            && [ "$(grep -c '^[[:space:]]*openat.io/target-active-rv-hash:' "$IDENTITY_PATCH")" -eq 1 ] \
+            && [ "$(grep -c '^[[:space:]]*openat.io/read-model-identity:' "$IDENTITY_PATCH")" -eq 2 ] || {
+            echo "ERROR: read-model Job identity patch 구조가 계약과 다릅니다." >&2
             exit 1
           }
-          sed -i -E \
-            -e "s#(openat.io/target-workload-revision: ).*#\\1\"${WORKLOAD_REVISION}\"#" \
-            -e "s#(openat.io/deployment-run-id: ).*#\\1\"${AI_QUERY_ROTATION_RUN_ID}\"#" \
-            -e "s#(openat.io/rotation-identity: ).*#\\1\"${ROTATION_IDENTITY}\"#" \
-            -e "s#(openat.io/target-active-resource-version-identity: ).*#\\1\"${AI_QUERY_SECRET_REVISION}\"#" \
-            -e "s#(openat.io/target-active-rv-hash: ).*#\\1\"${ACTIVE_RV_HASH}\"#" \
-            "$IDENTITY_PATCH"
-          git add "$IDENTITY_PATCH"
-          commit_staged "chore(deploy): bind read model hook identity [skip ci]"
+          CURRENT_READ_MODEL_IDENTITY=$(
+            sed -n -E 's/^[[:space:]]*identity:[[:space:]]*"([^"]+)"/\1/p' "$JOB_NAME_STATE"
+          )
+          if [ "$CURRENT_READ_MODEL_IDENTITY" != "$READ_MODEL_IDENTITY" ]; then
+            sed -i -E \
+              -e "s#(^[[:space:]]*identity: ).*#\\1\"${READ_MODEL_IDENTITY}\"#" \
+              -e "s#(^[[:space:]]*jobName: ).*#\\1\"${READ_MODEL_JOB_NAME}\"#" \
+              "$JOB_NAME_STATE"
+            sed -i -E \
+              -e "s#(openat.io/target-workload-revision: ).*#\\1\"${WORKLOAD_REVISION}\"#" \
+              -e "s#(openat.io/deployment-run-id: ).*#\\1\"${AI_QUERY_ROTATION_RUN_ID}\"#" \
+              -e "s#(openat.io/rotation-identity: ).*#\\1\"${ROTATION_IDENTITY}\"#" \
+              -e "s#(openat.io/target-active-resource-version-identity: ).*#\\1\"${AI_QUERY_SECRET_REVISION}\"#" \
+              -e "s#(openat.io/target-active-rv-hash: ).*#\\1\"${ACTIVE_RV_HASH}\"#" \
+              -e "s#(openat.io/read-model-identity: ).*#\\1\"${READ_MODEL_IDENTITY}\"#" \
+              "$IDENTITY_PATCH"
+            git add "$JOB_NAME_STATE" "$IDENTITY_PATCH"
+            commit_staged "chore(deploy): schedule read model $READ_MODEL_IDENTITY [skip ci]"
+          else
+            echo "SKIP: read-model 산출물과 조회 Secret이 같아 완료된 Job을 재사용합니다."
+          fi
+
+          EXPECTED_READ_MODEL_JOB=$(
+            sed -n -E 's/^[[:space:]]*jobName:[[:space:]]*"([^"]+)"/\1/p' "$JOB_NAME_STATE"
+          )
+          EXPECTED_READ_MODEL_IDENTITY=$(
+            sed -n -E 's/^[[:space:]]*identity:[[:space:]]*"([^"]+)"/\1/p' "$JOB_NAME_STATE"
+          )
+          EXPECTED_WORKLOAD_REVISION=$(
+            sed -n -E 's/^[[:space:]]*openat.io\/target-workload-revision:[[:space:]]*"([^"]+)"/\1/p' \
+              "$IDENTITY_PATCH" | head -1
+          )
+          EXPECTED_DEPLOYMENT_RUN_ID=$(
+            sed -n -E 's/^[[:space:]]*openat.io\/deployment-run-id:[[:space:]]*"([^"]+)"/\1/p' \
+              "$IDENTITY_PATCH" | head -1
+          )
+          EXPECTED_ROTATION_IDENTITY=$(
+            sed -n -E 's/^[[:space:]]*openat.io\/rotation-identity:[[:space:]]*"([^"]+)"/\1/p' \
+              "$IDENTITY_PATCH" | head -1
+          )
+          EXPECTED_JOB_ACTIVE_RV=$(
+            sed -n -E 's/^[[:space:]]*openat.io\/target-active-resource-version-identity:[[:space:]]*"([^"]+)"/\1/p' \
+              "$IDENTITY_PATCH" | head -1
+          )
+          [ "$EXPECTED_READ_MODEL_JOB" = "$READ_MODEL_JOB_NAME" ] \
+            && [ "$EXPECTED_READ_MODEL_IDENTITY" = "$READ_MODEL_IDENTITY" ] \
+            && [ "$EXPECTED_JOB_ACTIVE_RV" = "$AI_QUERY_SECRET_REVISION" ] || {
+            echo "ERROR: read-model Job identity 결과가 현재 산출물/Secret과 다릅니다." >&2
+            exit 1
+          }
           DEPLOY_REVISION=$(git rev-parse HEAD)
           if [ "$RECONCILE_REQUIRED" = true ]; then
             ROTATION_METADATA=$(kubectl get secret ai-query-rollback-secrets -n openat \
@@ -434,10 +496,13 @@ jobs:
           # revision=현재 HEAD가 되고 아래 수렴확인이 즉시 통과한다.
           git push origin deploy/state
           printf 'revision=%s\n' "$DEPLOY_REVISION" >> "$GITHUB_OUTPUT"
-          printf 'workload_revision=%s\n' "$WORKLOAD_REVISION" >> "$GITHUB_OUTPUT"
+          printf 'workload_revision=%s\n' "$EXPECTED_WORKLOAD_REVISION" >> "$GITHUB_OUTPUT"
           printf 'active_rv=%s\n' "$AI_QUERY_SECRET_REVISION" >> "$GITHUB_OUTPUT"
           printf 'active_rv_hash=%s\n' "$ACTIVE_RV_HASH" >> "$GITHUB_OUTPUT"
-          printf 'rotation_identity=%s\n' "$ROTATION_IDENTITY" >> "$GITHUB_OUTPUT"
+          printf 'rotation_identity=%s\n' "$EXPECTED_ROTATION_IDENTITY" >> "$GITHUB_OUTPUT"
+          printf 'deployment_run_id=%s\n' "$EXPECTED_DEPLOYMENT_RUN_ID" >> "$GITHUB_OUTPUT"
+          printf 'read_model_job=%s\n' "$EXPECTED_READ_MODEL_JOB" >> "$GITHUB_OUTPUT"
+          printf 'read_model_identity=%s\n' "$EXPECTED_READ_MODEL_IDENTITY" >> "$GITHUB_OUTPUT"
 
       # push된 deploy/state를 ArgoCD가 auto-sync — 러너는 apply 없이 수렴 확인만 한다
       # (도구 추가 없음, kubectl만 사용. 리서치 argocd_ci_smoke_research §3.8-A).
@@ -454,7 +519,7 @@ jobs:
       #  ③ 이미지 풀 실패: ImagePullBackOff/ErrImagePull이 2회 연속 폴링 관측(일시 GHCR 히컵 오탐 방지)
       #  ④ OOMKilled: lastState.terminated=OOMKilled & 현재 waiting
       #  ⑤ Unschedulable: PodScheduled=False가 90초 이상 지속(PostSync warmup Job stuck 등)
-      #  ⑥ read-model Hook: 현재 run/workload revision/active RV identity + HookSucceeded
+      #  ⑥ read-model Job: 산출물·active RV identity에 해당하는 완료 Job
       #  ⑦ AI rollout: target Secret RV annotation을 가진 template이 observed/updated/available
       #  ⑧ target AI pod: 같은 Secret RV annotation을 소비한 Ready pod 수가 desired replica와 일치
       # 성공/타임아웃/조기감지 모두 공통 dump_diagnostics로 원인을 Actions 로그에 남긴다.
@@ -467,7 +532,9 @@ jobs:
           EXPECTED_ACTIVE_RV: ${{ steps.pin.outputs.active_rv }}
           EXPECTED_ACTIVE_RV_HASH: ${{ steps.pin.outputs.active_rv_hash }}
           EXPECTED_ROTATION_IDENTITY: ${{ steps.pin.outputs.rotation_identity }}
-          EXPECTED_DEPLOYMENT_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          EXPECTED_DEPLOYMENT_RUN_ID: ${{ steps.pin.outputs.deployment_run_id }}
+          EXPECTED_READ_MODEL_JOB: ${{ steps.pin.outputs.read_model_job }}
+          EXPECTED_READ_MODEL_IDENTITY: ${{ steps.pin.outputs.read_model_identity }}
         run: |
           # deploy/state worktree가 아니라 검증된 workflow source에서 staging한 read-only proof만 사용한다.
           # shellcheck source=/dev/null
@@ -528,8 +595,8 @@ jobs:
             done
             echo "::endgroup::"
 
-            echo "::group::AI read-model Hook and Deployment identity"
-            kubectl get job ai-read-model-apply -n openat -o yaml 2>&1 | tail -100 || true
+            echo "::group::AI read-model Job and Deployment identity"
+            kubectl get job "$EXPECTED_READ_MODEL_JOB" -n openat -o yaml 2>&1 | tail -100 || true
             kubectl get deployment ai -n openat -o yaml 2>&1 | tail -120 || true
             echo "::endgroup::"
           }
@@ -545,13 +612,10 @@ jobs:
             S=$(kubectl -n argocd get application openat -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "?")
             OPINFO=$(kubectl -n argocd get application openat -o jsonpath='{.status.operationState.operation.sync.revision}|{.status.operationState.phase}' 2>/dev/null || echo "|")
             OPREV="${OPINFO%%|*}"; OPPHASE="${OPINFO##*|}"
-            HOOK_PHASE=$(kubectl -n argocd get application openat \
-              -o jsonpath='{.status.operationState.syncResult.resources[?(@.name=="ai-read-model-apply")].hookPhase}' \
-              2>/dev/null || echo "?")
-            HOOK_STATE=$(kubectl get job ai-read-model-apply -n openat \
-              -o jsonpath='{.metadata.annotations.openat\.io/target-workload-revision}{"|"}{.metadata.annotations.openat\.io/deployment-run-id}{"|"}{.metadata.annotations.openat\.io/rotation-identity}{"|"}{.metadata.annotations.openat\.io/target-active-resource-version-identity}{"|"}{.spec.template.metadata.labels.openat\.io/target-active-rv-hash}{"|"}{.status.conditions[?(@.type=="Complete")].status}' \
-              2>/dev/null || echo "|||||")
-            EXPECTED_HOOK_STATE="${EXPECTED_WORKLOAD_REV}|${EXPECTED_DEPLOYMENT_RUN_ID}|${EXPECTED_ROTATION_IDENTITY}|${EXPECTED_ACTIVE_RV}|${EXPECTED_ACTIVE_RV_HASH}|True"
+            READ_MODEL_STATE=$(kubectl get job "$EXPECTED_READ_MODEL_JOB" -n openat \
+              -o jsonpath='{.metadata.annotations.openat\.io/target-workload-revision}{"|"}{.metadata.annotations.openat\.io/deployment-run-id}{"|"}{.metadata.annotations.openat\.io/rotation-identity}{"|"}{.metadata.annotations.openat\.io/target-active-resource-version-identity}{"|"}{.metadata.annotations.openat\.io/read-model-identity}{"|"}{.spec.template.metadata.labels.openat\.io/target-active-rv-hash}{"|"}{.status.conditions[?(@.type=="Complete")].status}' \
+              2>/dev/null || echo "||||||")
+            EXPECTED_READ_MODEL_STATE="${EXPECTED_WORKLOAD_REV}|${EXPECTED_DEPLOYMENT_RUN_ID}|${EXPECTED_ROTATION_IDENTITY}|${EXPECTED_ACTIVE_RV}|${EXPECTED_READ_MODEL_IDENTITY}|${EXPECTED_ACTIVE_RV_HASH}|True"
             ACTIVE_RV=$(kubectl get secret ai-query-secrets -n openat \
               -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null || echo "?")
             AI_STATE=$(kubectl get deployment ai -n openat \
@@ -565,13 +629,12 @@ jobs:
               AI_ROLLOUT_PROOF=PROVEN
             fi
 
-            # ── 성공: 대상 Hook identity/DB Secret/AI rollout까지 같은 revision으로 수렴 ──
+            # ── 성공: 대상 read-model identity/DB Secret/AI rollout까지 같은 revision으로 수렴 ──
             if [ "$REV" = "$TARGET_REV" ] \
               && [ "$S" = "Synced/Healthy" ] \
               && [ "$OPREV" = "$TARGET_REV" ] \
               && [ "$OPPHASE" = "Succeeded" ] \
-              && [ "$HOOK_PHASE" = "Succeeded" ] \
-              && [ "$HOOK_STATE" = "$EXPECTED_HOOK_STATE" ] \
+              && [ "$READ_MODEL_STATE" = "$EXPECTED_READ_MODEL_STATE" ] \
               && [ "$ACTIVE_RV" = "$EXPECTED_ACTIVE_RV" ] \
               && [ "$AI_ROLLOUT_PROOF" = PROVEN ]; then
               echo "ArgoCD converged at $REV."
@@ -660,7 +723,7 @@ jobs:
               fi
             done < <(kubectl get pods -n openat -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.conditions[?(@.type=="PodScheduled")]}{.status}{","}{.reason}{end}{"\n"}{end}' 2>/dev/null)
 
-            echo "waiting... (rev=$REV, want=$TARGET_REV, status=$S, operation=$OPREV/$OPPHASE, hook=$HOOK_PHASE, ai=$AI_STATE, targetRS=$AI_TARGET_RS_UID, readyTarget=$AI_READY_TARGET_PODS)"
+            echo "waiting... (rev=$REV, want=$TARGET_REV, status=$S, operation=$OPREV/$OPPHASE, readModel=$READ_MODEL_STATE, ai=$AI_STATE, targetRS=$AI_TARGET_RS_UID, readyTarget=$AI_READY_TARGET_PODS)"
             sleep 5
           done
 
@@ -677,6 +740,8 @@ jobs:
           EXPECTED_ACTIVE_RV_HASH: ${{ steps.pin.outputs.active_rv_hash }}
           EXPECTED_ROTATION_IDENTITY: ${{ steps.pin.outputs.rotation_identity }}
           EXPECTED_DEPLOYMENT_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          READ_MODEL_JOB: ${{ steps.pin.outputs.read_model_job }}
+          EXPECTED_READ_MODEL_IDENTITY: ${{ steps.pin.outputs.read_model_identity }}
           AI_QUERY_ROTATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
         run: bash "$RUNNER_TEMP/openat-deploy-scripts/reconcile-ai-query-rotation.sh" failure "$TARGET_REV" "$AI_QUERY_ROTATION_RUN_ID"
 
@@ -685,6 +750,8 @@ jobs:
         env:
           TARGET_REV: ${{ steps.pin.outputs.revision }}
           AI_QUERY_ROTATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          READ_MODEL_JOB: ${{ steps.pin.outputs.read_model_job }}
+          EXPECTED_READ_MODEL_IDENTITY: ${{ steps.pin.outputs.read_model_identity }}
         run: bash "$RUNNER_TEMP/openat-deploy-scripts/reconcile-ai-query-rotation.sh" success "$TARGET_REV" "$AI_QUERY_ROTATION_RUN_ID"
 
       - name: Remove rendered secret file

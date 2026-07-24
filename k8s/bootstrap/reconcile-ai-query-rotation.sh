@@ -13,10 +13,11 @@ RECONCILE_TIMEOUT_SECONDS="${RECONCILE_TIMEOUT_SECONDS:-240}"
 RECONCILE_POLL_SECONDS="${RECONCILE_POLL_SECONDS:-5}"
 ROLLBACK_SECRET=ai-query-rollback-secrets
 ACTIVE_SECRET=ai-query-secrets
-READ_MODEL_JOB=ai-read-model-apply
+READ_MODEL_JOB="${READ_MODEL_JOB:-ai-read-model-apply}"
+EXPECTED_READ_MODEL_IDENTITY="${EXPECTED_READ_MODEL_IDENTITY:-}"
 export -n DB_USER DB_PASSWORD AI_QUERY_DB_PASSWORD JWT_KEY_ID JWT_PRIVATE_KEY JWT_PUBLIC_KEY \
   PG_CLIENT_KEY PG_SECRET_KEY PAYMENT_FIELD_ENCRYPTION_KEY OPENAI_API_KEY \
-  CHAT_INFERENCE_API_KEY GHCR_USER GHCR_PAT WARMUP_EMAIL WARMUP_PASSWORD \
+  CHAT_INFERENCE_API_KEY TAVILY_API_KEY GHCR_USER GHCR_PAT WARMUP_EMAIL WARMUP_PASSWORD \
   GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD 2>/dev/null || true
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=secret-manifest.sh
@@ -31,6 +32,23 @@ esac
 case "$RUN_ID" in
   ''|*[!A-Za-z0-9._-]*) echo "ERROR: run id 형식이 올바르지 않습니다." >&2; exit 1 ;;
 esac
+case "$READ_MODEL_JOB" in
+  ''|*[!a-z0-9.-]*)
+    echo "ERROR: read-model Job 이름 형식이 올바르지 않습니다." >&2
+    exit 1
+    ;;
+esac
+case "$EXPECTED_READ_MODEL_IDENTITY" in
+  ''|*[!a-f0-9]*)
+    echo "ERROR: read-model identity 형식이 올바르지 않습니다." >&2
+    exit 1
+    ;;
+esac
+[ "${#EXPECTED_READ_MODEL_IDENTITY}" -eq 20 ] \
+  && [ "$READ_MODEL_JOB" = "ai-read-model-apply-$EXPECTED_READ_MODEL_IDENTITY" ] || {
+  echo "ERROR: read-model Job 이름이 target identity와 일치하지 않습니다." >&2
+  exit 1
+}
 case "$RECONCILE_TIMEOUT_SECONDS:$RECONCILE_POLL_SECONDS" in
   *[!0-9:]*|:*|*:) echo "ERROR: reconcile timeout/poll 값이 올바르지 않습니다." >&2; exit 1 ;;
 esac
@@ -169,12 +187,12 @@ restore_previous_and_normalize() {
 
 read_argo_operation() {
   "$KUBECTL" -n argocd get application openat \
-    -o jsonpath='{.status.operationState.operation.sync.revision}{"|"}{.status.operationState.phase}{"|"}{.status.operationState.startedAt}{"|"}{.status.operationState.finishedAt}{"|"}{range .status.operationState.syncResult.resources[?(@.name=="ai-read-model-apply")]}{.kind}{","}{.name}{","}{.hookPhase}{end}'
+    -o jsonpath='{.status.operationState.operation.sync.revision}{"|"}{.status.operationState.phase}{"|"}{.status.operationState.startedAt}{"|"}{.status.operationState.finishedAt}'
 }
 
 parse_matching_operation() {
   local snapshot="$1"
-  IFS='|' read -r operation_revision operation_phase operation_started_at operation_finished_at hook_identity <<<"$snapshot"
+  IFS='|' read -r operation_revision operation_phase operation_started_at operation_finished_at <<<"$snapshot"
   [ "$operation_revision" = "$TARGET_REVISION" ] && [ -n "$operation_started_at" ] || return 1
   operation_started_epoch=$(to_epoch "$operation_started_at") || return 1
   [ "$operation_started_epoch" -ge "$rotation_started_epoch" ] || return 1
@@ -190,24 +208,18 @@ parse_matching_operation() {
 
 verify_target_job() {
   local job_snapshot job_name job_uid job_created_at deployment_run_id rotation_identity
-  local job_active_rv workload_revision job_created_epoch
-  IFS=',' read -r hook_kind hook_name hook_phase <<<"$hook_identity"
-  [ "$hook_kind" = Job ] && [ "$hook_name" = "$READ_MODEL_JOB" ] || {
-    printf 'UNKNOWN'
-    return
-  }
+  local job_active_rv workload_revision read_model_identity job_complete job_failed job_created_epoch
   job_snapshot=$("$KUBECTL" get job "$READ_MODEL_JOB" -n "$NS" --ignore-not-found \
-    -o jsonpath='{.metadata.name}{"|"}{.metadata.uid}{"|"}{.metadata.creationTimestamp}{"|"}{.metadata.annotations.openat\.io/deployment-run-id}{"|"}{.metadata.annotations.openat\.io/rotation-identity}{"|"}{.metadata.annotations.openat\.io/target-active-resource-version-identity}{"|"}{.metadata.annotations.openat\.io/target-workload-revision}') || {
+    -o jsonpath='{.metadata.name}{"|"}{.metadata.uid}{"|"}{.metadata.creationTimestamp}{"|"}{.metadata.annotations.openat\.io/deployment-run-id}{"|"}{.metadata.annotations.openat\.io/rotation-identity}{"|"}{.metadata.annotations.openat\.io/target-active-resource-version-identity}{"|"}{.metadata.annotations.openat\.io/target-workload-revision}{"|"}{.metadata.annotations.openat\.io/read-model-identity}{"|"}{.status.conditions[?(@.type=="Complete")].status}{"|"}{.status.conditions[?(@.type=="Failed")].status}') || {
     printf 'UNKNOWN'
     return
   }
   [ -n "$job_snapshot" ] || {
-    # Argo가 Hook을 기록했는데 Job이 없으면 TTL/수동 삭제 가능성이 있어 과거 pod 상태를 신뢰하지 않는다.
     printf 'ABSENT'
     return
   }
   IFS='|' read -r job_name job_uid job_created_at deployment_run_id rotation_identity \
-    job_active_rv workload_revision <<<"$job_snapshot"
+    job_active_rv workload_revision read_model_identity job_complete job_failed <<<"$job_snapshot"
   [ "$job_name" = "$READ_MODEL_JOB" ] && [ -n "$job_uid" ] && [ -n "$job_created_at" ] || {
     printf 'UNKNOWN'
     return
@@ -232,6 +244,10 @@ verify_target_job() {
     printf 'UNKNOWN'
     return
   fi
+  [ "$read_model_identity" = "$EXPECTED_READ_MODEL_IDENTITY" ] || {
+    printf 'UNKNOWN'
+    return
+  }
   case "$workload_revision" in
     *[!0-9a-f]*|'') printf 'UNKNOWN'; return ;;
   esac
@@ -241,13 +257,14 @@ verify_target_job() {
     printf 'UNKNOWN'
     return
   }
-  printf 'BOUND|%s|%s' "$job_uid" "$job_created_epoch"
+  printf 'BOUND|%s|%s|%s|%s' "$job_uid" "$job_created_epoch" "$job_complete" "$job_failed"
 }
 
 db_state_for_bound_job() {
-  local binding="$1" binding_status job_uid job_created_epoch pod_names latest_pod pod_snapshot
+  local binding="$1" binding_status job_uid job_created_epoch job_complete job_failed
+  local pod_names latest_pod pod_snapshot
   local pod_name owner_uid pod_created_at message running_started terminated_started pod_created_epoch
-  IFS='|' read -r binding_status job_uid job_created_epoch <<<"$binding"
+  IFS='|' read -r binding_status job_uid job_created_epoch job_complete job_failed <<<"$binding"
   [ "$binding_status" = BOUND ] || {
     printf 'UNKNOWN'
     return
@@ -312,7 +329,7 @@ if [ -z "$TARGET_REVISION" ] || [ "$TARGET_REVISION" = pending ]; then
     echo "ERROR: ArgoCD 상태를 읽지 못해 DB 상태를 UNKNOWN으로 유지합니다." >&2
     exit 1
   }
-  IFS='|' read -r operation_revision operation_phase operation_started_at _ _ <<<"$argo_snapshot"
+  IFS='|' read -r operation_revision operation_phase operation_started_at _ <<<"$argo_snapshot"
   case "$operation_phase" in
     Running|Terminating)
       echo "ERROR: 대상 revision 기록 전 ArgoCD 작업이 실행 중이라 DB 상태를 UNKNOWN으로 유지합니다." >&2
@@ -389,54 +406,55 @@ while [ "$SECONDS" -le "$deadline" ]; do
       exit 1
     fi
   else
-    IFS=',' read -r hook_kind hook_name hook_phase <<<"$hook_identity"
-    if [ "$hook_kind" = Job ] && [ "$hook_name" = "$READ_MODEL_JOB" ]; then
-      case "$hook_phase" in
-        Succeeded)
-          job_binding=$(verify_target_job)
-          case "$job_binding" in
-            BOUND\|*) ;;
-            *)
-              echo "ERROR: Succeeded Hook의 현재 target Job identity를 결박하지 못해 UNKNOWN으로 유지합니다." >&2
+    job_binding=$(verify_target_job)
+    case "$job_binding" in
+      BOUND\|*)
+        IFS='|' read -r binding_status binding_uid binding_epoch job_complete job_failed \
+          <<<"$job_binding"
+        db_state=$(db_state_for_bound_job "$job_binding")
+        if [ "$job_complete" = True ]; then
+          [ "$db_state" = NEW ] || {
+            echo "ERROR: 완료된 target Job의 DB 상태가 NEW가 아니라 Secret을 변경하지 않습니다." >&2
+            exit 1
+          }
+          if [ "$operation_phase" = Succeeded ]; then
+            if ! ai_rollout_consumes_target; then
+              echo "ERROR: AI rollout이 target active resourceVersion을 소비했음을 증명하지 못해 UNKNOWN으로 유지합니다." >&2
               exit 1
-              ;;
-          esac
-          if ! ai_rollout_consumes_target; then
-            echo "ERROR: AI rollout이 target active resourceVersion을 소비했음을 증명하지 못해 UNKNOWN으로 유지합니다." >&2
-            exit 1
+            fi
+            normalize_rollback_to_active
+            exit 0
           fi
-          normalize_rollback_to_active
-          exit 0
-          ;;
-        Failed|Error)
+        elif [ "$job_failed" = True ]; then
           if [ "$MODE" != failure ]; then
-            echo "ERROR: 성공 처리 대상 Hook이 실패 상태라 Secret을 변경하지 않습니다." >&2
+            echo "ERROR: 성공 처리 대상 read-model Job이 실패 상태라 Secret을 변경하지 않습니다." >&2
             exit 1
           fi
-          job_binding=$(verify_target_job)
-          db_state=$(db_state_for_bound_job "$job_binding")
           case "$db_state" in
             PREVIOUS) restore_previous_and_normalize; exit 0 ;;
             NEW) normalize_rollback_to_active; exit 0 ;;
             *)
-              echo "ERROR: 현재 target Job/Pod의 DB 상태가 UNKNOWN이라 active/rollback Secret을 변경하지 않습니다." >&2
+              echo "ERROR: 실패한 target Job/Pod의 DB 상태가 UNKNOWN이라 active/rollback Secret을 변경하지 않습니다." >&2
               exit 1
               ;;
           esac
-          ;;
-      esac
-    elif [ "$MODE" = failure ] && [ -z "$hook_identity" ] \
-      && { [ "$operation_phase" = Failed ] || [ "$operation_phase" = Error ]; }; then
-      echo "ERROR: target Hook 실행 흔적이 없어 DB 상태를 UNKNOWN으로 유지합니다." >&2
-      exit 1
-    fi
+        fi
+        ;;
+      *)
+        if [ "$operation_phase" = Failed ] || [ "$operation_phase" = Error ]; then
+          echo "ERROR: terminal ArgoCD 작업의 target read-model Job을 결박하지 못해 UNKNOWN으로 유지합니다." >&2
+          exit 1
+        fi
+        ;;
+    esac
 
     if [ "$MODE" = success ] && [ "$operation_phase" != Running ]; then
-      echo "ERROR: 성공 처리 대상 Hook이 Succeeded가 아니어서 Secret을 변경하지 않습니다." >&2
+      echo "ERROR: 성공 처리 대상 read-model Job과 AI rollout이 수렴하지 않아 Secret을 변경하지 않습니다." >&2
       exit 1
     fi
-    if [ "$MODE" = failure ] && [ "$operation_phase" = Failed -o "$operation_phase" = Error ]; then
-      echo "ERROR: terminal ArgoCD 작업의 read-model 상태를 증명하지 못해 UNKNOWN으로 유지합니다." >&2
+    if [ "$MODE" = failure ] \
+      && { [ "$operation_phase" = Failed ] || [ "$operation_phase" = Error ]; }; then
+      echo "ERROR: terminal ArgoCD 작업의 read-model DB 상태를 증명하지 못해 UNKNOWN으로 유지합니다." >&2
       exit 1
     fi
   fi
@@ -444,5 +462,5 @@ while [ "$SECONDS" -le "$deadline" ]; do
   [ "$RECONCILE_POLL_SECONDS" -gt 0 ] && sleep "$RECONCILE_POLL_SECONDS"
 done
 
-echo "ERROR: read-model Hook의 terminal DB 상태를 확인하지 못해 active/rollback Secret을 변경하지 않습니다." >&2
+echo "ERROR: read-model Job의 terminal DB 상태를 확인하지 못해 active/rollback Secret을 변경하지 않습니다." >&2
 exit 1

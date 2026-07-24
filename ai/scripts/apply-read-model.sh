@@ -63,6 +63,15 @@ verify_previous_state() {
   fi
 }
 
+# 이미 현재 비밀번호와 정확한 조회 계약이 적용돼 있으면 관리자 DDL을 다시 실행하지 않는다.
+# 일반 배포에서는 완료된 Job 자체가 유지되지만, 수동 재실행이나 복구 상황에서도 같은 보호가 동작한다.
+if verify_query_contract "${AI_QUERY_DB_PASSWORD}" >/dev/null 2>&1; then
+  record_db_state NEW
+  unset AI_QUERY_DB_PASSWORD AI_QUERY_DB_PREVIOUS_PASSWORD AI_READ_MODEL_ADMIN_PASSWORD
+  echo "AI read-model 계약이 이미 최신이라 DDL 적용을 건너뛰었어."
+  exit 0
+fi
+
 export AI_QUERY_DB_PASSWORD
 if ! {
   printf '\\getenv AI_QUERY_DB_PASSWORD AI_QUERY_DB_PASSWORD\n'

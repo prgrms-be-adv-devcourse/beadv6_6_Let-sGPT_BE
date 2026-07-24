@@ -13,6 +13,11 @@ data:
   DB_NAME: "openat"
   CHAT_DATA_ENABLED: "true"
   CHAT_INFERENCE_BASE_URL: "https://api.inferway.xyz/v1"
+  CHAT_INFERENCE_MODEL: "chat"
+  # 현재 chat 별칭은 외부 fallback 가능 계약이므로 관리자 조회를 fail-closed한다.
+  # 인프라 담당자가 비fallback Base URL/별칭을 제공한 뒤에만 true로 바꾼다.
+  CHAT_INFERENCE_LOCAL_ONLY_ROUTE: "false"
+  CHAT_WEB_SEARCH_ENABLED: "true"
   AI_QUERY_DB_URL: "jdbc:postgresql://postgres:5432/openat"
   AI_QUERY_DB_USERNAME: "ai_query_app"
   KAFKA_BROKER: "kafka:9092"

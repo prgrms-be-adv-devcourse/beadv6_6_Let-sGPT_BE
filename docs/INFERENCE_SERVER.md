@@ -652,6 +652,9 @@ base64 형식은 JSON 숫자 배열보다 전송량을 줄일 수 있지만, 클
 - Spring AI와 모델 클라이언트의 자동 재시도는 끈다. 빈 응답·구조화 JSON 형식 오류만 해당 단계에서 한 번 복구할 수 있으며, 도구 실행 뒤에는 중복 실행을 피하기 위해 전체 요청을 재시도하지 않는다.
 - 하나의 요청 절대 deadline을 모든 LLM shard, 외부 도구와 DB 조회에 전파하고 terminal 또는 연결 종료 시 자식 작업을 모두 취소한다.
 - `store=false`를 사용하고 Chat Memory, 프롬프트·완성문 로그와 대화 영속 저장을 사용하지 않는다.
+- Kubernetes 배포는 `CHAT_INFERENCE_API_KEY`와 `TAVILY_API_KEY`를 AI 전용 Secret에서 주입한다.
+  현재 `chat` 별칭은 외부 폴백 가능 계약이므로 원격 관리자 경로는 기본적으로 fail-closed하고,
+  비폴백 URL 또는 별칭을 인프라 담당자가 확인한 뒤에만 `local-only-route=true`로 전환한다.
 
 ### 12.2 검색 서비스 (`search`)
 
