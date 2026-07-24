@@ -44,9 +44,10 @@ public class InferenceServerImageClient {
 
   public InferenceServerImageClient(
       RestClient restClient,
-      @Value("${openai.base-url:https://api.openai.com/v1}") String baseUrl,
-      @Value("${openai.api-key:}") String apiKey,
-      @Value("${openai.image-analysis.model:gpt-5.4-nano}") String imageAnalysisModel) {
+      @Value("${openai.inferenceai.base-url:https://api.openai.com/v1}") String baseUrl,
+      @Value("${openai.inferenceai.api-key:}") String apiKey,
+      @Value("${openai.inferenceai.image-analysis.model:gpt-5.4-nano}")
+          String imageAnalysisModel) {
     this.restClient = restClient;
     this.responsesUri = endpoint(baseUrl, "responses");
     this.apiKey = apiKey;
