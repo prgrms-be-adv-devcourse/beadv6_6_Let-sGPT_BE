@@ -7,8 +7,6 @@ kind: Deployment
 metadata:
   name: queue
   namespace: openat
-  annotations:
-    argocd.argoproj.io/sync-wave: "8"
 spec:
   replicas: 1
   strategy:

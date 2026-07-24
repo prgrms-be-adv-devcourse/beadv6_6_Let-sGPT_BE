@@ -15,13 +15,18 @@ import com.openat.payment.application.client.TossConfirmResult;
 import com.openat.payment.application.client.TossQueryResult;
 import com.openat.payment.application.client.TossRefundResult;
 import com.openat.payment.application.exception.PaymentErrorCode;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.ratelimiter.RateLimiter;
 import io.github.resilience4j.ratelimiter.RateLimiterConfig;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryConfig;
 import java.time.Duration;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.client.ResourceAccessException;
 
 // 순수 단위테스트 — 실제 resilience4j 코어를 mock delegate에 합성해 데코레이터의 폴백/합성 순서를 검증한다.
 class ResilientTossPaymentClientTest {
@@ -63,12 +68,28 @@ class ResilientTossPaymentClientTest {
             .build());
   }
 
+  // 운영과 동일한 재시도 시맨틱(maxAttempts=2, 네트워크 오류만 재시도, 불명확 상태는 무시). 대기는 테스트 속도상 짧게.
+  private Retry retry() {
+    return Retry.of(
+        "toss-confirm-test",
+        RetryConfig.custom()
+            .maxAttempts(2)
+            .waitDuration(Duration.ofMillis(10))
+            .retryExceptions(ResourceAccessException.class)
+            .ignoreExceptions(
+                CallNotPermittedException.class,
+                RequestNotPermitted.class,
+                BusinessException.class,
+                IllegalStateException.class)
+            .build());
+  }
+
   @Test
   void confirm이_연속_5회_실패하면_서킷이_open되고_6번째는_PG_UNAVAILABLE로_매핑된다() {
     when(delegate.confirmPayment(anyString(), any(), anyLong(), anyString()))
         .thenThrow(new IllegalStateException("토스 confirm 실패: status=500"));
     ResilientTossPaymentClient client =
-        new ResilientTossPaymentClient(delegate, breaker(), permissiveLimiter());
+        new ResilientTossPaymentClient(delegate, breaker(), permissiveLimiter(), retry());
 
     // 최초 5회는 기록되는 실패(IllegalStateException)가 그대로 전파된다.
     for (int i = 0; i < 5; i++) {
@@ -90,7 +111,7 @@ class ResilientTossPaymentClientTest {
         .thenReturn(TossConfirmResult.approved("tx-1"));
     CircuitBreaker cb = breaker();
     ResilientTossPaymentClient client =
-        new ResilientTossPaymentClient(delegate, cb, singlePermitLimiter());
+        new ResilientTossPaymentClient(delegate, cb, singlePermitLimiter(), retry());
 
     // 첫 호출은 허가를 소진하고 정상 통과.
     assertThat(client.confirmPayment("pk", orderId, 1_000L, "idem").approved()).isTrue();
@@ -106,13 +127,55 @@ class ResilientTossPaymentClientTest {
   }
 
   @Test
+  void confirm의_첫_네트워크_오류는_재시도되어_두번째_성공이_반환된다() {
+    when(delegate.confirmPayment(anyString(), any(), anyLong(), anyString()))
+        .thenThrow(new ResourceAccessException("EOF reached while reading"))
+        .thenReturn(TossConfirmResult.approved("tx-1"));
+    ResilientTossPaymentClient client =
+        new ResilientTossPaymentClient(delegate, breaker(), permissiveLimiter(), retry());
+
+    // 유휴 keep-alive 커넥션 재사용 EOF는 멱등 재시도로 흡수되어 정상 결과 반환.
+    assertThat(client.confirmPayment("pk", orderId, 1_000L, "idem").approved()).isTrue();
+    verify(delegate, times(2)).confirmPayment(anyString(), any(), anyLong(), anyString());
+  }
+
+  @Test
+  void confirm이_재시도_후에도_네트워크_오류면_PG_UNAVAILABLE로_매핑된다() {
+    when(delegate.confirmPayment(anyString(), any(), anyLong(), anyString()))
+        .thenThrow(new ResourceAccessException("EOF reached while reading"));
+    ResilientTossPaymentClient client =
+        new ResilientTossPaymentClient(delegate, breaker(), permissiveLimiter(), retry());
+
+    // 원호출 1 + 재시도 1 = 2회 모두 네트워크 오류 → 503 도메인 예외로 변환.
+    assertThatThrownBy(() -> client.confirmPayment("pk", orderId, 1_000L, "idem"))
+        .isInstanceOf(BusinessException.class)
+        .extracting(e -> ((BusinessException) e).getErrorCode())
+        .isEqualTo(PaymentErrorCode.PG_UNAVAILABLE);
+
+    verify(delegate, times(2)).confirmPayment(anyString(), any(), anyLong(), anyString());
+  }
+
+  @Test
+  void confirm의_5xx_불명_상태_예외는_재시도없이_1회만_호출되고_그대로_전파된다() {
+    when(delegate.confirmPayment(anyString(), any(), anyLong(), anyString()))
+        .thenThrow(new IllegalStateException("토스 confirm 실패: status=500"));
+    ResilientTossPaymentClient client =
+        new ResilientTossPaymentClient(delegate, breaker(), permissiveLimiter(), retry());
+
+    // 5xx 불명 상태(IllegalStateException)는 재시도 대상이 아님 — 1회만 호출되고 그대로 전파(기존 보정 로직 경로).
+    assertThatThrownBy(() -> client.confirmPayment("pk", orderId, 1_000L, "idem"))
+        .isInstanceOf(IllegalStateException.class);
+    verify(delegate, times(1)).confirmPayment(anyString(), any(), anyLong(), anyString());
+  }
+
+  @Test
   void 서킷이_open이면_refund는_UNKNOWN으로_폴백한다() {
     when(delegate.refundPayment(anyString(), anyLong(), anyString()))
         .thenThrow(new IllegalStateException("토스 환불 실패"));
     CircuitBreaker cb = breaker();
     cb.transitionToOpenState();
     ResilientTossPaymentClient client =
-        new ResilientTossPaymentClient(delegate, cb, permissiveLimiter());
+        new ResilientTossPaymentClient(delegate, cb, permissiveLimiter(), retry());
 
     TossRefundResult result = client.refundPayment("pk", 1_000L, "idem");
 
@@ -127,7 +190,7 @@ class ResilientTossPaymentClientTest {
     CircuitBreaker cb = breaker();
     cb.transitionToOpenState(); // 서킷이 open이어도 조회는 데코레이션 없이 위임되어야 함.
     ResilientTossPaymentClient client =
-        new ResilientTossPaymentClient(delegate, cb, singlePermitLimiter());
+        new ResilientTossPaymentClient(delegate, cb, singlePermitLimiter(), retry());
 
     assertThatThrownBy(() -> client.queryPaymentStatus("pk"))
         .isInstanceOf(IllegalStateException.class);
@@ -139,7 +202,7 @@ class ResilientTossPaymentClientTest {
     TossQueryResult expected = TossQueryResult.of(TossQueryResult.Status.APPROVED, "tx-1");
     when(delegate.queryPaymentStatus("pk")).thenReturn(expected);
     ResilientTossPaymentClient client =
-        new ResilientTossPaymentClient(delegate, breaker(), permissiveLimiter());
+        new ResilientTossPaymentClient(delegate, breaker(), permissiveLimiter(), retry());
 
     assertThat(client.queryPaymentStatus("pk")).isEqualTo(expected);
   }

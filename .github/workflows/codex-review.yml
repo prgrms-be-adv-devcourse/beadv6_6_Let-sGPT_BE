@@ -1,0 +1,104 @@
+name: Codex PR Review
+
+# AI PR 리뷰(에이전틱). 러너에 레포를 체크아웃하고 Codex CLI(read-only 샌드박스)가
+# 디프 + 필요 시 주변 코드를 직접 탐색하며 리뷰한다. 결과는 PR에 통짜 코멘트 1개.
+# 실행 조건: 리포 변수 vars.CODEX_REVIEW_ENABLED == 'true' + 시크릿 OPENAI_API_KEY 등록.
+# 모델 id는 리포 변수 vars.CODEX_MODEL 로 외부화(사용자가 gpt-5.6-sol 로 등록 예정).
+# synchronize 트리거 없음 — push마다 재리뷰는 비용 낭비. 재리뷰가 필요하면 PR을
+# ready_for_review 토글하거나 reopen.
+on:
+  pull_request:
+    branches: [main, dev]
+    types: [opened, reopened, ready_for_review]
+
+concurrency:
+  group: codex-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      ${{ vars.CODEX_REVIEW_ENABLED == 'true'
+          && github.event.pull_request.draft == false
+          && github.event.sender.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1        # 디프는 gh pr diff로 받고 에이전트는 워킹트리만 탐색 — 전체 이력 불요
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Codex CLI 설치
+        run: npm install -g @openai/codex
+
+      - name: 에이전틱 리뷰 실행
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # gh pr diff 인증용
+          CODEX_MODEL: ${{ vars.CODEX_MODEL }}   # 모델 id는 리포 변수로 외부화 — 교체 시 워크플로 수정 불요
+          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # 인증: codex 0.145는 env OPENAI_API_KEY만으로는 요청에 인증 헤더를 싣지 않는다
+          # ("Missing bearer" 401). --with-api-key 로 stdin에서 키를 읽어 로그인해야 한다
+          # (키가 argv·로그에 노출되지 않는 경로).
+          echo "$OPENAI_API_KEY" | codex login --with-api-key
+          # 디프는 GitHub 기준과 정확히 일치하도록 gh pr diff로 받는다. git diff의 3-dot은
+          # base 브랜치에 merge base가 여러 개면("multiple merge bases") 빈 디프를 낸다.
+          gh pr diff "$PR_NUMBER" > /tmp/pr.diff
+          DIFF_BYTES=$(wc -c < /tmp/pr.diff)
+          # 0바이트 가드: PR에는 변경 파일이 반드시 존재하므로 빈 디프는 정상 상태가
+          # 아니라 디프 취득 실패(인증/API 이상) 신호다. 여기서 멈추지 않으면 빈 디프를
+          # 그대로 리뷰에 넘겨 "성공한 빈 리뷰"로 실패를 위장하게 된다.
+          if [ "$DIFF_BYTES" -eq 0 ]; then
+            echo "::error::gh pr diff 결과가 0바이트 — PR에는 변경 파일이 존재해야 하므로 디프 취득 실패(인증/API 이상)로 간주" >&2
+            exit 1
+          fi
+          # 디프가 크면 상한으로 폭주 방지
+          if [ "$DIFF_BYTES" -gt 400000 ]; then
+            head -c 400000 /tmp/pr.diff > /tmp/pr.diff.clip
+            mv /tmp/pr.diff.clip /tmp/pr.diff
+            echo "(디프 400KB 초과 — 앞부분만 전달, 에이전트가 나머지는 직접 탐색)" >> /tmp/pr.diff
+          fi
+          {
+            cat .github/codex-review-prompt.md
+            echo
+            echo "## PR 제목"
+            echo "$PR_TITLE"
+            echo
+            echo "## 이 PR의 디프 (base: $BASE_REF)"
+            echo '```diff'
+            cat /tmp/pr.diff
+            echo '```'
+          } > /tmp/review-input.md
+          # 프롬프트는 stdin으로 전달('-'). 인자로 넘기면 대용량 디프가 단일 argv
+          # 상한(MAX_ARG_STRLEN 128KB)을 넘겨 "Argument list too long"으로 실패한다.
+          codex exec \
+            --sandbox read-only \
+            --model "$CODEX_MODEL" \
+            --output-last-message /tmp/review-output.md \
+            - < /tmp/review-input.md
+
+      - name: PR 코멘트 게시 (sticky — 재실행 시 갱신)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          MARKER='<!-- codex-review -->'
+          printf '%s\n\n%s\n' "$MARKER" "$(cat /tmp/review-output.md)" > /tmp/comment.md
+          EXISTING=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -1)
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${EXISTING}" \
+              -F body=@/tmp/comment.md
+          else
+            gh pr comment "$PR_NUMBER" --body-file /tmp/comment.md
+          fi

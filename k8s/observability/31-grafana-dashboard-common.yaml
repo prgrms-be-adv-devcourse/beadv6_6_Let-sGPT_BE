@@ -669,7 +669,7 @@ data:
               "steppedLine": false,
               "targets": [
                 {
-                  "expr": "tomcat_threads_busy{application=\"$application\", instance=\"$instance\"}",
+                  "expr": "tomcat_threads_busy_threads{application=\"$application\", instance=\"$instance\"}",
                   "format": "time_series",
                   "hide": false,
                   "intervalFactor": 2,
@@ -677,40 +677,18 @@ data:
                   "refId": "A"
                 },
                 {
-                  "expr": "tomcat_threads_current{application=\"$application\", instance=\"$instance\"}",
+                  "expr": "tomcat_threads_current_threads{application=\"$application\", instance=\"$instance\"}",
                   "format": "time_series",
                   "intervalFactor": 2,
                   "legendFormat": "TOMCAT - CURRENT",
                   "refId": "B"
                 },
                 {
-                  "expr": "tomcat_threads_config_max{application=\"$application\", instance=\"$instance\"}",
+                  "expr": "tomcat_threads_config_max_threads{application=\"$application\", instance=\"$instance\"}",
                   "format": "time_series",
                   "intervalFactor": 2,
                   "legendFormat": "TOMCAT - MAX",
                   "refId": "C"
-                },
-                {
-                  "expr": "jetty_threads_busy{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "hide": false,
-                  "intervalFactor": 2,
-                  "legendFormat": "JETTY - BUSY",
-                  "refId": "D"
-                },
-                {
-                  "expr": "jetty_threads_current{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "intervalFactor": 2,
-                  "legendFormat": "JETTY - CURRENT",
-                  "refId": "E"
-                },
-                {
-                  "expr": "jetty_threads_config_max{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "intervalFactor": 2,
-                  "legendFormat": "JETTY - MAX",
-                  "refId": "F"
                 }
               ],
               "thresholds": [],
@@ -1048,56 +1026,6 @@ data:
                   "legendFormat": "max",
                   "refId": "C",
                   "step": 2400
-                },
-                {
-                  "expr": "process_memory_vss_bytes{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "hide": true,
-                  "intervalFactor": 2,
-                  "legendFormat": "vss",
-                  "metric": "",
-                  "refId": "D",
-                  "step": 2400
-                },
-                {
-                  "expr": "process_memory_rss_bytes{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "intervalFactor": 2,
-                  "legendFormat": "rss",
-                  "refId": "E",
-                  "step": 2400
-                },
-                {
-                  "expr": "process_memory_pss_bytes{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "intervalFactor": 2,
-                  "legendFormat": "pss",
-                  "refId": "F",
-                  "step": 2400
-                },
-                {
-                  "expr": "process_memory_swap_bytes{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "intervalFactor": 2,
-                  "legendFormat": "swap",
-                  "refId": "G",
-                  "step": 2400
-                },
-                {
-                  "expr": "process_memory_swappss_bytes{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "intervalFactor": 2,
-                  "legendFormat": "swappss",
-                  "refId": "H",
-                  "step": 2400
-                },
-                {
-                  "expr": "process_memory_pss_bytes{application=\"$application\", instance=\"$instance\"} + process_memory_swap_bytes{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "intervalFactor": 2,
-                  "legendFormat": "phys (pss+swap)",
-                  "refId": "I",
-                  "step": 2400
                 }
               ],
               "thresholds": [],
@@ -1185,11 +1113,11 @@ data:
               "steppedLine": false,
               "targets": [
                 {
-                  "expr": "(process_memory_pss_bytes{application=\"$application\", instance=\"$instance\"} + process_memory_swap_bytes{application=\"$application\", instance=\"$instance\"}  - on(application,instance) sum(jvm_memory_committed_bytes{application=\"$application\", instance=\"$instance\"})  by(application,instance)) >= 0",
+                  "expr": "container_memory_working_set_bytes{namespace=\"openat\", container=\"$application\"}",
                   "format": "time_series",
                   "hide": false,
                   "intervalFactor": 2,
-                  "legendFormat": "native",
+                  "legendFormat": "working set",
                   "metric": "",
                   "refId": "A",
                   "step": 2400
@@ -1198,7 +1126,7 @@ data:
               "thresholds": [],
               "timeFrom": null,
               "timeShift": null,
-              "title": "JVM Native Memory",
+              "title": "Container Memory (working set)",
               "tooltip": {
                 "msResolution": false,
                 "shared": true,
@@ -1512,7 +1440,7 @@ data:
               "steppedLine": false,
               "targets": [
                 {
-                  "expr": "jvm_threads_live{application=\"$application\", instance=\"$instance\"}",
+                  "expr": "jvm_threads_live_threads{application=\"$application\", instance=\"$instance\"}",
                   "format": "time_series",
                   "intervalFactor": 2,
                   "legendFormat": "live",
@@ -1521,7 +1449,7 @@ data:
                   "step": 2400
                 },
                 {
-                  "expr": "jvm_threads_daemon{application=\"$application\", instance=\"$instance\"}",
+                  "expr": "jvm_threads_daemon_threads{application=\"$application\", instance=\"$instance\"}",
                   "format": "time_series",
                   "intervalFactor": 2,
                   "legendFormat": "daemon",
@@ -1530,20 +1458,11 @@ data:
                   "step": 2400
                 },
                 {
-                  "expr": "jvm_threads_peak{application=\"$application\", instance=\"$instance\"}",
+                  "expr": "jvm_threads_peak_threads{application=\"$application\", instance=\"$instance\"}",
                   "format": "time_series",
                   "intervalFactor": 2,
                   "legendFormat": "peak",
                   "refId": "C",
-                  "step": 2400
-                },
-                {
-                  "expr": "process_threads{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "interval": "",
-                  "intervalFactor": 2,
-                  "legendFormat": "process",
-                  "refId": "D",
                   "step": 2400
                 }
               ],
@@ -1633,32 +1552,14 @@ data:
               "steppedLine": false,
               "targets": [
                 {
-                  "expr": "process_open_fds{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "intervalFactor": 2,
-                  "legendFormat": "open",
-                  "metric": "",
-                  "refId": "A",
-                  "step": 2400
-                },
-                {
-                  "expr": "process_max_fds{application=\"$application\", instance=\"$instance\"}",
-                  "format": "time_series",
-                  "intervalFactor": 2,
-                  "legendFormat": "max",
-                  "metric": "",
-                  "refId": "B",
-                  "step": 2400
-                },
-                {
-                  "expr": "process_files_open{application=\"$application\", instance=\"$instance\"}",
+                  "expr": "process_files_open_files{application=\"$application\", instance=\"$instance\"}",
                   "format": "time_series",
                   "intervalFactor": 2,
                   "legendFormat": "open",
                   "refId": "C"
                 },
                 {
-                  "expr": "process_files_max{application=\"$application\", instance=\"$instance\"}",
+                  "expr": "process_files_max_files{application=\"$application\", instance=\"$instance\"}",
                   "format": "time_series",
                   "intervalFactor": 2,
                   "legendFormat": "max",
@@ -2406,7 +2307,7 @@ data:
               "steppedLine": false,
               "targets": [
                 {
-                  "expr": "jvm_classes_loaded{application=\"$application\", instance=\"$instance\"}",
+                  "expr": "jvm_classes_loaded_classes{application=\"$application\", instance=\"$instance\"}",
                   "format": "time_series",
                   "intervalFactor": 2,
                   "legendFormat": "loaded",
@@ -2500,7 +2401,7 @@ data:
               "steppedLine": false,
               "targets": [
                 {
-                  "expr": "delta(jvm_classes_loaded{application=\"$application\",instance=\"$instance\"}[5m])",
+                  "expr": "delta(jvm_classes_loaded_classes{application=\"$application\",instance=\"$instance\"}[5m])",
                   "format": "time_series",
                   "hide": false,
                   "intervalFactor": 2,
@@ -2510,7 +2411,7 @@ data:
                   "step": 1200
                 },
                 {
-                  "expr": "jvm_classes_unloaded_total{application=\"$application\",instance=\"$instance\"}",
+                  "expr": "jvm_classes_unloaded_classes_total{application=\"$application\",instance=\"$instance\"}",
                   "format": "time_series",
                   "hide": true,
                   "intervalFactor": 2,
@@ -2519,7 +2420,7 @@ data:
                   "step": 1800
                 },
                 {
-                  "expr": "jvm_classes_loaded{application=\"$application\",instance=\"$instance\"}-jvm_classes_unloaded_total{application=\"$application\",instance=\"$instance\"}",
+                  "expr": "jvm_classes_loaded_classes{application=\"$application\",instance=\"$instance\"}-jvm_classes_unloaded_classes_total{application=\"$application\",instance=\"$instance\"}",
                   "format": "time_series",
                   "hide": true,
                   "intervalFactor": 2,
@@ -2728,7 +2629,7 @@ data:
               "steppedLine": false,
               "targets": [
                 {
-                  "expr": "jvm_buffer_count{application=\"$application\", instance=\"$instance\", id=\"direct\"}",
+                  "expr": "jvm_buffer_count_buffers{application=\"$application\", instance=\"$instance\", id=\"direct\"}",
                   "format": "time_series",
                   "intervalFactor": 2,
                   "legendFormat": "count",
@@ -2926,7 +2827,7 @@ data:
               "steppedLine": false,
               "targets": [
                 {
-                  "expr": "jvm_buffer_count{application=\"$application\", instance=\"$instance\", id=\"mapped\"}",
+                  "expr": "jvm_buffer_count_buffers{application=\"$application\", instance=\"$instance\", id=\"mapped\"}",
                   "format": "time_series",
                   "intervalFactor": 2,
                   "legendFormat": "count",

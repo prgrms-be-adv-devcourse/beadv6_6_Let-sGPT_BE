@@ -1,0 +1,24 @@
+# 토스페이먼츠 웹훅 전용 소스 IP 화이트리스트 미들웨어.
+# 근거: personal_workplan/guide_docs/project_guide/payment_guide/pgsecurity.md 인바운드 IP 10개.
+# CRD 그룹은 traefik.io/v1alpha1(k3s 번들 Traefik — 32/33 미들웨어 실사 확인).
+# 네임스페이스 교차 참조 불가라 openat ns에 생성(웹훅 Ingress도 openat ns).
+# ipStrategy 미지정 = 기본 RemoteAddr. Traefik이 인터넷과 맞닿은 엣지라 XFF 신뢰 불요
+# (XFF를 신뢰하면 클라이언트가 헤더 위조로 우회 가능). 단 klipper-lb 소스 IP 보존이 전제 — 소스 IP 보존 검증 선행 필수.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: webhook-ipallowlist
+  namespace: openat
+spec:
+  ipAllowList:
+    sourceRange:
+      - 13.124.18.147/32
+      - 13.124.108.35/32
+      - 3.36.173.151/32
+      - 3.38.81.32/32
+      - 115.92.221.121/32
+      - 115.92.221.122/32
+      - 115.92.221.123/32
+      - 115.92.221.125/32
+      - 115.92.221.126/32
+      - 115.92.221.127/32

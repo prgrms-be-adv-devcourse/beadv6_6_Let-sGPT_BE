@@ -5,9 +5,6 @@ kind: Deployment
 metadata:
   name: order
   namespace: openat
-  annotations:
-    # k3s_node_coldboot_contention_plan §2-C — 순차 롤아웃(wave 낮은 순)
-    argocd.argoproj.io/sync-wave: "4"
 spec:
   replicas: 1
   # 단일 워커 노드: 롤링 시 옛+새 파드 2배 메모리로 Insufficient memory Pending(Q80 #7) 방지.

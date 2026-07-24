@@ -301,7 +301,7 @@ data:
         {
           "id": 6,
           "type": "timeseries",
-          "title": "Commits / Rollbacks (1m rate)",
+          "title": "Commits / Rollbacks (5m rate)",
           "description": "",
           "datasource": {
             "type": "prometheus",
@@ -347,7 +347,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(pg_stat_database_xact_commit[1m]))",
+              "expr": "sum(rate(pg_stat_database_xact_commit[5m]))",
               "legendFormat": "commit",
               "refId": "A"
             },
@@ -356,7 +356,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(pg_stat_database_xact_rollback[1m]))",
+              "expr": "sum(rate(pg_stat_database_xact_rollback[5m]))",
               "legendFormat": "rollback",
               "refId": "B"
             }
@@ -365,7 +365,7 @@ data:
         {
           "id": 7,
           "type": "timeseries",
-          "title": "Tuples fetched / returned (1m rate)",
+          "title": "Tuples fetched / returned (5m rate)",
           "description": "",
           "datasource": {
             "type": "prometheus",
@@ -411,7 +411,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(pg_stat_database_tup_fetched[1m]))",
+              "expr": "sum(rate(pg_stat_database_tup_fetched[5m]))",
               "legendFormat": "fetched",
               "refId": "A"
             },
@@ -420,7 +420,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(pg_stat_database_tup_returned[1m]))",
+              "expr": "sum(rate(pg_stat_database_tup_returned[5m]))",
               "legendFormat": "returned",
               "refId": "B"
             }
@@ -552,8 +552,8 @@ data:
         {
           "id": 11,
           "type": "timeseries",
-          "title": "Process RSS by service (bytes)",
-          "description": "",
+          "title": "Container memory (working set) by service (bytes)",
+          "description": "Micrometer는 프로세스 RSS를 노출하지 않아 cAdvisor container_memory_working_set_bytes로 대체(namespace=openat의 앱 컨테이너 기준).",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -598,8 +598,8 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(process_memory_rss_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
-              "legendFormat": "{{app}}",
+              "expr": "sum by (container)(container_memory_working_set_bytes{namespace=\"openat\",container=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
+              "legendFormat": "{{container}}",
               "refId": "A"
             }
           ]
@@ -653,7 +653,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(process_open_fds{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
+              "expr": "sum by (app)(process_files_open_files{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
               "legendFormat": "{{app}}",
               "refId": "A"
             }
@@ -908,7 +908,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(jvm_memory_used_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\",id=\"Metaspace\"})",
+              "expr": "sum by (app)(jvm_memory_used_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\",id=\"Metaspace\"})",
               "legendFormat": "{{app}} used",
               "refId": "A"
             },
@@ -917,7 +917,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(jvm_memory_committed_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\",id=\"Metaspace\"})",
+              "expr": "sum by (app)(jvm_memory_committed_bytes{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\",id=\"Metaspace\"})",
               "legendFormat": "{{app}} committed",
               "refId": "B"
             }
@@ -972,7 +972,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(rate(jvm_gc_pause_seconds_sum{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"}[5m]))",
+              "expr": "sum by (app)(rate(jvm_gc_pause_seconds_sum{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"}[5m]))",
               "legendFormat": "{{app}}",
               "refId": "A"
             }
@@ -982,7 +982,7 @@ data:
           "id": 21,
           "type": "timeseries",
           "title": "톰캣 busy 스레드",
-          "description": "tomcat_threads_busy_threads — 수집 여부 불확실. 시리즈가 없으면 톰캣 메트릭 미노출(Explore로 확정 필요), 앞단 스레드 포화 감시용.",
+          "description": "tomcat_threads_busy_threads — server.tomcat.mbeanregistry.enabled=true로 노출. 앞단 스레드 포화 감시용.",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -1027,7 +1027,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(tomcat_threads_busy_threads{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "expr": "sum by (app)(tomcat_threads_busy_threads{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
               "legendFormat": "{{app}} busy",
               "refId": "A"
             },
@@ -1036,7 +1036,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (app)(tomcat_threads_config_max_threads{app=~\"apigateway|member|product|order|payment|settlement|search|queue|recommendation\"})",
+              "expr": "sum by (app)(tomcat_threads_config_max_threads{app=~\"apigateway|member|product|order|payment|settlement|search|queue|ai\"})",
               "legendFormat": "{{app}} max",
               "refId": "B"
             }

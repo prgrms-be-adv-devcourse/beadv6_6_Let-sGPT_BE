@@ -28,6 +28,8 @@ resources:
   - 31-ingress.yaml
   - 32-https-redirect-middleware.yaml
   - 33-oidc-discovery.yaml
+  - 34-webhook-ipallowlist-middleware.yaml
+  - 35-webhook-ingress.yaml
   - 50-networkpolicy.yaml
   - 60-warmup.yaml
   # warmup.sh를 ConfigMap(warmup-script)으로 생성하는 서브 kustomization. load restrictor
