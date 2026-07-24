@@ -103,10 +103,11 @@ jobs:
         if: steps.argofilter.outputs.argocd == 'true'
         run: kustomize build k8s/argocd/ > /dev/null
 
-  # 관측 스택(k8s/observability)은 대시보드 JSON 을 configMapGenerator 로 묶어 해시가
-  # 붙은 ConfigMap 이름이 grafana 볼륨 참조로 자동 전파된다. 이 전파는 kustomize 렌더
-  # 불변식이라 렌더가 깨지지 않으면 참조 정합이 보장된다. 따라서 별도 전용 테스트 없이
-  # (1) kustomize 렌더가 성공하는지, (2) 대시보드 JSON/uid/4중 정합이 맞는지만 검증한다.
+  # 관측 스택(k8s/observability)은 설정 CM(tempo/prometheus/otel-collector/grafana
+  # datasources·providers)을 configMapGenerator 로 묶어, 내용 해시가 붙은 ConfigMap
+  # 이름이 각 파드 볼륨 참조로 자동 전파된다(대시보드 JSON CM 은 라이브 리로드 위해 제외).
+  # 이 전파는 kustomize 렌더 불변식이라 렌더가 깨지지 않으면 참조 정합이 보장된다. 따라서
+  # 별도 전용 테스트 없이 (1) kustomize 렌더 성공, (2) 대시보드 JSON/uid/4중 정합만 검증한다.
   validate-observability:
     runs-on: ubuntu-latest
     steps:
