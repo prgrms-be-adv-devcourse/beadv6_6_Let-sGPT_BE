@@ -7,10 +7,6 @@ kind: Kustomization
 resources:
   - ../base
 
-patches:
-  - path: ai-query-secret-revision.yaml
-  - path: ai-read-model-deployment-identity.yaml
-
 images:
   - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
     newTag: latest

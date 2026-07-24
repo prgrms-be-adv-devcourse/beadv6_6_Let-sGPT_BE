@@ -59,4 +59,5 @@ public class SeedScorer {
   public double purchaseScore(long orderCount) {
     return Math.min(purchaseBaseScore + (orderCount - 1) * purchaseIncrement, purchaseMaxScore);
   }
+
 }

@@ -28,21 +28,20 @@ public class WishlistSignalRestClient implements WishlistSignalClient {
 
   @Override
   public List<UUID> getWishlistProductIds(UUID memberId) {
-    PageResponse<WishlistItemResponse> response =
-        requireBody(
-            restClient
-                .get()
-                .uri(
-                    uriBuilder ->
-                        uriBuilder
-                            .path("/api/v1/wishlist")
-                            .queryParam("page", 0)
-                            .queryParam("size", wishlistLimit)
-                            .build())
-                .header(UserHeaders.USER_ID, memberId.toString())
-                .retrieve()
-                .body(new ParameterizedTypeReference<>() {}),
-            "Member wishlist response body is empty");
+    PageResponse<WishlistItemResponse> response = requireBody(
+        restClient
+            .get()
+            .uri(
+                uriBuilder ->
+                    uriBuilder
+                        .path("/api/v1/wishlist")
+                        .queryParam("page", 0)
+                        .queryParam("size", wishlistLimit)
+                        .build())
+            .header(UserHeaders.USER_ID, memberId.toString())
+            .retrieve()
+            .body(new ParameterizedTypeReference<>() {}),
+        "Member wishlist response body is empty");
     return response.content().stream().map(WishlistItemResponse::productId).toList();
   }
 

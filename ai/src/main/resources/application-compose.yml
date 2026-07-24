@@ -3,11 +3,6 @@ spring:
     url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}
     username: ${DB_USER}
     password: ${DB_PASSWORD}
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          jwk-set-uri: ${MEMBER_JWKS_URI:http://member:9100/auth/jwks}
   kafka:
     bootstrap-servers: ${KAFKA_BROKER}
   data:
