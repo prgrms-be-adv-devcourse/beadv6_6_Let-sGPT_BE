@@ -214,11 +214,10 @@ else
   echo "SKIP: WARMUP_EMAIL/WARMUP_PASSWORD 미지정 — 웜업 인증 대상은 스킵됨"
 fi
 
-# WS-C(7/10 observability plan) — postgres_exporter용 Secret. openat의 app-secrets는
-# cross-namespace 참조가 안 되므로 observability 네임스페이스에 동일 값으로 복제.
-# DB_USER/DB_PASSWORD를 URI에 그대로 넣으면 '%' 등 특수문자가 있을 때 postgres_exporter의
-# DSN 파서가 잘못된 percent-encoding으로 오인해 파싱 실패(2026-07-12 실측 발견) — 반드시
-# URL 인코딩 후 삽입.
+# postgres-exporter용 Secret. exporter가 openat 네임스페이스에 있으므로 같은 네임스페이스에
+# 생성한다(cross-namespace 참조 불필요). DB_USER/DB_PASSWORD를 URI에 그대로 넣으면 '%' 등
+# 특수문자가 있을 때 postgres_exporter의 DSN 파서가 잘못된 percent-encoding으로 오인해 파싱
+# 실패(2026-07-12 실측 발견) — 반드시 URL 인코딩 후 삽입.
 DB_USER_ENC=$(printf '%s' "$DB_USER" \
   | python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.stdin.read(), safe=''), end='')")
 DB_PASSWORD_ENC=$(printf '%s' "$DB_PASSWORD" \
@@ -226,17 +225,19 @@ DB_PASSWORD_ENC=$(printf '%s' "$DB_PASSWORD" \
 export -n DB_USER_ENC DB_PASSWORD_ENC 2>/dev/null || true
 DATA_SOURCE_NAME="postgresql://${DB_USER_ENC}:${DB_PASSWORD_ENC}@postgres.openat.svc.cluster.local:5432/openat?sslmode=disable"
 export -n DATA_SOURCE_NAME 2>/dev/null || true
-"$KUBECTL" create namespace observability --dry-run=client -o yaml | "$KUBECTL" apply -f -
-render_secret_manifest pg-exporter-secret observability Opaque DATA_SOURCE_NAME \
+render_secret_manifest pg-exporter-secret "$NS" Opaque DATA_SOURCE_NAME \
   | "$KUBECTL" apply -f -
 unset DATA_SOURCE_NAME DB_USER_ENC DB_PASSWORD_ENC
-echo "OK: pg-exporter-secret 적용 완료 (namespace=observability)"
+echo "OK: pg-exporter-secret 적용 완료 (namespace=$NS)"
 
 # WS-D — Grafana admin 자격증명. 미지정 시 랜덤 생성(하드코딩 금지 — 실패는 시끄럽게).
 # 멱등 처리 근거: 과거엔 미지정 시 매 실행마다 openssl rand로 새 비밀번호를 생성해 Secret을
 # 덮어썼는데, CD가 돌 때마다 Secret이 회전되어 이미 기동된 grafana 파드의 env(기동 시점 주입)와
 # 어긋나 admin 로그인이 계속 깨졌다(2026-07-20 실측: Secret 해시와 파드 env 해시 불일치).
 # 따라서 명시 지정이 없고 Secret이 이미 있으면 회전하지 않고 그대로 둔다.
+# grafana-admin은 observability 네임스페이스에 있어야 하므로 여기서 네임스페이스를 보장한다
+# (postgres-exporter가 openat으로 옮겨간 뒤에도 grafana 등 관측 스택은 observability에 남는다).
+"$KUBECTL" create namespace observability --dry-run=client -o yaml | "$KUBECTL" apply -f -
 if [ -n "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
   # 명시 지정 — 의도적 회전 허용(현행대로 apply).
   GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER:-admin}"
