@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="380" viewBox="0 0 1500 380" role="img" aria-labelledby="title desc">
+  <title id="title">관리자 챗봇의 다단계 응답 구조</title>
+  <desc id="desc">첫 요청에서 질문을 분해하고 두 번째 요청에서 가벼운 결과를 먼저 답한 뒤 내부 조회 결과를 최종 자연어 답변으로 종합하는 흐름</desc>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L9 4.5 L0 9 Z" fill="#555555"/>
+    </marker>
+    <style>
+      .text {
+        font-family: Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Segoe UI", sans-serif;
+        font-size: 22px;
+        font-weight: 400;
+        fill: #222222;
+        text-anchor: middle;
+      }
+      .stage {
+        font-size: 19px;
+        font-weight: 500;
+      }
+      .main { font-weight: 500; }
+      .note {
+        font-size: 18px;
+        fill: #6A6A6A;
+      }
+      .line {
+        fill: none;
+        stroke: #777777;
+        stroke-width: 2;
+        marker-end: url(#arrow);
+      }
+      .summary {
+        fill: none;
+        stroke: #444444;
+        stroke-width: 2;
+      }
+    </style>
+  </defs>
+
+  <rect width="1500" height="380" fill="#FFFFFF"/>
+
+  <path class="line" d="M385 130 H560"/>
+  <path class="line" d="M940 130 H1115"/>
+
+  <text class="text stage" x="235" y="66">1차</text>
+  <text class="text stage" x="750" y="66">2차</text>
+  <text class="text stage" x="1265" y="66">3차</text>
+
+  <text class="text main" x="235" y="126">질문 분해</text>
+  <text class="text note" x="235" y="172">가벼운 도구 + 무거운 영역</text>
+
+  <text class="text main" x="750" y="126">가벼운 결과 먼저 답변</text>
+  <text class="text note" x="750" y="172">선택한 상세 구조 채우기</text>
+
+  <text class="text main" x="1265" y="126">내부 조회 결과 종합</text>
+  <text class="text note" x="1265" y="172">최종 자연어 답변</text>
+
+  <line class="summary" x1="235" y1="248" x2="1265" y2="248"/>
+  <text class="text note" x="750" y="302">완료된 결과는 기다리지 않고 먼저 보여준다</text>
+</svg>
