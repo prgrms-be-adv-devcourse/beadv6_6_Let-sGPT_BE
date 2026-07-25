@@ -132,7 +132,8 @@ class RecommendationSeedServiceTest {
     UUID memberId = UUID.randomUUID();
     List<Seed> cached = List.of(new Seed(UUID.randomUUID(), 0.5, true));
     when(orderSignalClient.getPurchaseSignals(memberId)).thenThrow(new RuntimeException("order"));
-    when(wishlistSignalClient.getWishlistProductIds(memberId)).thenReturn(List.of(UUID.randomUUID()));
+    when(wishlistSignalClient.getWishlistProductIds(memberId))
+        .thenReturn(List.of(UUID.randomUUID()));
     when(seedWeightsCache.find(memberId)).thenReturn(Optional.of(cached));
 
     var result = service().refreshWeightsCache(memberId);
