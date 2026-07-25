@@ -82,8 +82,10 @@ class OpenDropCacheTest {
   @DisplayName("같은 상품의 드롭은 마감 시각이 더 이른 것을 유지한다")
   void refresh_whenProductIdsDuplicate_keepsSoonerClosingDrop() {
     UUID productId = UUID.randomUUID();
-    DropMeta later = drop(productId, UUID.randomUUID(), Instant.parse("2099-02-01T00:00:00Z"));
-    DropMeta sooner = drop(productId, UUID.randomUUID(), Instant.parse("2099-01-01T00:00:00Z"));
+    DropMeta later =
+        drop(productId, UUID.randomUUID(), Instant.parse("2099-02-01T00:00:00Z"));
+    DropMeta sooner =
+        drop(productId, UUID.randomUUID(), Instant.parse("2099-01-01T00:00:00Z"));
     when(openDropClient.getAllOpenDrops()).thenReturn(List.of(later, sooner));
 
     cache.refresh();
@@ -187,8 +189,10 @@ class OpenDropCacheTest {
   void findByCategory_sortsByCloseAtWithNullLast() {
     UUID categoryId = UUID.randomUUID();
     DropMeta noDeadline = drop(UUID.randomUUID(), categoryId, null);
-    DropMeta later = drop(UUID.randomUUID(), categoryId, Instant.parse("2099-02-01T00:00:00Z"));
-    DropMeta sooner = drop(UUID.randomUUID(), categoryId, Instant.parse("2099-01-01T00:00:00Z"));
+    DropMeta later =
+        drop(UUID.randomUUID(), categoryId, Instant.parse("2099-02-01T00:00:00Z"));
+    DropMeta sooner =
+        drop(UUID.randomUUID(), categoryId, Instant.parse("2099-01-01T00:00:00Z"));
     when(openDropClient.getAllOpenDrops()).thenReturn(List.of(noDeadline, later, sooner));
     cache.refresh();
 
@@ -212,7 +216,8 @@ class OpenDropCacheTest {
   @Test
   @DisplayName("일반 조회에서 이미 마감된 드롭을 제외한다")
   void findGeneral_excludesClosedDrops() {
-    DropMeta closed = drop(UUID.randomUUID(), UUID.randomUUID(), Instant.now().minusSeconds(1));
+    DropMeta closed =
+        drop(UUID.randomUUID(), UUID.randomUUID(), Instant.now().minusSeconds(1));
     DropMeta open = drop(UUID.randomUUID(), UUID.randomUUID(), Instant.now().plusSeconds(60));
     when(openDropClient.getAllOpenDrops()).thenReturn(List.of(closed, open));
     cache.refresh();
@@ -278,6 +283,13 @@ class OpenDropCacheTest {
   private DropMeta drop(
       UUID dropId, UUID productId, UUID categoryId, long dropPrice, Instant closeAt) {
     return new DropMeta(
-        dropId, productId, "상품", "판매자", dropPrice, "thumb.png", categoryId, closeAt);
+        dropId,
+        productId,
+        "상품",
+        "판매자",
+        dropPrice,
+        "thumb.png",
+        categoryId,
+        closeAt);
   }
 }

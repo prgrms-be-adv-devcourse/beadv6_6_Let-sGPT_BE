@@ -16,17 +16,8 @@ class RecommendationPromptBuilderTest {
   void build_forDetail_includesCurrentProductSection() {
     ProductDetailResponse current =
         new ProductDetailResponse(
-            UUID.randomUUID(),
-            null,
-            null,
-            "현재 상품",
-            "현재 설명",
-            null,
-            null,
-            1000L,
-            "thumb",
-            List.of(),
-            null);
+            UUID.randomUUID(), null, null, "현재 상품", "현재 설명", null, null, 1000L, "thumb",
+            List.of(), null);
     var candidate = new SimilarProductResponse(UUID.randomUUID(), "후보", "설명", "이미지 설명");
 
     String prompt = builder.build(current, List.of(candidate));

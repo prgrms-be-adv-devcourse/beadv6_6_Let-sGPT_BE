@@ -1,19 +1,12 @@
 dependencies {
     implementation(project(":common"))
     implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation(platform("org.springframework.ai:spring-ai-bom:2.0.0"))
-    implementation("org.springframework.ai:spring-ai-starter-model-openai")
     // k8s probe + Prometheus 메트릭
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-restclient")
-    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.springframework.kafka:spring-kafka")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     runtimeOnly("io.micrometer:micrometer-registry-prometheus")
-    testImplementation("org.springframework.boot:spring-boot-webmvc-test")
-    testImplementation("org.springframework.security:spring-security-test")
-    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
-    testImplementation("org.testcontainers:testcontainers-postgresql")
 }
 
 tasks.withType<Test> {

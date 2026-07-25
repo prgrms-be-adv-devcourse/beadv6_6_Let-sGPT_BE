@@ -24,9 +24,12 @@ public class OpenDropCache {
 
   private static final Logger log = LoggerFactory.getLogger(OpenDropCache.class);
   private static final Comparator<DropMeta> CLOSE_AT_ORDER =
-      Comparator.comparing(DropMeta::closeAt, Comparator.nullsLast(Comparator.naturalOrder()));
+      Comparator.comparing(
+          DropMeta::closeAt, Comparator.nullsLast(Comparator.naturalOrder()));
   private static final Comparator<DropMeta> REPRESENTATIVE_DROP_ORDER =
-      CLOSE_AT_ORDER.thenComparing(DropMeta::dropPrice).thenComparing(DropMeta::dropId);
+      CLOSE_AT_ORDER
+          .thenComparing(DropMeta::dropPrice)
+          .thenComparing(DropMeta::dropId);
 
   private final OpenDropClient openDropClient;
   private final AtomicReference<Map<UUID, DropMeta>> cache = new AtomicReference<>(Map.of());
