@@ -3645,10 +3645,10 @@ data:
         {
           "id": 108,
           "type": "timeseries",
-          "title": "쓰기 거부·실패·거절 (OOM 계열)",
-          "description": "이 시스템에서 가장 중요한 시계열. 하나라도 0을 벗어나면 재고 차감·대기열 쓰기가 실패하고 있다는 뜻이다. redis_error_replies_total(오류 응답), redis_commands_failed_calls_total(실패 호출), redis_commands_rejected_calls_total(거절 호출).",
+          "title": "오류 응답·실패·거절 커맨드 (전체)",
+          "description": "ERR·WRONGTYPE·ACL 등 모든 오류 유형을 포함하며 OOM 전용이 아님. OOM은 전용 패널 참조. 하나라도 0을 벗어나면 재고 차감·대기열 쓰기 등 일부 커맨드가 실패하고 있다는 뜻이다. redis_error_replies_total(오류 응답), redis_commands_failed_calls_total(실패 호출), redis_commands_rejected_calls_total(거절 호출).",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "gridPos": { "h": 7, "w": 24, "x": 0, "y": 9 },
+          "gridPos": { "h": 7, "w": 18, "x": 0, "y": 9 },
           "fieldConfig": {
             "defaults": {
               "unit": "ops",
@@ -3678,6 +3678,43 @@ data:
               "datasource": { "type": "prometheus", "uid": "prometheus" },
               "expr": "sum(rate(redis_commands_rejected_calls_total[5m]))",
               "legendFormat": "rejected calls"
+            }
+          ]
+        },
+        {
+          "id": 109,
+          "type": "stat",
+          "title": "OOM 쓰기 실패 (전용)",
+          "description": "noeviction에서 메모리 포화 시 쓰기가 OOM 에러로 실패. errorstats는 발생한 에러만 노출하므로 평시 0. 값 상승 = 대기열·재고 쓰기 유실 임박, 데이터유실 직전 신호.",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 7, "w": 6, "x": 18, "y": 9 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 0.001 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+            "colorMode": "background",
+            "graphMode": "area",
+            "textMode": "value",
+            "orientation": "horizontal"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum(rate(redis_errors_total{err=\"OOM\"}[5m])) or on() vector(0)",
+              "legendFormat": "OOM write failures"
             }
           ]
         },
