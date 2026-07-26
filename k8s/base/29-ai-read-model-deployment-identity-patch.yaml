@@ -5,22 +5,22 @@ metadata:
   annotations:
     # 아래 값들은 seed고, CD가 deploy/state에서 최종 Git revision 직전의 workload revision으로 갱신한다.
     # 최종 Git revision은 자기 자신을 manifest에 넣을 수 없으므로 Argo operation에서 별도 검증한다.
-    openat.io/target-workload-revision: "bootstrap"
-    openat.io/deployment-run-id: "bootstrap"
+    openat.io/target-workload-revision: "b31692dc7c3c2166a28aa6ae0d412dd0ccf4b309"
+    openat.io/deployment-run-id: "30204738474-1"
     # reconciler가 쓰는 exact 3-key latch와 구분한다. exact latch는 final Git revision이
     # 정해진 뒤 Job UID/생성 시각을 검증하고 runtime에 결합한다.
     openat.io/rotation-identity: "steady"
-    openat.io/target-active-resource-version-identity: "bootstrap"
-    openat.io/read-model-identity: "bootstrap"
+    openat.io/target-active-resource-version-identity: "794502"
+    openat.io/read-model-identity: "e3f3891277169e92a85e"
 spec:
   template:
     metadata:
       labels:
         # Job pod를 과거 실행과 구분할 수 있는 label-safe identity다.
-        openat.io/deployment-run-id: "bootstrap"
+        openat.io/deployment-run-id: "30204738474-1"
         openat.io/rotation-identity: "steady"
-        openat.io/target-active-rv-hash: "bootstrap"
+        openat.io/target-active-rv-hash: "76f1d9204b0dbb6d94eedb3abf275669b3fc399adac3737a4687c6cf0149462"
       annotations:
-        openat.io/target-workload-revision: "bootstrap"
-        openat.io/target-active-resource-version-identity: "bootstrap"
-        openat.io/read-model-identity: "bootstrap"
+        openat.io/target-workload-revision: "b31692dc7c3c2166a28aa6ae0d412dd0ccf4b309"
+        openat.io/target-active-resource-version-identity: "794502"
+        openat.io/read-model-identity: "e3f3891277169e92a85e"
