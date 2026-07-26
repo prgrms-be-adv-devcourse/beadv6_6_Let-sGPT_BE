@@ -4,3 +4,5 @@ k6/target.json
 loadtest-summary.json
 # pg-mock-on.sh가 저장하는 ArgoCD syncPolicy 원본값 — 런타임 상태, 소스 아님
 .pg-mock-state.json
+# metrics-snapshot.sh가 라운드마다 쌓는 지표 CSV/요약 — 측정 산출물, 소스 아님
+results/

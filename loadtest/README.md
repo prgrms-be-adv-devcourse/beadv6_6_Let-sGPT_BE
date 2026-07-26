@@ -316,6 +316,57 @@ curl -s "localhost:8089/__admin/requests?limit=1" | grep -o '"total" : [0-9]*'
 
 ## 5. ramp — 무릎 찾기
 
+### 5-0. 라운드 시작 **전에** 지표 스냅샷 수집기를 띄운다
+
+이 셋업에는 알람이 없다. Grafana는 사람이 보고 있는 순간만 보여주므로, 측정 창에서
+뭐가 먼저 포화됐는지를 사후에 따지려면 시계열을 파일로 받아 둬야 한다.
+그 역할이 `loadtest/scripts/metrics-snapshot.sh` 다.
+
+**순서는 항상 「수집기 먼저, 부하 나중, 부하 끝난 뒤 수집기 종료」다.** rate 윈도가 2분이라
+부하 시작 직전 몇 분의 기저선(baseline)이 같은 파일에 들어 있어야 상승분을 읽을 수 있다.
+
+```bash
+# semi 노드(SSM 셸, sudo su - ubuntu). 부하 시작 2~3분 전에 띄운다.
+cd ~/loadtest-repo
+# 기간을 지정하면 자동으로 끝난다 — ramp(10분) + 앞뒤 여유 = 900s
+nohup ./loadtest/scripts/metrics-snapshot.sh ramp 15 900 > /tmp/msnap-ramp.log 2>&1 &
+
+# 첫 폴링이 값을 받았는지 바로 확인한다 (여기서 비어 있으면 라운드를 시작하지 말 것)
+sleep 20 && tail -20 /tmp/msnap-ramp.log
+wc -l loadtest/results/ramp/metrics.csv
+```
+
+기간을 안 주면 Ctrl+C(또는 `kill %1`)까지 무한히 돈다. **부하가 완전히 끝난 뒤**에 끊는다 —
+종료 시점에 `loadtest/results/ramp/summary.txt` (지표별 최대·마지막·구간 델타)가 떨어진다.
+
+```bash
+# 무한 모드로 띄웠을 때 — 부하 종료 후
+kill -INT %1        # 요약을 쓰고 정상 종료한다. kill -9 는 요약을 못 남긴다
+cat loadtest/results/ramp/summary.txt
+```
+
+산출물은 `loadtest/results/<round-name>/` 에 append된다(같은 이름으로 다시 돌리면 이어 쌓인다):
+
+| 파일 | 내용 |
+|---|---|
+| `metrics.csv` | `ts,metric,labels,value` — Hikari, 톰캣 스레드, HTTP p95/p99, PG 호출 지연, 5xx, 힙, Redis, postgres, 큐/재고 |
+| `node-<hostname>.csv` | 같은 주기의 `free -m` / `/proc/loadavg` / `/proc/pressure/*` (node-exporter가 미배포라 직접 샘플링) |
+| `summary.txt` | 종료 시 지표별 최대·마지막·구간 델타 |
+
+알아 둘 것:
+
+- **`kubectl port-forward` 를 경유한다.** observability 네임스페이스에는 `observability-intra-only`
+  default-deny NetworkPolicy가 걸려 있어, WireMock ClusterIP와 달리 **노드 호스트에서
+  Prometheus ClusterIP로 직접 curl이 안 된다**(apiserver service proxy도 502). port-forward는
+  NetworkPolicy 적용 대상이 아니라서 뚫린다. 스크립트가 직결을 먼저 시도하고 실패하면
+  자동으로 port-forward로 넘어가며, 둘 다 실패하면 **수집을 시작하지 않고 즉시 죽는다.**
+- **부하 전에는 `empty-result` 경고가 정상이다.** 지연 백분위·5xx·큐 지표는 실트래픽이 있어야
+  시리즈가 생긴다. 대신 `hikari_*`, `tomcat_*`, `heap_*`, `redis_*`, `pg_*`, `cpu_usage_cores` 는
+  기동만으로도 값이 나와야 한다. **이쪽이 비어 있으면 수집 경로가 깨진 것이다.**
+- 조회만 한다. kubectl 변경 명령은 없다. `jq` 가 필요하다(semi 노드에는 있다).
+
+---
+
 ```bash
 # 시딩을 PROFILE=ramp 로 했다면 재고가 이미 맞춰져 있다
 k6 run -e PROFILE=ramp loadtest/k6/drop-flow.js
@@ -423,8 +474,16 @@ WM=$(kubectl -n openat get svc wiremock-toss -o jsonpath='{.spec.clusterIP}')
 N=$(curl -s "http://$WM:8080/__admin/requests?limit=1" | grep -o '"total" : [0-9]*' | grep -o '[0-9]\+')
 [ "${N:-0}" -gt 0 ] && echo "OK: $N건" || echo "중단: 0건 — 실 토스일 수 있다"
 
+# ============ semi 노드(SSM 셸): 지표 수집기 — ramp보다 먼저 띄운다 ============
+nohup ./loadtest/scripts/metrics-snapshot.sh ramp 15 900 > /tmp/msnap-ramp.log 2>&1 &
+sleep 20 && tail -20 /tmp/msnap-ramp.log     # 값이 들어오는지 확인 후 부하 시작
+
 # ============ 노트북: ramp ============
 k6 run -e PROFILE=ramp loadtest/k6/drop-flow.js
+
+# ============ semi 노드(SSM 셸): 수집기 종료(기간 지정했으면 자동) + 요약 확인 ============
+kill -INT %1 2>/dev/null || true             # kill -9 는 요약을 못 남긴다
+cat loadtest/results/ramp/summary.txt
 
 # ============ semi 노드(SSM 셸): 반드시 ============
 cd ~/loadtest-repo

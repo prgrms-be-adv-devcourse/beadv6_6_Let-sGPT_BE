@@ -139,6 +139,16 @@ const paymentConfirmMs = new Trend('payment_confirm_ms', true);
 const flowDurationMs = new Trend('flow_duration_ms', true);  // end to end
 const queuePollCount = new Trend('queue_poll_count');
 
+// 지연 트렌드 분리 — 게이트웨이가 짧게 끊어버린 응답을 백엔드 지연에 섞으면 안 된다.
+// 유량제한 429는 요청이 payment 서비스에도 PG에도 닿지 않고 수십 ms에 되돌아온다. 이걸
+// payment_confirm_ms 에 넣으면 중앙값이 PG 스텁 median 300ms 아래로 내려가는 허위 수치가
+// 된다(지난 램프 라운드: confirm 8123건 중 429가 2667건, 중앙값 60ms).
+const paymentConfirm429Ms = new Trend('payment_confirm_429_ms', true);
+// 같은 이유로 주문 생성도 분리한다. 419(입장권 없음)/429(유량제한)는 게이트웨이 필터에서
+// 끊기므로 order 서비스의 재고 차감 왕복이 아예 없다. 409(재고 소진)는 실제 백엔드 왕복이
+// 일어난 응답이라 order_create_ms 에 그대로 남긴다.
+const orderCreateRejectMs = new Trend('order_create_gateway_reject_ms', true);
+
 // terminal outcomes — every iteration increments exactly one of these
 const outSuccess = new Counter('outcome_success');
 const outSoldOut = new Counter('outcome_sold_out');
@@ -175,6 +185,8 @@ export const options = {
     // Hard failures: the harness itself is broken, or the service is erroring out.
     'outcome_login_failed': ['count==0'],
     'outcome_queue_error': ['count==0'],
+    // 재고 소진(409 SOLD_OUT)이 outcome_sold_out 으로 빠졌으므로 여기 남는 건 진짜 오류뿐이다.
+    // 이전에는 매진이 전부 여기로 떨어져(지난 라운드 4691건) 임계가 무의미했다.
     'outcome_order_error': ['count<10'],
     'outcome_payment_error': ['count<10'],
     // A run where nobody ever completes the flow is not a load test.
@@ -186,10 +198,21 @@ export const options = {
     // 지연 예산. 원격 대상이라 노트북->EC2 RTT + TLS가 모든 수치에 더해진다(수십 ms).
     // order는 2000 -> 3000으로 완화. payment는 Hikari 5s 타임아웃이 실질 상한이라
     // 5000을 넘으면 그건 지연이 아니라 커넥션 고갈이므로 임계값을 그대로 둔다.
+    // 419/429는 order_create_gateway_reject_ms 로 빠졌으므로 order 서비스에 실제로 닿은
+    // 응답(201/409 등)만 이 예산으로 평가한다.
     'order_create_ms': ['p(95)<3000'],
+    // 유량제한 429 응답 시간이 payment_confirm_429_ms 로 빠졌으므로 실제 PG 왕복만 남는다.
     'payment_confirm_ms': ['p(95)<5000'],   // PG stub median 300ms + backend work
+    // 아래 setResponseCallback 이 409/419/429를 성공으로 분류하므로, 이 비율에 남는 건
+    // 5xx·연결 실패 같은 진짜 장애다. 이전에는 매진·유량제한이 전부 실패로 세어져
+    // 지난 라운드 0.373 으로 필연 초과했다.
     'http_req_failed': ['rate<0.05'],
+    // 매진(409)을 단정 실패로 잡지 않게 고쳤으므로(createOrder 참조) 이 비율은 다시
+    // 계약 위반만 잡는다. 지난 라운드 0.737 은 매진 4691건이 단정 실패로 세어진 결과다.
     'checks': ['rate>0.95'],
+    // 관측 전용(실패 임계 없음): outcome_sold_out, outcome_rate_limited_429.
+    // 드롭 경합에서 매진과 유량제한은 정상 종단 결과라서 개수로 실패를 판정할 수 없다.
+    // 재고가 언제 말랐는지·유량제한이 어디서 걸리는지는 카운터 값으로만 읽는다.
   },
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
 
@@ -213,6 +236,14 @@ export const options = {
   // dropId / paymentKey live in URLs and bodies; every request below carries an
   // explicit `name` tag so k6 groups them instead of exploding metric cardinality.
 };
+
+// 업무상 정상인 상태코드를 http_req_failed 에서 실패로 세지 않게 한다.
+// k6 기본 콜백은 200~399만 성공으로 보는데, 이 시나리오에서 409(재고 소진) /
+// 429(게이트웨이 유량제한) / 419(입장권 만료)는 서비스 장애가 아니라 설계된 종단 결과다.
+// 이 셋을 실패로 세면 http_req_failed 가 "서버가 얼마나 깨졌나" 대신 "재고가 얼마나 빨리
+// 말랐나"를 재게 된다. 세 상태코드의 발생량은 outcome_* 카운터로 따로 관측한다.
+// init 컨텍스트에서 한 번 설정하면 이후 모든 VU의 요청에 적용된다.
+http.setResponseCallback(http.expectedStatuses({ min: 200, max: 399 }, 409, 419, 429));
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -451,6 +482,8 @@ export default function () {
 
   if (!orderResult.ok) {
     switch (orderResult.outcome) {
+      // 재고 소진은 드롭의 정상 종단 결과다 — 큐 경로(SOLD_OUT 상태)와 같은 카운터로 센다.
+      case 'SOLD_OUT': outSoldOut.add(1); break;
       case 'ADMISSION_419': outAdmission419.add(1); break;
       case 'QUANTITY_400': outQuantity400.add(1); break;
       case 'RATE_LIMITED': outRateLimited.add(1); break;
@@ -595,20 +628,46 @@ function createOrder(headers, quantity) {
     }),
     { headers, tags: { name: 'POST /api/v1/orders' } },
   );
-  orderCreateMs.add(Date.now() - started);
+  const elapsed = Date.now() - started;
 
   // 419 and 400 are distinct, expected outcomes from the gateway AdmissionCheck filter,
   // not generic failures — they are counted separately by the caller.
+  // 419/429는 게이트웨이에서 끊겨 order 서비스에 닿지 않으므로 order_create_ms 대신
+  // order_create_gateway_reject_ms 로 보낸다(400은 계약 위반이라 count==0 임계로 잡힌다).
   if (res.status === 419) {
+    orderCreateRejectMs.add(elapsed);
     assert('order not rejected for missing admission ticket (419)', false);
     return { ok: false, outcome: 'ADMISSION_419' };
   }
+  if (res.status === 429) {
+    orderCreateRejectMs.add(elapsed);
+    return { ok: false, outcome: 'RATE_LIMITED' };
+  }
+  orderCreateMs.add(elapsed);
+
   if (res.status === 400) {
     assert('order quantity matches granted admission quantity (400)', false);
     return { ok: false, outcome: 'QUANTITY_400' };
   }
-  if (res.status === 429) {
-    return { ok: false, outcome: 'RATE_LIMITED' };
+
+  // 409 = 재고 소진. 드롭에서 재고가 마르는 것은 장애가 아니라 정상 종단 결과이므로
+  // 단정(assert) 실패로 잡지 않고 outcome_sold_out 으로만 센다.
+  //
+  // 서버 공통 에러 포맷은 {"error":"CODE","message":"..."} 이고(common/.../ErrorResponse.java),
+  // 재고 소진 코드는 order 가 SOLD_OUT, product 가 DROP_SOLD_OUT 이다. order 는 product 의
+  // DROP_SOLD_OUT/SOLD_OUT 을 자기 SOLD_OUT(409)으로 다시 매핑한다(ProductIntegrationClient).
+  // 일부 내부 응답이 code 필드를 쓰기도 해서(ProductErrorResponse) 둘 다 읽는다.
+  // 본문이 비었거나 파싱이 깨져도 409면 매진으로 분류한다 — 매진이 오류로 뭉쳐지는 쪽이
+  // 훨씬 비싼 오판이기 때문이다.
+  if (res.status === 409) {
+    const conflict = safeJson(res);
+    const code = conflict && (conflict.error || conflict.code);
+    if (!code || code === 'SOLD_OUT' || code === 'DROP_SOLD_OUT') {
+      return { ok: false, outcome: 'SOLD_OUT' };
+    }
+    // 매진이 아닌 409(멱등키 충돌, 주문 상태 위반, 결제 진행 중 등)는 진짜 오류다.
+    assert(`order conflict is stock exhaustion (got ${code})`, false);
+    return { ok: false, outcome: 'ORDER_ERROR' };
   }
 
   const body = safeJson(res);
@@ -636,12 +695,24 @@ function confirmPayment(headers, order) {
       tags: { name: 'POST /api/v1/payments/confirm' },
     },
   );
-  paymentConfirmMs.add(Date.now() - started);
+  const elapsed = Date.now() - started;
 
   // The gateway rate-limits this route per user (replenish 2/s, burst 5).
+  // 429는 payment 서비스도 PG도 거치지 않고 게이트웨이에서 즉시 되돌아온다. 이걸
+  // payment_confirm_ms 에 넣으면 "PG 왕복 지연" 트렌드가 유량제한 응답으로 희석돼
+  // 중앙값이 PG 스텁 median 300ms 아래로 내려간다. 별도 트렌드로 분리한다.
   if (res.status === 429) {
+    paymentConfirm429Ms.add(elapsed);
     return { outcome: 'RATE_LIMITED' };
   }
+  // status 0 = 응답을 아예 못 받았다(연결 실패·클라이언트 타임아웃). 왕복 지연이 아니라
+  // 실패이므로 지연 트렌드에 넣지 않는다. 서버가 5xx로라도 응답했다면(예: Hikari 5s
+  // 커넥션 고갈) 그건 실제 왕복 시간이므로 아래에서 트렌드에 반영한다.
+  if (res.status === 0) {
+    assert('payment confirm got a response (not a transport error)', false);
+    return { outcome: 'PAYMENT_ERROR' };
+  }
+  paymentConfirmMs.add(elapsed);
 
   const body = safeJson(res);
   const http200 = res.status === 200 && !!(body && body.status);
@@ -675,14 +746,24 @@ function textSummary(data) {
     lines.push(`  ${k.padEnd(30)} ${data.metrics[k].values.count}`);
   }
   lines.push('=== phase latencies (ms) ===');
-  for (const k of ['queue_wait_ms', 'order_create_ms', 'payment_confirm_ms', 'flow_duration_ms']) {
+  // 게이트웨이가 끊은 응답(419/429)은 앞의 두 트렌드에 섞지 않고 따로 찍는다 —
+  // payment_confirm_ms 를 PG 지연 근거로 인용할 수 있게 하기 위한 분리다.
+  const latencies = [
+    'queue_wait_ms',
+    'order_create_ms',
+    'order_create_gateway_reject_ms',
+    'payment_confirm_ms',
+    'payment_confirm_429_ms',
+    'flow_duration_ms',
+  ];
+  for (const k of latencies) {
     const m = data.metrics[k];
     if (!m || !m.values || m.values.med === undefined) {
-      lines.push(`  ${k.padEnd(20)} (no samples)`);
+      lines.push(`  ${k.padEnd(30)} (no samples)`);
       continue;
     }
     const v = m.values;
-    lines.push(`  ${k.padEnd(20)} med=${v.med.toFixed(0)} p95=${v['p(95)'].toFixed(0)} max=${v.max.toFixed(0)}`);
+    lines.push(`  ${k.padEnd(30)} med=${v.med.toFixed(0)} p95=${v['p(95)'].toFixed(0)} max=${v.max.toFixed(0)}`);
   }
   lines.push('');
   return lines.join('\n');
