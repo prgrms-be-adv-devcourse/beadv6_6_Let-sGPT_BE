@@ -257,16 +257,57 @@ jobs:
           printf 'reconcile_required=%s\n' "$RECONCILE_REQUIRED" >> "$GITHUB_OUTPUT"
           printf 'rotation_identity=%s\n' "$ROTATION_IDENTITY" >> "$GITHUB_OUTPUT"
 
-      # self-hosted runner image가 제공하는 kustomize만 사용한다. 누락된 도구를 네트워크에서
-      # 동적으로 내려받아 실행하지 않고 fail-closed한다.
-      - name: Verify preinstalled kustomize CLI
+      # kustomize 조달 방식의 근거:
+      #  - 사전 설치 우선: 러너 이미지에 kustomize가 있으면 그것을 쓰고 네트워크를 타지 않는다.
+      #  - 노드 교체 대비: self-hosted 노드는 재프로비저닝·교체될 수 있고 $RUNNER_TEMP는 job마다
+      #    새로 생긴다. "사전 설치된 것만 사용"으로 강제하면 도구가 없는 노드에서 CD 전체가
+      #    멈춘다(실제로 이 스텝이 main 배포를 중단시켰다). 그래서 없을 때 스스로 조달한다.
+      #  - 고정 버전 + 고정 체크섬: 가변 URL의 설치 스크립트를 bash로 파이프하면 운영 권한으로
+      #    임의 코드를 실행하게 된다. 대신 버전을 못 박은 공식 릴리스 아티팩트만 받아
+      #    하드코딩된 sha256과 대조해 통과한 바이너리만 실행한다. 버전은 로컬/CI에서 쓰던
+      #    v5.4.3에 맞춘다(러너는 linux/amd64 EC2).
+      #  - fail-closed: 다운로드·체크섬·압축 해제·설치 후 실행 확인 중 하나라도 실패하면 즉시
+      #    배포를 중단한다. 검증 못 한 도구로 desired-state를 고쳐 쓰지 않는다.
+      - name: Provision pinned kustomize CLI
         if: steps.services.outputs.list != '' || steps.ctx.outputs.fe_sha != ''
+        env:
+          KUSTOMIZE_VERSION: v5.4.3
+          KUSTOMIZE_SHA256: 3669470b454d865c8184d6bce78df05e977c9aea31c30df3c669317d43bcc7a7
         run: |
-          command -v kustomize >/dev/null 2>&1 || {
-            echo "ERROR: self-hosted runner에 사전 설치된 kustomize가 없습니다." >&2
+          set -euo pipefail
+          if command -v kustomize >/dev/null 2>&1; then
+            echo "사전 설치된 kustomize를 사용합니다: $(command -v kustomize)"
+            kustomize version
+            exit 0
+          fi
+
+          echo "사전 설치된 kustomize가 없습니다. 고정 버전 $KUSTOMIZE_VERSION 을 조달합니다."
+          BIN_DIR="$RUNNER_TEMP/kustomize-bin"
+          WORK_DIR="$RUNNER_TEMP/kustomize-download"
+          rm -rf "$BIN_DIR" "$WORK_DIR"
+          mkdir -p "$BIN_DIR" "$WORK_DIR"
+          ARCHIVE="$WORK_DIR/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          ARCHIVE_URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+
+          curl -fsSL --retry 3 --retry-delay 2 --max-time 180 -o "$ARCHIVE" "$ARCHIVE_URL" || {
+            echo "ERROR: kustomize 아티팩트 다운로드 실패: $ARCHIVE_URL" >&2
             exit 1
           }
-          kustomize version
+          printf '%s  %s\n' "$KUSTOMIZE_SHA256" "$ARCHIVE" | sha256sum -c - >/dev/null 2>&1 || {
+            echo "ERROR: kustomize 아티팩트 sha256 불일치. 기대=$KUSTOMIZE_SHA256 실제=$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" >&2
+            exit 1
+          }
+          tar -xzf "$ARCHIVE" -C "$BIN_DIR" kustomize || {
+            echo "ERROR: kustomize 아티팩트 압축 해제 실패: $ARCHIVE" >&2
+            exit 1
+          }
+          chmod +x "$BIN_DIR/kustomize"
+          # $GITHUB_PATH는 다음 스텝부터 적용되므로 이 스텝의 실행 확인은 절대 경로로 한다.
+          "$BIN_DIR/kustomize" version || {
+            echo "ERROR: 설치한 kustomize 실행 검증 실패: $BIN_DIR/kustomize" >&2
+            exit 1
+          }
+          echo "$BIN_DIR" >> "$GITHUB_PATH"
 
       # deploy/state = openat 앱의 desired-state 단일 출처. 두 관심사를 분리한다(Q100 갭 수정):
       #  (1) main→deploy/state 구조 병합(merge)은 "항상" 수행 — 매니페스트(probe·sync-wave·configmap
