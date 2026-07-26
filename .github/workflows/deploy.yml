@@ -371,7 +371,7 @@ jobs:
             fi
           fi
           # Secret 값은 Git에 넣지 않는다. Kubernetes의 불투명 resourceVersion만 pod template에
-          # 반영하면, wave 9 read-model Job 확인 뒤 wave 10 AI rollout이 일어난다.
+          # 반영하면, wave 1 read-model Job 확인 뒤 wave 2 AI rollout이 일어난다.
           AI_QUERY_SECRET_REVISION=$(kubectl get secret ai-query-secrets -n openat -o jsonpath='{.metadata.resourceVersion}')
           case "$AI_QUERY_SECRET_REVISION" in
             ''|*[!A-Za-z0-9._-]*)
@@ -383,7 +383,7 @@ jobs:
             echo "ERROR: provision 이후 active Secret resourceVersion이 바뀌었습니다." >&2
             exit 1
           }
-          REVISION_PATCH=k8s/overlay/ai-query-secret-revision.yaml
+          REVISION_PATCH=k8s/base/29-ai-query-secret-revision-patch.yaml
           [ "$(grep -c '^[[:space:]]*openat.io/ai-query-secret-revision:' "$REVISION_PATCH")" -eq 1 ] || {
             echo "ERROR: AI query Secret revision patch가 정확히 한 항목이 아닙니다." >&2
             exit 1
@@ -415,8 +415,8 @@ jobs:
           )
           READ_MODEL_JOB_NAME="ai-read-model-apply-${READ_MODEL_IDENTITY}"
           ACTIVE_RV_HASH=$(printf '%s' "$AI_QUERY_SECRET_REVISION" | sha256sum | cut -c1-63)
-          JOB_NAME_STATE=k8s/overlay/ai-read-model-job-name.yaml
-          IDENTITY_PATCH=k8s/overlay/ai-read-model-deployment-identity.yaml
+          JOB_NAME_STATE=k8s/base/29-ai-read-model-job-name.yaml
+          IDENTITY_PATCH=k8s/base/29-ai-read-model-deployment-identity-patch.yaml
           [ "$(grep -c '^[[:space:]]*identity:' "$JOB_NAME_STATE")" -eq 1 ] \
             && [ "$(grep -c '^[[:space:]]*jobName:' "$JOB_NAME_STATE")" -eq 1 ] || {
             echo "ERROR: read-model Job name state 구조가 계약과 다릅니다." >&2

@@ -87,15 +87,17 @@ class AiReadModelDeploymentContractTest {
     Map<String, Object> job =
         YamlDocuments.read("ai", "k8s", "read-model-job.yaml")
             .document("Job", "ai-read-model-apply");
+    Map<String, Object> base =
+        YamlDocuments.read("k8s", "base", "kustomization.yaml").onlyDocument();
     Map<String, Object> overlay =
         YamlDocuments.read("k8s", "overlay", "kustomization.yaml").onlyDocument();
     Map<String, Object> identity =
-        YamlDocuments.read("k8s", "overlay", "ai-read-model-deployment-identity.yaml")
+        YamlDocuments.read("k8s", "base", "29-ai-read-model-deployment-identity-patch.yaml")
             .document("Job", "ai-read-model-apply");
     Map<String, Object> applyContainer =
         named(asMaps(value(job, "spec", "template", "spec", "containers")), "apply");
     List<String> patchPaths =
-        asMaps(overlay.get("patches")).stream().map(patch -> (String) patch.get("path")).toList();
+        asMaps(base.get("patches")).stream().map(patch -> (String) patch.get("path")).toList();
     Map<String, Object> jobAnnotations =
         YamlDocuments.asMap(value(identity, "metadata", "annotations"));
     Map<String, Object> podLabels =
@@ -105,15 +107,15 @@ class AiReadModelDeploymentContractTest {
 
     assertThat(YamlDocuments.asMap(queue.get("metadata")).get("annotations")).isNull();
     assertThat(value(job, "metadata", "annotations", "argocd.argoproj.io/sync-wave"))
-        .isEqualTo("9");
+        .isEqualTo("1");
     assertThat(value(job, "metadata", "annotations", "argocd.argoproj.io/hook")).isNull();
     assertThat(value(job, "spec", "ttlSecondsAfterFinished")).isNull();
     assertThat(applyContainer.get("image"))
         .isEqualTo(
             "postgres:16.14@sha256:da8cf245a60506e50a0a8cbb0f39c559ca622d92490605b67fcadc74ca1ea8e4");
     assertThat(value(ai, "metadata", "annotations", "argocd.argoproj.io/sync-wave"))
-        .isEqualTo("10");
-    assertThat(patchPaths).contains("ai-read-model-deployment-identity.yaml");
+        .isEqualTo("2");
+    assertThat(patchPaths).contains("29-ai-read-model-deployment-identity-patch.yaml");
     assertThat(jobAnnotations)
         .containsKeys(
             "openat.io/target-workload-revision",
@@ -131,12 +133,21 @@ class AiReadModelDeploymentContractTest {
             "openat.io/deployment-run-id",
             "openat.io/rotation-identity",
             "openat.io/target-active-rv-hash");
-    assertThat(read("k8s", "overlay", "kustomization.yaml"))
-        .contains("ai-read-model-job-name.yaml", "fieldPath: data.jobName", "metadata.name");
+    assertThat(read("k8s", "base", "kustomization.yaml"))
+        .contains("29-ai-read-model-job-name.yaml", "fieldPath: data.jobName", "metadata.name");
+    // overlay는 CD가 이미지 pin만 갱신하는 자리다. main이 이 파일에 매니페스트를 추가하면
+    // CD의 파일 전체 재작성과 겹쳐 merge -X ours가 그 추가분을 조용히 버린다.
+    assertThat(overlay.keySet())
+        .containsExactlyInAnyOrder("apiVersion", "kind", "resources", "images");
+    assertThat(overlay.get("resources")).isEqualTo(List.of("../base"));
     assertThat(read(".github", "workflows", "deploy.yml"))
         .contains("READ_MODEL_ARTIFACT_HASH", "CURRENT_READ_MODEL_IDENTITY")
         .contains("완료된 Job을 재사용")
-        .doesNotContain("ai-read-model-apply\")].hookPhase");
+        .contains("REVISION_PATCH=k8s/base/29-ai-query-secret-revision-patch.yaml")
+        .contains("JOB_NAME_STATE=k8s/base/29-ai-read-model-job-name.yaml")
+        .contains("IDENTITY_PATCH=k8s/base/29-ai-read-model-deployment-identity-patch.yaml")
+        .doesNotContain("ai-read-model-apply\")].hookPhase")
+        .doesNotContain("k8s/overlay/ai-");
   }
 
   @Test

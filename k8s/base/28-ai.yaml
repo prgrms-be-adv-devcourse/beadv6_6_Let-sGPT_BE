@@ -5,8 +5,10 @@ metadata:
   name: ai
   namespace: openat
   annotations:
-    # 현재 read-model identity의 적용 Job(wave 9)이 성공한 다음 새 조회 자격증명을 소비한다.
-    argocd.argoproj.io/sync-wave: "10"
+    # 현재 read-model identity의 적용 Job(wave 1)이 성공한 다음 새 조회 자격증명을 소비한다.
+    # wave를 쓰는 이유는 그 Job이 만드는 DB 역할·비밀번호에 이 파드의 로그인이 실제로
+    # 의존하기 때문이며, 배포 순서를 인위적으로 직렬화하려는 목적이 아니다.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: 1
   strategy:
