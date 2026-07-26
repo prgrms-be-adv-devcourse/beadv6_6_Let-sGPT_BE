@@ -54,7 +54,7 @@ class AiReadModelDeploymentContractTest {
 
   @Test
   @DisplayName("운영 권한으로 실행하는 스크립트는 검증된 workflow source에서만 가져온다")
-  void deploymentWorkflow_executesOnlyTrustedScriptsAndPreinstalledTools() throws IOException {
+  void deploymentWorkflow_executesOnlyTrustedScriptsAndVerifiedTools() throws IOException {
     String workflow = read(".github", "workflows", "deploy.yml");
     Map<String, Object> trustedCheckout = step(workflow, "Checkout trusted workflow source");
     String stagingScript = (String) step(workflow, "Stage trusted deployment scripts").get("run");
@@ -81,6 +81,44 @@ class AiReadModelDeploymentContractTest {
         .doesNotContain("bash ./k8s/bootstrap/rotate-ai-query-secret.sh")
         .doesNotContain("raw.githubusercontent.com/kubernetes-sigs/kustomize/master")
         .doesNotContain("install_kustomize.sh");
+  }
+
+  @Test
+  @DisplayName("kustomize는 사전 설치를 우선하고 없으면 고정 버전·체크섬 검증으로만 조달한다")
+  void deploymentWorkflow_provisionsKustomizeFromPinnedAndVerifiedArtifact() throws IOException {
+    String workflow = read(".github", "workflows", "deploy.yml");
+    Map<String, Object> kustomizeStep = step(workflow, "Provision pinned kustomize CLI");
+    Map<String, Object> pins = YamlDocuments.asMap(kustomizeStep.get("env"));
+    String provisionScript = (String) kustomizeStep.get("run");
+    String syncScript =
+        (String) step(workflow, "Sync deploy/state (merge main + pin changed images)").get("run");
+    List<String> stepNames = stepNames(workflow);
+
+    // 버전과 기대 체크섬은 workflow에 못 박혀 있어야 한다. 둘 중 하나라도 실행 시점에
+    // 결정되면 "무엇을 실행하는지 사전에 아는" 성질이 깨진다.
+    assertThat(pins.get("KUSTOMIZE_VERSION").toString()).matches("v\\d+\\.\\d+\\.\\d+");
+    assertThat(pins.get("KUSTOMIZE_SHA256").toString()).matches("[0-9a-f]{64}");
+    assertThat(provisionScript)
+        // 사전 설치가 있으면 네트워크를 타지 않고 그것을 쓴다.
+        .contains("command -v kustomize")
+        // 노드 교체로 도구가 없을 때도 배포가 멈추지 않게, 버전을 못 박은 릴리스 아티팩트를 받는다.
+        .contains(
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/"
+                + "kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz")
+        // 받은 바이너리는 기대 체크섬을 통과한 뒤에만 실행한다.
+        .contains("sha256sum -c -")
+        .contains("$GITHUB_PATH")
+        // 네 갈래 실패 모두 조용히 넘어가지 않고 배포를 멈춘다.
+        .contains("ERROR: kustomize 아티팩트 다운로드 실패")
+        .contains("ERROR: kustomize 아티팩트 sha256 불일치")
+        .contains("ERROR: kustomize 아티팩트 압축 해제 실패")
+        .contains("ERROR: 설치한 kustomize 실행 검증 실패");
+    // 도구 조달은 그 도구를 쓰는 스텝보다 먼저 와야 $GITHUB_PATH 추가가 실제로 반영된다.
+    assertThat(syncScript).contains("kustomize edit set image");
+    assertThat(stepNames.indexOf("Provision pinned kustomize CLI"))
+        .isLessThan(stepNames.indexOf("Sync deploy/state (merge main + pin changed images)"));
+    // 원격 설치 스크립트를 셸로 파이프하는 방식은 되돌아오지 못하게 막는다.
+    assertThat(workflow).doesNotContain("| bash").doesNotContain("raw.githubusercontent.com");
   }
 
   @Test
@@ -295,6 +333,14 @@ class AiReadModelDeploymentContractTest {
 
   private static String read(String first, String... more) throws IOException {
     return Files.readString(Path.of(first, more), StandardCharsets.UTF_8);
+  }
+
+  private static List<String> stepNames(String workflow) {
+    Map<String, Object> document = YamlDocuments.parse(workflow).onlyDocument();
+    Map<String, Object> deployJob = YamlDocuments.asMap(value(document, "jobs", "deploy"));
+    return asMaps(deployJob.get("steps")).stream()
+        .map(candidate -> String.valueOf(candidate.get("name")))
+        .toList();
   }
 
   private static Map<String, Object> step(String workflow, String name) {
