@@ -1,6 +1,8 @@
-# deploy/state 전용 오버레이. main엔 최초 부트스트랩 시드로만 존재하고, 이후 main에서
-# 이 파일을 고치는 PR은 없어야 한다 — 이미지 pin은 deploy/state에서 CD가 전담
-# (kustomize edit set image). 근거: research/plan 7-15 deploystate_kustomize_merge_drift.
+# deploy/state 전용 오버레이. 이미지 pin(newTag)은 deploy/state에서 CD가 전담하고
+# (kustomize edit set image) main은 그 값을 고치지 않는다. 대신 override할 이미지 항목의
+# 집합은 main이 소유하므로, 새 서비스를 도입할 때만 여기 항목을 latest로 추가한다 —
+# 병합 시 항목 집합은 main을 따르고 태그는 deploy/state 값이 유지된다
+# (k8s/bootstrap/merge-main-into-deploy-state.sh). 리소스는 여기 추가하지 않는다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 

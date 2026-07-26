@@ -6,8 +6,9 @@
 #
 # CD가 값을 갱신하는 파일은 base/ 안에서 29-ai-* 셋뿐이다. 패치 대상·어노테이션 키 같은
 # 구조는 main이 소유하고, CD는 그 안의 seed 값 줄("bootstrap"/"steady")만 sed로 바꾼다.
-# main이 그 값 줄을 직접 고치는 일은 없으므로 merge -X ours가 main의 구조 변경을 덮을
-# 여지가 없다 — CD가 파일 전체를 다시 쓰는 overlay/kustomization.yaml과는 성격이 다르다.
+# main이 그 값 줄을 직접 고치는 일은 없어 병합이 자동으로 "구조는 main, 값은 deploy/state"가
+# 되고, 같은 줄이 충돌하면 병합 소유권 집행이 구조를 우선해 main 버전을 취한 뒤 값을 그 배포
+# 실행이 다시 계산한다(k8s/bootstrap/merge-main-into-deploy-state.sh).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: openat
