@@ -3,7 +3,7 @@ kind: Job
 metadata:
   name: ai-read-model-apply
   annotations:
-    # deploy/state 전용 값. CD가 최종 Git revision 직전의 workload revision으로 갱신한다.
+    # 아래 값들은 seed고, CD가 deploy/state에서 최종 Git revision 직전의 workload revision으로 갱신한다.
     # 최종 Git revision은 자기 자신을 manifest에 넣을 수 없으므로 Argo operation에서 별도 검증한다.
     openat.io/target-workload-revision: "bootstrap"
     openat.io/deployment-run-id: "bootstrap"
