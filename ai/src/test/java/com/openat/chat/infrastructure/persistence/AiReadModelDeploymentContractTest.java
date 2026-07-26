@@ -39,12 +39,17 @@ class AiReadModelDeploymentContractTest {
         .contains("git merge-base --is-ancestor \"$SHA\" \"$current_tag\"")
         .contains("frontend-image-sequence.txt")
         .contains("commit_staged")
+        .contains(
+            "bash \"$RUNNER_TEMP/openat-deploy-scripts/merge-main-into-deploy-state.sh\" \"$SHA\"")
         .doesNotContain("|| echo \"no image change to commit\"");
     assertThat(workflow)
         .contains("ruleset/branch protection")
         .contains("CD identity만")
         .doesNotContain("fe_sha=${{ github.event.client_payload.sha }}")
-        .doesNotContain("cancel-in-progress: true");
+        .doesNotContain("cancel-in-progress: true")
+        // 충돌 hunk를 무조건 deploy/state 쪽으로 채택하는 병합은 main의 구조 변경을 조용히
+        // 버린다. 병합 소유권은 전용 스크립트가 집행하고 workflow는 전략 옵션을 쓰지 않는다.
+        .doesNotContain("-X ours");
   }
 
   @Test
@@ -62,7 +67,8 @@ class AiReadModelDeploymentContractTest {
     assertThat(stagingScript)
         .contains("git -C .trusted-workflow-source rev-parse HEAD")
         .contains("create-secrets.sh rotate-ai-query-secret.sh reconcile-ai-query-rotation.sh")
-        .contains("secret-manifest.sh prove-ai-query-rollout.sh");
+        .contains("secret-manifest.sh prove-ai-query-rollout.sh")
+        .contains("merge-main-into-deploy-state.sh apply-image-pin-ownership.py");
     assertThat(provisionScript)
         .contains("$RUNNER_TEMP/openat-deploy-scripts/create-secrets.sh")
         .contains("$RUNNER_TEMP/openat-deploy-scripts/rotate-ai-query-secret.sh");
@@ -113,8 +119,7 @@ class AiReadModelDeploymentContractTest {
     assertThat(applyContainer.get("image"))
         .isEqualTo(
             "postgres:16.14@sha256:da8cf245a60506e50a0a8cbb0f39c559ca622d92490605b67fcadc74ca1ea8e4");
-    assertThat(value(ai, "metadata", "annotations", "argocd.argoproj.io/sync-wave"))
-        .isEqualTo("2");
+    assertThat(value(ai, "metadata", "annotations", "argocd.argoproj.io/sync-wave")).isEqualTo("2");
     assertThat(patchPaths).contains("29-ai-read-model-deployment-identity-patch.yaml");
     assertThat(jobAnnotations)
         .containsKeys(
@@ -135,8 +140,9 @@ class AiReadModelDeploymentContractTest {
             "openat.io/target-active-rv-hash");
     assertThat(read("k8s", "base", "kustomization.yaml"))
         .contains("29-ai-read-model-job-name.yaml", "fieldPath: data.jobName", "metadata.name");
-    // overlay는 CD가 이미지 pin만 갱신하는 자리다. main이 이 파일에 매니페스트를 추가하면
-    // CD의 파일 전체 재작성과 겹쳐 merge -X ours가 그 추가분을 조용히 버린다.
+    // overlay는 CD가 이미지 pin만 갱신하는 자리다. CD가 이 파일을 매번 전체 재직렬화하므로
+    // 매니페스트를 여기 추가하면 병합 때 상시 충돌 대상이 되고, 병합 소유권 집행이
+    // 이미지 항목 말고는 골격을 main 것으로 확정하는 만큼 그 추가분이 살아남지 못한다.
     assertThat(overlay.keySet())
         .containsExactlyInAnyOrder("apiVersion", "kind", "resources", "images");
     assertThat(overlay.get("resources")).isEqualTo(List.of("../base"));
@@ -148,6 +154,33 @@ class AiReadModelDeploymentContractTest {
         .contains("IDENTITY_PATCH=k8s/base/29-ai-read-model-deployment-identity-patch.yaml")
         .doesNotContain("ai-read-model-apply\")].hookPhase")
         .doesNotContain("k8s/overlay/ai-");
+  }
+
+  @Test
+  @DisplayName("main→deploy/state 병합은 매니페스트 구조는 main, 이미지 pin은 deploy/state로 확정한다")
+  void deployStateMerge_enforcesManifestOwnership() throws IOException {
+    String mergeScript = read("k8s", "bootstrap", "merge-main-into-deploy-state.sh");
+    String imageOwnership = read("k8s", "bootstrap", "apply-image-pin-ownership.py");
+
+    // 병합 전 deploy/state의 이미지 pin을 먼저 확보하고, 병합 자체는 커밋을 유보한 상태로
+    // 두어 충돌 해소를 소유권 규칙이 결정하게 한다.
+    assertThat(mergeScript)
+        .contains("\"$GIT\" show \"HEAD:$OVERLAY\" > \"$STATE_OVERLAY\"")
+        .contains("\"$GIT\" merge --no-ff --no-commit \"$SHA\"")
+        .contains("apply-image-pin-ownership.py")
+        // 규칙에 없는 충돌은 자동 해소하지 않고 병합을 되돌린다.
+        .contains("소유권 규칙에 없는 충돌")
+        .contains("\"$GIT\" merge --abort")
+        // read-model identity 값 2종은 한쪽만 main이 되면 뒤 검증에서 배포가 멈추므로 한 벌로 맞춘다.
+        .contains("$JOB_NAME_STATE\" \"$IDENTITY_PATCH\"")
+        // 집행 후에도 미해결 충돌이 남으면 커밋하지 않는다.
+        .contains("소유권 집행 후에도 미해결 충돌");
+    // 이미지 태그(값)와 항목 집합(구조)이 둘 다 보존됐는지 집행 후 다시 확인한다.
+    assertThat(imageOwnership)
+        .contains("블록을 찾지 못했습니다")
+        .contains("이미지 pin이 보존되지 않았습니다")
+        .contains("구조가 보존되지 않았습니다")
+        .doesNotContain("import yaml");
   }
 
   @Test

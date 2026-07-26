@@ -62,7 +62,9 @@ jobs:
           path: .trusted-workflow-source
 
       # 이후 worktree가 deploy/state로 바뀌어도 운영 Secret/kubeconfig 권한으로 실행되는 셸은
-      # 검증된 source checkout에서 RUNNER_TEMP로 복사한 이 다섯 파일뿐이다.
+      # 검증된 source checkout에서 RUNNER_TEMP로 복사한 이 파일들뿐이다. main→deploy/state 병합
+      # 소유권을 집행하는 스크립트도 같은 이유로 여기서 staging한다 — 병합 대상 브랜치의
+      # worktree에 있는 사본을 실행하면 desired-state 데이터가 실행 코드를 정할 수 있게 된다.
       - name: Stage trusted deployment scripts
         env:
           WORKFLOW_SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.workflow_sha }}
@@ -78,7 +80,8 @@ jobs:
           TRUSTED_SCRIPT_DIR="$RUNNER_TEMP/openat-deploy-scripts"
           mkdir -p "$TRUSTED_SCRIPT_DIR"
           for script in create-secrets.sh rotate-ai-query-secret.sh reconcile-ai-query-rotation.sh \
-            secret-manifest.sh prove-ai-query-rollout.sh; do
+            secret-manifest.sh prove-ai-query-rollout.sh \
+            merge-main-into-deploy-state.sh apply-image-pin-ownership.py; do
             install -m 0700 ".trusted-workflow-source/k8s/bootstrap/$script" "$TRUSTED_SCRIPT_DIR/$script"
           done
 
@@ -316,8 +319,13 @@ jobs:
           }
           # CI 성공 workflow_run만 main의 구조 변경을 흡수한다. FE·자격증명 전용 dispatch는
           # 현재 deploy/state 위에서 필요한 state만 갱신해 미검증 BE revision을 우회 배포하지 않는다.
+          #
+          # 병합은 소유권대로 결정한다. 예전에는 충돌 hunk를 무조건 deploy/state 쪽으로 채택하는
+          # 병합 옵션에 맡겨서, main의 매니페스트 구조 변경이 조용히 버려졌다(유실 사고 3회).
+          # 구조는 main, 이미지 pin과 CD가 쓰는 값은 deploy/state가 소유하며, 규칙에 없는 충돌은
+          # 자동 해소하지 않고 병합을 되돌리며 실패한다. 근거와 규칙은 스크립트 주석에 있다.
           if [ -n "$SHA" ]; then
-            git merge -X ours --no-edit "$SHA"
+            bash "$RUNNER_TEMP/openat-deploy-scripts/merge-main-into-deploy-state.sh" "$SHA"
           fi
           # BE 이미지 SHA 핀은 재빌드된 서비스가 있을 때만(매니페스트-only 변경이면 SVCS가 비어 스킵).
           if [ -n "$SVCS" ]; then
