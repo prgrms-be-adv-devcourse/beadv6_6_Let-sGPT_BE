@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-read-model-job-name
+  namespace: openat
+data:
+  # 아래 두 줄은 seed 값이고, read-model 산출물 또는 조회 Secret revision이 달라질 때만
+  # CD가 deploy/state 브랜치에서 값을 갱신한다(main은 이 값을 직접 고치지 않는다).
+  identity: "bootstrap"
+  jobName: "ai-read-model-apply-bootstrap"

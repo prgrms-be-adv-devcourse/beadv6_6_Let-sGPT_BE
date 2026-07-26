@@ -1,0 +1,308 @@
+package com.openat.chat.infrastructure.persistence;
+
+import static com.openat.chat.infrastructure.persistence.YamlDocuments.asMaps;
+import static com.openat.chat.infrastructure.persistence.YamlDocuments.named;
+import static com.openat.chat.infrastructure.persistence.YamlDocuments.value;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+class AiReadModelDeploymentContractTest {
+
+  @Test
+  @DisplayName("CD는 배포를 유실하거나 오래된 이미지로 되돌리지 않는다")
+  void deploymentWorkflow_serializesAndRejectsStaleRevisions() throws IOException {
+    String workflow = read(".github", "workflows", "deploy.yml");
+    Map<String, Object> document = YamlDocuments.parse(workflow).onlyDocument();
+    Map<String, Object> deployJob = YamlDocuments.asMap(value(document, "jobs", "deploy"));
+    List<Map<String, Object>> steps = asMaps(deployJob.get("steps"));
+    Map<String, Object> triggerContext = step(workflow, "Resolve trigger context");
+    Map<String, Object> triggerEnvironment = YamlDocuments.asMap(triggerContext.get("env"));
+    String syncScript =
+        (String) step(workflow, "Sync deploy/state (merge main + pin changed images)").get("run");
+
+    assertThat(value(deployJob, "concurrency", "queue")).isEqualTo("max");
+    assertThat(value(steps.getFirst(), "with", "ref"))
+        .isEqualTo(
+            "${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || 'deploy/state' }}");
+    assertThat(triggerEnvironment)
+        .containsEntry("FE_SEQUENCE_INPUT", "${{ github.event.client_payload.run_number }}")
+        .containsEntry("FE_SHA_INPUT", "${{ github.event.client_payload.sha }}");
+    assertThat(syncScript)
+        .contains("git merge-base --is-ancestor \"$SHA\" \"$current_tag\"")
+        .contains("frontend-image-sequence.txt")
+        .contains("commit_staged")
+        .contains(
+            "bash \"$RUNNER_TEMP/openat-deploy-scripts/merge-main-into-deploy-state.sh\" \"$SHA\"")
+        .doesNotContain("|| echo \"no image change to commit\"");
+    assertThat(workflow)
+        .contains("ruleset/branch protection")
+        .contains("CD identity만")
+        .doesNotContain("fe_sha=${{ github.event.client_payload.sha }}")
+        .doesNotContain("cancel-in-progress: true")
+        // 충돌 hunk를 무조건 deploy/state 쪽으로 채택하는 병합은 main의 구조 변경을 조용히
+        // 버린다. 병합 소유권은 전용 스크립트가 집행하고 workflow는 전략 옵션을 쓰지 않는다.
+        .doesNotContain("-X ours");
+  }
+
+  @Test
+  @DisplayName("운영 권한으로 실행하는 스크립트는 검증된 workflow source에서만 가져온다")
+  void deploymentWorkflow_executesOnlyTrustedScriptsAndPreinstalledTools() throws IOException {
+    String workflow = read(".github", "workflows", "deploy.yml");
+    Map<String, Object> trustedCheckout = step(workflow, "Checkout trusted workflow source");
+    String stagingScript = (String) step(workflow, "Stage trusted deployment scripts").get("run");
+    String provisionScript =
+        (String) step(workflow, "Provision k8s secrets (idempotent)").get("run");
+    String convergenceScript = (String) step(workflow, "Wait for ArgoCD convergence").get("run");
+
+    assertThat(value(trustedCheckout, "with", "ref").toString()).contains("github.workflow_sha");
+    assertThat(value(trustedCheckout, "with", "path")).isEqualTo(".trusted-workflow-source");
+    assertThat(stagingScript)
+        .contains("git -C .trusted-workflow-source rev-parse HEAD")
+        .contains("create-secrets.sh rotate-ai-query-secret.sh reconcile-ai-query-rotation.sh")
+        .contains("secret-manifest.sh prove-ai-query-rollout.sh")
+        .contains("merge-main-into-deploy-state.sh apply-image-pin-ownership.py");
+    assertThat(provisionScript)
+        .contains("$RUNNER_TEMP/openat-deploy-scripts/create-secrets.sh")
+        .contains("$RUNNER_TEMP/openat-deploy-scripts/rotate-ai-query-secret.sh");
+    assertThat(convergenceScript)
+        .contains("$RUNNER_TEMP/openat-deploy-scripts/prove-ai-query-rollout.sh");
+    assertThat(workflow)
+        .contains("$RUNNER_TEMP/openat-deploy-scripts/reconcile-ai-query-rotation.sh")
+        .contains("command -v kustomize")
+        .doesNotContain("bash ./k8s/bootstrap/create-secrets.sh")
+        .doesNotContain("bash ./k8s/bootstrap/rotate-ai-query-secret.sh")
+        .doesNotContain("raw.githubusercontent.com/kubernetes-sigs/kustomize/master")
+        .doesNotContain("install_kustomize.sh");
+  }
+
+  @Test
+  @DisplayName("read-model Job은 계약 변경 때만 새 identity로 실행되고 AI보다 먼저 완료된다")
+  void readModelJob_runsOnlyForNewIdentityBeforeAi() throws IOException {
+    Map<String, Object> queue =
+        YamlDocuments.read("k8s", "base", "27-queue.yaml").document("Deployment", "queue");
+    Map<String, Object> ai =
+        YamlDocuments.read("k8s", "base", "28-ai.yaml").document("Deployment", "ai");
+    Map<String, Object> job =
+        YamlDocuments.read("ai", "k8s", "read-model-job.yaml")
+            .document("Job", "ai-read-model-apply");
+    Map<String, Object> base =
+        YamlDocuments.read("k8s", "base", "kustomization.yaml").onlyDocument();
+    Map<String, Object> overlay =
+        YamlDocuments.read("k8s", "overlay", "kustomization.yaml").onlyDocument();
+    Map<String, Object> identity =
+        YamlDocuments.read("k8s", "base", "29-ai-read-model-deployment-identity-patch.yaml")
+            .document("Job", "ai-read-model-apply");
+    Map<String, Object> applyContainer =
+        named(asMaps(value(job, "spec", "template", "spec", "containers")), "apply");
+    List<String> patchPaths =
+        asMaps(base.get("patches")).stream().map(patch -> (String) patch.get("path")).toList();
+    Map<String, Object> jobAnnotations =
+        YamlDocuments.asMap(value(identity, "metadata", "annotations"));
+    Map<String, Object> podLabels =
+        YamlDocuments.asMap(value(identity, "spec", "template", "metadata", "labels"));
+    Map<String, Object> podAnnotations =
+        YamlDocuments.asMap(value(identity, "spec", "template", "metadata", "annotations"));
+
+    assertThat(YamlDocuments.asMap(queue.get("metadata")).get("annotations")).isNull();
+    assertThat(value(job, "metadata", "annotations", "argocd.argoproj.io/sync-wave"))
+        .isEqualTo("1");
+    assertThat(value(job, "metadata", "annotations", "argocd.argoproj.io/hook")).isNull();
+    assertThat(value(job, "spec", "ttlSecondsAfterFinished")).isNull();
+    assertThat(applyContainer.get("image"))
+        .isEqualTo(
+            "postgres:16.14@sha256:da8cf245a60506e50a0a8cbb0f39c559ca622d92490605b67fcadc74ca1ea8e4");
+    assertThat(value(ai, "metadata", "annotations", "argocd.argoproj.io/sync-wave")).isEqualTo("2");
+    assertThat(patchPaths).contains("29-ai-read-model-deployment-identity-patch.yaml");
+    assertThat(jobAnnotations)
+        .containsKeys(
+            "openat.io/target-workload-revision",
+            "openat.io/deployment-run-id",
+            "openat.io/rotation-identity",
+            "openat.io/target-active-resource-version-identity",
+            "openat.io/read-model-identity");
+    assertThat(podAnnotations)
+        .containsKeys(
+            "openat.io/target-workload-revision",
+            "openat.io/target-active-resource-version-identity",
+            "openat.io/read-model-identity");
+    assertThat(podLabels)
+        .containsKeys(
+            "openat.io/deployment-run-id",
+            "openat.io/rotation-identity",
+            "openat.io/target-active-rv-hash");
+    assertThat(read("k8s", "base", "kustomization.yaml"))
+        .contains("29-ai-read-model-job-name.yaml", "fieldPath: data.jobName", "metadata.name");
+    // overlay는 CD가 이미지 pin만 갱신하는 자리다. CD가 이 파일을 매번 전체 재직렬화하므로
+    // 매니페스트를 여기 추가하면 병합 때 상시 충돌 대상이 되고, 병합 소유권 집행이
+    // 이미지 항목 말고는 골격을 main 것으로 확정하는 만큼 그 추가분이 살아남지 못한다.
+    assertThat(overlay.keySet())
+        .containsExactlyInAnyOrder("apiVersion", "kind", "resources", "images");
+    assertThat(overlay.get("resources")).isEqualTo(List.of("../base"));
+    assertThat(read(".github", "workflows", "deploy.yml"))
+        .contains("READ_MODEL_ARTIFACT_HASH", "CURRENT_READ_MODEL_IDENTITY")
+        .contains("완료된 Job을 재사용")
+        .contains("REVISION_PATCH=k8s/base/29-ai-query-secret-revision-patch.yaml")
+        .contains("JOB_NAME_STATE=k8s/base/29-ai-read-model-job-name.yaml")
+        .contains("IDENTITY_PATCH=k8s/base/29-ai-read-model-deployment-identity-patch.yaml")
+        .doesNotContain("ai-read-model-apply\")].hookPhase")
+        .doesNotContain("k8s/overlay/ai-");
+  }
+
+  @Test
+  @DisplayName("main→deploy/state 병합은 매니페스트 구조는 main, 이미지 pin은 deploy/state로 확정한다")
+  void deployStateMerge_enforcesManifestOwnership() throws IOException {
+    String mergeScript = read("k8s", "bootstrap", "merge-main-into-deploy-state.sh");
+    String imageOwnership = read("k8s", "bootstrap", "apply-image-pin-ownership.py");
+
+    // 병합 전 deploy/state의 이미지 pin을 먼저 확보하고, 병합 자체는 커밋을 유보한 상태로
+    // 두어 충돌 해소를 소유권 규칙이 결정하게 한다.
+    assertThat(mergeScript)
+        .contains("\"$GIT\" show \"HEAD:$OVERLAY\" > \"$STATE_OVERLAY\"")
+        .contains("\"$GIT\" merge --no-ff --no-commit \"$SHA\"")
+        .contains("apply-image-pin-ownership.py")
+        // 규칙에 없는 충돌은 자동 해소하지 않고 병합을 되돌린다.
+        .contains("소유권 규칙에 없는 충돌")
+        .contains("\"$GIT\" merge --abort")
+        // read-model identity 값 2종은 한쪽만 main이 되면 뒤 검증에서 배포가 멈추므로 한 벌로 맞춘다.
+        .contains("$JOB_NAME_STATE\" \"$IDENTITY_PATCH\"")
+        // 집행 후에도 미해결 충돌이 남으면 커밋하지 않는다.
+        .contains("소유권 집행 후에도 미해결 충돌");
+    // 이미지 태그(값)와 항목 집합(구조)이 둘 다 보존됐는지 집행 후 다시 확인한다.
+    assertThat(imageOwnership)
+        .contains("블록을 찾지 못했습니다")
+        .contains("이미지 pin이 보존되지 않았습니다")
+        .contains("구조가 보존되지 않았습니다")
+        .doesNotContain("import yaml");
+  }
+
+  @Test
+  @DisplayName("배포 성공은 대상 read-model Job과 AI pod가 같은 Secret revision을 소비한 뒤에만 인정한다")
+  void deploymentWorkflow_requiresReadModelJobAndAiRolloutIdentity() throws IOException {
+    String workflow = read(".github", "workflows", "deploy.yml");
+    Map<String, Object> convergence = step(workflow, "Wait for ArgoCD convergence");
+    Map<String, Object> convergenceEnvironment = YamlDocuments.asMap(convergence.get("env"));
+    String convergenceScript = (String) convergence.get("run");
+    String rolloutProof = read("k8s", "bootstrap", "prove-ai-query-rollout.sh");
+
+    assertThat(convergenceEnvironment)
+        .containsEntry("TARGET_REV", "${{ steps.pin.outputs.revision }}")
+        .containsEntry("EXPECTED_WORKLOAD_REV", "${{ steps.pin.outputs.workload_revision }}")
+        .containsEntry("EXPECTED_ACTIVE_RV", "${{ steps.pin.outputs.active_rv }}")
+        .containsEntry("EXPECTED_ACTIVE_RV_HASH", "${{ steps.pin.outputs.active_rv_hash }}")
+        .containsEntry("EXPECTED_ROTATION_IDENTITY", "${{ steps.pin.outputs.rotation_identity }}")
+        .containsEntry("EXPECTED_DEPLOYMENT_RUN_ID", "${{ steps.pin.outputs.deployment_run_id }}")
+        .containsEntry("EXPECTED_READ_MODEL_JOB", "${{ steps.pin.outputs.read_model_job }}")
+        .containsEntry(
+            "EXPECTED_READ_MODEL_IDENTITY", "${{ steps.pin.outputs.read_model_identity }}");
+    assertThat(convergenceScript)
+        .contains("READ_MODEL_STATE\" = \"$EXPECTED_READ_MODEL_STATE")
+        .contains("kubectl get job \"$EXPECTED_READ_MODEL_JOB\"")
+        .contains("$RUNNER_TEMP/openat-deploy-scripts/prove-ai-query-rollout.sh")
+        .contains("prove_ai_rollout \"$AI_STATE\" \"$EXPECTED_ACTIVE_RV\"")
+        .contains("AI_ROLLOUT_PROOF=PROVEN")
+        .doesNotContain("prove_ai_rollout()")
+        .doesNotContain("get replicasets -n openat -l app=ai")
+        .doesNotContain("hookPhase");
+    assertThat(rolloutProof)
+        .contains("prove_ai_rollout()")
+        .contains("deployment\\.kubernetes\\.io/revision")
+        .contains("get replicasets -n \"$namespace\" -l app=ai")
+        .contains("ownerReferences[?(@.controller==true)].uid")
+        .contains(".metadata.deletionTimestamp")
+        .contains("selected_rs_after");
+    assertThat(workflow).contains("steps.provision.outputs.reconcile_required == 'true'");
+  }
+
+  @Test
+  @DisplayName("자격증명 복구는 현재 실행과 검증된 DB 상태에만 결합된다")
+  void credentialRotation_reconcilesOnlyProvenState() throws IOException {
+    String workflow = read(".github", "workflows", "deploy.yml");
+    String applyScript = read("ai", "scripts", "apply-read-model.sh");
+    String reconcileScript = read("k8s", "bootstrap", "reconcile-ai-query-rotation.sh");
+    String secretManifest = read("k8s", "bootstrap", "secret-manifest.sh");
+    String createSecrets = read("k8s", "bootstrap", "create-secrets.sh");
+    String rotateSecret = read("k8s", "bootstrap", "rotate-ai-query-secret.sh");
+
+    assertThat(workflow)
+        .contains("${{ github.run_id }}-${{ github.run_attempt }}")
+        .contains("Stage trusted deployment scripts")
+        .contains("rotation_started=%s")
+        .contains("reconcile_required=%s")
+        .contains("steps.convergence.outcome != 'success'")
+        .contains("reconcile-ai-query-rotation.sh\" failure")
+        .contains("reconcile-ai-query-rotation.sh\" success")
+        .doesNotContain("kubectl delete secret ai-query-rollback-secrets");
+    assertThat(applyScript)
+        .contains("record_db_state PREVIOUS")
+        .contains("record_db_state NEW")
+        .contains("record_db_state UNKNOWN")
+        .contains("probe_query_login \"${AI_QUERY_DB_PREVIOUS_PASSWORD}\"")
+        .contains("verify_query_contract \"${AI_QUERY_DB_PASSWORD}\"");
+    assertThat(reconcileScript)
+        .contains("openat\\.io/rotation-run-id")
+        .contains("openat\\.io/target-active-resource-version")
+        .contains("openat\\.io/target-deploy-revision")
+        .contains("\"$GIT\" ls-remote --exit-code origin refs/heads/deploy/state")
+        .contains("Failed|Error")
+        .contains("DB 상태가 UNKNOWN")
+        .contains("operation_finished_epoch")
+        .contains("$SCRIPT_DIR/prove-ai-query-rollout.sh")
+        .contains("prove_ai_rollout \"$deployment_state\" \"$target_active_rv\"")
+        .contains("normalize_rollback_to_active")
+        .contains("restore_previous_and_normalize")
+        .doesNotContain("prove_target_hook_never_created");
+    assertThat(secretManifest)
+        .contains("render_secret_manifest()")
+        .contains("data-key=variable-name")
+        .contains("${!variable_name}")
+        .contains("kind: Secret")
+        .contains("base64")
+        .doesNotContain("mktemp");
+    assertThat(createSecrets)
+        .contains("$SCRIPT_DIR/secret-manifest.sh")
+        .contains("ai-inference-secrets")
+        .contains("CHAT_INFERENCE_API_KEY")
+        .doesNotContain("--from-literal", "--docker-password", "sys.argv", "set -a");
+    assertThat(rotateSecret)
+        .contains("$SCRIPT_DIR/secret-manifest.sh")
+        .doesNotContain("--from-literal", "--docker-password", "set -a");
+    assertThat(reconcileScript)
+        .contains("$SCRIPT_DIR/secret-manifest.sh")
+        .doesNotContain("--from-literal", "--docker-password");
+    assertThat(createSecrets)
+        .contains("--ignore-not-found")
+        .contains("최초 생성으로 간주하지 않습니다")
+        .contains("AI_QUERY_ROTATION_STARTED=true")
+        .contains("AI_QUERY_ROTATION_STARTED=false")
+        .contains("AI_QUERY_RECONCILE_REQUIRED=false")
+        .contains("openat.io/rotation-run-id=steady")
+        .contains("rotate-ai-query-secret.sh를 사용해야 합니다")
+        .doesNotContain("trap restore_unpublished_ai_rotation ERR INT TERM");
+    assertThat(rotateSecret)
+        .contains("restore_unpublished_ai_rotation")
+        .contains("trap restore_unpublished_ai_rotation ERR INT TERM")
+        .contains("openat.io/rotation-run-id")
+        .contains("openat.io/target-active-resource-version=pending");
+  }
+
+  private static String read(String first, String... more) throws IOException {
+    return Files.readString(Path.of(first, more), StandardCharsets.UTF_8);
+  }
+
+  private static Map<String, Object> step(String workflow, String name) {
+    Map<String, Object> document = YamlDocuments.parse(workflow).onlyDocument();
+    Map<String, Object> deployJob = YamlDocuments.asMap(value(document, "jobs", "deploy"));
+    return asMaps(deployJob.get("steps")).stream()
+        .filter(candidate -> name.equals(candidate.get("name")))
+        .findFirst()
+        .orElseThrow(() -> new IllegalStateException("workflow step이 없어요: " + name));
+  }
+}

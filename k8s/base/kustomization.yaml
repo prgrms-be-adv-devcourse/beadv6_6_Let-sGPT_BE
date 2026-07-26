@@ -1,9 +1,14 @@
-# resources: 단일 소유자 = main. deploy/state는 이 파일에 절대 쓰기 작업을 하지 않는다
-# (CD가 실행하는 어떤 명령도 base/를 건드리지 않음 — deploy.yml 전체 검색으로 확인 가능).
-# 그래서 main→deploy/state merge 시 이 파일은 deploy/state 쪽에서 한 번도 안 바뀐 채로
-# 유지되고, 항상 "한쪽만 바뀐" 상태라 git이 충돌 없이 자동 반영한다.
+# 매니페스트 구조의 단일 소유자 = main. CD(deploy/state)는 이 kustomization.yaml에 절대 쓰기
+# 작업을 하지 않는다. 그래서 main→deploy/state merge 시 이 파일은 deploy/state 쪽에서 한 번도
+# 안 바뀐 채로 유지되고, 항상 "한쪽만 바뀐" 상태라 git이 충돌 없이 자동 반영된다.
 # (이미지 태그 override는 ../overlay/kustomization.yaml 이 전담 — plan 7-15
 # deploystate_kustomize_merge_drift 참고.)
+#
+# CD가 값을 갱신하는 파일은 base/ 안에서 29-ai-* 셋뿐이다. 패치 대상·어노테이션 키 같은
+# 구조는 main이 소유하고, CD는 그 안의 seed 값 줄("bootstrap"/"steady")만 sed로 바꾼다.
+# main이 그 값 줄을 직접 고치는 일은 없어 병합이 자동으로 "구조는 main, 값은 deploy/state"가
+# 되고, 같은 줄이 충돌하면 병합 소유권 집행이 구조를 우선해 main 버전을 취한 뒤 값을 그 배포
+# 실행이 다시 계산한다(k8s/bootstrap/merge-main-into-deploy-state.sh).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: openat
@@ -26,6 +31,9 @@ resources:
   - 26-search.yaml
   - 27-queue.yaml
   - 28-ai.yaml
+  # 현재 적용 대상 read-model Job의 이름·identity를 담는 값 저장소. 아래 replacements가
+  # 이 값을 Job의 metadata.name으로 옮겨, identity가 바뀔 때만 새 Job이 생기게 한다.
+  - 29-ai-read-model-job-name.yaml
   - 30-frontend.yaml
   - 31-ingress.yaml
   - 32-https-redirect-middleware.yaml
@@ -34,6 +42,9 @@ resources:
   - 35-webhook-ingress.yaml
   - 50-networkpolicy.yaml
   - 60-warmup.yaml
+  # AI 모듈이 소유하는 read-model DDL·적용 스크립트와 Sync Job.
+  # 원본은 ai/ 밖으로 복제하지 않고 서브 kustomization이 ConfigMap으로 운반한다.
+  - ../../ai
   # warmup.sh를 ConfigMap(warmup-script)으로 생성하는 서브 kustomization. load restrictor
   # 회피용 — scripts/kustomization.yaml 주석 참고. Job(60-warmup.yaml)이 이 ConfigMap을 마운트.
   - ../../scripts
@@ -41,3 +52,26 @@ resources:
   # 모르고 cluster-scoped 리소스에도 namespace: openat을 강제로 찍어버리는 걸 kustomize build로
   # 실사 확인(ClusterRole 등 built-in 종류는 안 찍히지만 CRD는 찍힘). k8s/bootstrap/40-cert-issuer.yaml로
   # 분리해 1회성 kubectl apply -f로 적용(cert-manager 설치와 동일한 성격의 클러스터 인프라).
+
+# 조회 자격증명 회전과 read-model 적용 identity를 워크로드에 결합하는 패치.
+# 어떤 어노테이션·라벨을 심을지는 여기(main)가 정하고, 값만 CD가 갱신한다.
+patches:
+  - path: 29-ai-query-secret-revision-patch.yaml
+  - path: 29-ai-read-model-deployment-identity-patch.yaml
+
+# read-model 산출물 해시와 조회 Secret revision을 묶은 identity가 바뀌면 Job 이름도 바뀌어야
+# 새 Job이 생성된다. Job 원본(../../ai)은 AI 모듈이 소유하므로 CD가 그 파일을 고치지 않고,
+# 29-ai-read-model-job-name.yaml의 값을 이 replacement가 Job 이름으로 옮긴다.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ai-read-model-job-name
+      fieldPath: data.jobName
+    targets:
+      - select:
+          group: batch
+          version: v1
+          kind: Job
+          name: ai-read-model-apply
+        fieldPaths:
+          - metadata.name
