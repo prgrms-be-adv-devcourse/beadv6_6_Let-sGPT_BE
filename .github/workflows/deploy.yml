@@ -371,7 +371,7 @@ jobs:
             fi
           fi
           # Secret 값은 Git에 넣지 않는다. Kubernetes의 불투명 resourceVersion만 pod template에
-          # 반영하면, wave 9 read-model Job 확인 뒤 wave 10 AI rollout이 일어난다.
+          # 반영하면, wave 1 read-model Job 확인 뒤 wave 2 AI rollout이 일어난다.
           AI_QUERY_SECRET_REVISION=$(kubectl get secret ai-query-secrets -n openat -o jsonpath='{.metadata.resourceVersion}')
           case "$AI_QUERY_SECRET_REVISION" in
             ''|*[!A-Za-z0-9._-]*)

@@ -105,14 +105,14 @@ class AiReadModelDeploymentContractTest {
 
     assertThat(YamlDocuments.asMap(queue.get("metadata")).get("annotations")).isNull();
     assertThat(value(job, "metadata", "annotations", "argocd.argoproj.io/sync-wave"))
-        .isEqualTo("9");
+        .isEqualTo("1");
     assertThat(value(job, "metadata", "annotations", "argocd.argoproj.io/hook")).isNull();
     assertThat(value(job, "spec", "ttlSecondsAfterFinished")).isNull();
     assertThat(applyContainer.get("image"))
         .isEqualTo(
             "postgres:16.14@sha256:da8cf245a60506e50a0a8cbb0f39c559ca622d92490605b67fcadc74ca1ea8e4");
     assertThat(value(ai, "metadata", "annotations", "argocd.argoproj.io/sync-wave"))
-        .isEqualTo("10");
+        .isEqualTo("2");
     assertThat(patchPaths).contains("ai-read-model-deployment-identity.yaml");
     assertThat(jobAnnotations)
         .containsKeys(
