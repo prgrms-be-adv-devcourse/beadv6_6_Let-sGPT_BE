@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """overlay kustomization.yaml의 이미지 pin 소유권을 집행한다.
 
-구조(주석·apiVersion·kind·resources·override 대상 이미지의 집합)는 골격 파일이 소유하고,
-각 이미지의 태그는 deploy/state 파일이 소유한다. 골격에 있는 이미지 항목은 deploy/state에
-같은 name이 있으면 그 항목을 통째로 가져오고(태그·newName 유지), 없으면 골격 항목을 그대로
-쓴다(새 서비스 도입). deploy/state에만 남은 항목은 main이 더는 override하지 않는 이미지이므로
-버린다.
+구조(주석·apiVersion·kind·resources·override 대상 이미지의 집합, 그리고 각 이미지 항목의
+name·newName 같은 필드)는 골격 파일이 소유하고, 각 이미지의 태그(newTag)만 deploy/state 파일이
+소유한다. 그래서 항목은 항상 골격 것을 쓰고 그 안의 newTag 값만 deploy/state 값으로 치환한다 —
+항목을 통째로 가져오면 골격이 newName(저장소 경로 이전)을 바꿔도 옛 값으로 되돌아간다.
+deploy/state에 같은 name이 없으면 골격 항목을 그대로 쓴다(새 서비스 도입). deploy/state에만 남은
+항목은 main이 더는 override하지 않는 이미지이므로 버린다.
+
+태그 없는 배포는 base 이미지 참조를 그대로(사실상 latest) 내보내므로, 두 입력 모두 항목당
+newTag가 정확히 하나인지 검증하고 아니면 실패한다.
 
 YAML 파서(yq/PyYAML)를 쓰지 않고 텍스트 블록으로 다루는 이유: 러너에 yq가 없고, 재직렬화는
 바로 이 파일에서 상시 충돌을 만든 원인이라 여기서 또 하면 안 된다. 대신 마커를 못 찾거나
@@ -65,6 +69,17 @@ def parse_images(text, label):
             fail(f"{label}: 이미지 항목에서 name: 을 읽지 못했습니다: {entry!r}")
         if any(name == existing for existing, _ in named):
             fail(f"{label}: 이미지 항목 name이 중복입니다: {name}")
+        tags = tags_of(entry)
+        if not tags:
+            fail(
+                f"{label}: 이미지 항목 {name}에 newTag: 가 없습니다 "
+                "— 태그 없이 렌더되면 base 이미지 참조가 그대로(사실상 latest) 배포됩니다."
+            )
+        if len(tags) > 1:
+            fail(
+                f"{label}: 이미지 항목 {name}에 newTag: 가 {len(tags)}개 있습니다 "
+                f"— 어느 값이 pin인지 확정할 수 없습니다: {tags}"
+            )
         named.append((name, entry))
     if not named:
         fail(f"{label}: '{IMAGES_MARKER}' 블록에 이미지 항목이 없습니다.")
@@ -80,8 +95,29 @@ def parse_images(text, label):
     return lines[: start + 1], named, lines[end:]
 
 
+def tags_of(entry):
+    return [match.group(1) for match in map(TAG_FIELD.match, entry) if match]
+
+
 def tag_of(entry):
-    return next((match.group(1) for match in map(TAG_FIELD.match, entry) if match), None)
+    """항목의 태그를 읽는다. parse_images가 항목당 하나임을 이미 보장한 입력만 들어온다."""
+    tags = tags_of(entry)
+    if len(tags) != 1:
+        fail(f"이미지 항목의 newTag가 하나가 아닙니다({len(tags)}개): {entry!r}")
+    return tags[0]
+
+
+def with_tag(entry, tag):
+    """골격 항목을 그대로 두고 그 안의 newTag 값만 deploy/state 값으로 치환한다.
+
+    항목을 통째로 deploy/state에서 가져오면 name 말고 다른 구조 필드(newName 등)까지 옛 값으로
+    돌아간다. 소유권대로 구조는 골격, 태그만 deploy/state가 되게 값 토큰만 갈아끼운다.
+    """
+    replaced = []
+    for line in entry:
+        match = TAG_FIELD.match(line)
+        replaced.append(line[: match.start(1)] + tag + line[match.end(1) :] if match else line)
+    return replaced
 
 
 def indent_of(entry):
@@ -91,9 +127,10 @@ def indent_of(entry):
 def reindent(entry, target):
     """리스트 항목의 들여쓰기를 블록의 대세에 맞춘다.
 
-    골격(main, 2스페이스 들여쓰기)과 deploy/state(kustomize 재직렬화 결과라 들여쓰기 없음)의
-    항목을 한 블록에 섞으면 시퀀스 들여쓰기가 어긋나 YAML 자체가 깨진다. 항목 내부의 상대
-    들여쓰기는 유지하면서 전체만 평행이동한다.
+    골격(main)은 2스페이스 들여쓰기고 deploy/state는 kustomize 재직렬화 결과라 들여쓰기가 없다.
+    항목은 골격 것만 쓰므로 보통 이미 평행하지만, 블록 안에서 들여쓰기가 어긋나면 시퀀스가
+    깨져 YAML 자체를 못 읽으므로 한 종류로 맞춘다. 항목 내부의 상대 들여쓰기는 유지하면서
+    전체만 평행이동한다.
     """
     shift = target - indent_of(entry)
     if shift == 0:
@@ -120,7 +157,11 @@ def main():
     state_by_name = dict(state_images)
 
     chosen = [
-        (name, state_by_name[name] if name in state_by_name else entry, name in state_by_name)
+        (
+            name,
+            with_tag(entry, tag_of(state_by_name[name])) if name in state_by_name else entry,
+            name in state_by_name,
+        )
         for name, entry in skeleton_images
     ]
     target_indent = indent_of(chosen[0][1])
@@ -136,16 +177,17 @@ def main():
     indents = {len(line) - len(line.lstrip()) for line in body if LIST_ITEM.match(line)}
     if len(indents) != 1:
         fail(f"집행 결과의 이미지 항목 들여쓰기가 섞였습니다: {sorted(indents)}")
+    # parse_images가 집행 결과에도 항목당 newTag 유일성을 다시 확인한다(태그 없는 렌더 차단).
     _, result_images, _ = parse_images(rendered, "집행 결과")
     result_by_name = dict(result_images)
     for name, entry in state_images:
-        if name in result_by_name and tag_of(result_by_name[name]) != tag_of(entry):
+        if name in result_by_name and tags_of(result_by_name[name]) != [tag_of(entry)]:
             fail(f"집행 결과의 {name} 태그가 deploy/state 값과 다릅니다 — 이미지 pin이 보존되지 않았습니다.")
     if [name for name, _ in result_images] != [name for name, _ in skeleton_images]:
         fail("집행 결과의 이미지 항목 집합이 골격과 다릅니다 — 구조가 보존되지 않았습니다.")
 
     out_path.write_text(rendered, encoding="utf-8")
-    print(f"이미지 pin 유지({len(kept)}): {', '.join(kept) or '없음'}")
+    print(f"deploy/state 이미지 pin 유지({len(kept)}): {', '.join(kept) or '없음'}")
     print(f"main 신규 항목 채택({len(adopted)}): {', '.join(adopted) or '없음'}")
     print(f"main에 없어 제거({len(dropped)}): {', '.join(dropped) or '없음'}")
 
