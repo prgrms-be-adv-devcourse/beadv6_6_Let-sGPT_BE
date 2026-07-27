@@ -122,6 +122,7 @@ jobs:
               - 'k8s/observability/**'
               - 'k8s/base/**'
               - 'k8s/overlay/**'
+              - 'k8s/overlay-loadtest/**'
               - 'scripts/validate-observability.sh'
 
       - name: Ensure kustomize CLI
@@ -134,12 +135,15 @@ jobs:
           fi
 
       # 렌더 깨짐/누락파일/키불일치를 머지 전에 차단. observability 는 필수,
-      # overlay 는 로컬 렌더가 깨끗해 함께 검증한다.
-      - name: kustomize build dry-run (observability + overlay)
+      # overlay 는 로컬 렌더가 깨끗해 함께 검증한다. overlay-loadtest 는 평시 어떤
+      # Application 도 읽지 않아 렌더가 깨져도 조용하므로(매핑 JSON 오타·패치 대상 불일치가
+      # 부하테스트 켜는 순간의 sync 실패로 드러남) 여기서 미리 빌드해 시끄럽게 잡는다.
+      - name: kustomize build dry-run (observability + overlay + loadtest overlay)
         if: steps.obsfilter.outputs.observability == 'true'
         run: |
           kustomize build k8s/observability > /dev/null
           kustomize build k8s/overlay > /dev/null
+          kustomize build k8s/overlay-loadtest > /dev/null
 
       - uses: actions/setup-python@v5
         if: steps.obsfilter.outputs.observability == 'true'

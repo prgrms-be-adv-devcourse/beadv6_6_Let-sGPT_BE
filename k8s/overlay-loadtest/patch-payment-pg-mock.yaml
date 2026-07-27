@@ -1,0 +1,28 @@
+# payment의 아웃바운드 PG를 WireMock으로 돌리고, 캠페인 측정 조건을 그대로 고정한다.
+# env는 이름 키로 전략적 병합되므로 base(24-payment.yaml)의 나머지 env는 보존된다.
+#
+# 값의 성격:
+#   PG_BASE_URL          — 이 오버레이의 존재 이유(가짜 PG로 전환).
+#   HIKARI 풀 4          — 램프 라운드 실측 조건. 평시 base 값은 2이고, 커넥션 점유 구조
+#                          변경(OSIV·아웃박스) 검증이 끝나면 base 승격 여부를 다시 판단한다.
+#   HIKARI 커넥션타임아웃 — base와 동일한 5000. 풀 크기를 여기서 바꾸는 이상 짝이 되는
+#                          값도 한자리에서 읽히게 명시한다(값은 base와 같아 무변화).
+#   TOSS_RL_*            — payment의 PG 호출 유량제한(초당 허가 수·허가 대기 타임아웃).
+#                          기본 10/500ms는 목 상대로는 인위적 병목이라 측정이 오염된다.
+#                          50/1000ms가 램프 라운드에서 검증된 측정 조건.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment
+  namespace: openat
+spec:
+  template:
+    spec:
+      containers:
+        - name: payment
+          env:
+            - { name: PG_BASE_URL, value: "http://wiremock-toss.openat.svc.cluster.local:8080" }
+            - { name: SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, value: "4" }
+            - { name: SPRING_DATASOURCE_HIKARI_CONNECTIONTIMEOUT, value: "5000" }
+            - { name: TOSS_RL_PERMITS_PER_SEC, value: "50" }
+            - { name: TOSS_RL_TIMEOUT_MS, value: "1000" }

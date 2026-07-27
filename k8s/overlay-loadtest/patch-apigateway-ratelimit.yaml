@@ -1,0 +1,17 @@
+# 부하테스트 전용 유량제한 완화. 프로파일(application-compose.yaml)의 confirm 라우트
+# 기본값 2/5를 env로 오버라이드한다. 평시 2/5는 실서비스 보호 정책이라 base로 올리지
+# 않는다 — 여기 값은 "부하 생성이 게이트웨이 제한에 먼저 막혀 측정이 무의미해지는 것"을
+# 피하기 위한 테스트 편의값이다. webhook 라우트(GW_WEBHOOK_RL_*)는 기본 5/10을 유지한다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apigateway
+  namespace: openat
+spec:
+  template:
+    spec:
+      containers:
+        - name: apigateway
+          env:
+            - { name: GW_CONFIRM_RL_REPLENISH, value: "100" }
+            - { name: GW_CONFIRM_RL_BURST, value: "200" }
