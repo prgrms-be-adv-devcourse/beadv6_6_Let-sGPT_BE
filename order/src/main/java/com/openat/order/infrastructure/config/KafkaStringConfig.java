@@ -35,10 +35,12 @@ public class KafkaStringConfig {
     props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
     props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
     props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+    // Bounded producer timeouts: all three together to satisfy Kafka's constraint
+    // delivery.timeout.ms >= linger.ms + request.timeout.ms (otherwise the app fails to boot).
+    props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5_000);
+    props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5_000);
+    props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 10_000);
     DefaultKafkaProducerFactory<String, String> factory = new DefaultKafkaProducerFactory<>(props);
-    // 자동설정 ProducerFactory가 아니라 직접 등록한 팩토리라 Boot가 리스너를 안 붙여준다 —
-    // 이걸 붙여야 카프카 클라이언트 내부 지표(kafka_producer_request_latency_avg,
-    // record_send_total, buffer_available_bytes 등)가 프로메테우스로 노출된다.
     factory.addListener(new MicrometerProducerListener<>(meterRegistry));
     return factory;
   }

@@ -16,6 +16,25 @@ public interface OutboxEventJpaRepository extends JpaRepository<OutboxEvent, UUI
     List<OutboxEvent> findByStatusOrderByCreatedAtAsc(OutboxEventStatus status, Pageable pageable);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update OutboxEvent event "
+            + "set event.status = :published, event.publishedAt = :now "
+            + "where event.id in :ids and event.status = :pending")
+    int markPublishedAll(
+            @Param("ids") List<UUID> ids,
+            @Param("now") Instant now,
+            @Param("published") OutboxEventStatus published,
+            @Param("pending") OutboxEventStatus pending);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update OutboxEvent event "
+            + "set event.status = :failed, event.publishedAt = null "
+            + "where event.id = :id and event.status = :pending")
+    int markFailed(
+            @Param("id") UUID id,
+            @Param("failed") OutboxEventStatus failed,
+            @Param("pending") OutboxEventStatus pending);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("delete from OutboxEvent event "
             + "where event.status = :status and event.publishedAt < :cutoff")
     int deletePublishedBefore(
