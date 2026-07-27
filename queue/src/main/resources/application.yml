@@ -67,15 +67,20 @@ queue:
     ttl-seconds: 180            # 입장권 세션 창(초)
     sweep-interval-ms: 5000     # 미소진 입장권(TTL 경과) 회수 스위퍼 주기(ms)
   waiting:
-    heartbeat-ttl-ms: 10000     # 마지막 폴링 이후 이 시간 지나면 자리 회수
+    heartbeat-ttl-ms: 10000     # 마지막 폴링/SSE 재조회 이후 이 시간 지나면 자리 회수
     sweep-interval-ms: 5000
+    # SSE 연결이 전부 끊긴 뒤 실제 회수까지 기다리는 유예(ms) - 재연결/다중 탭 구분용.
+    # heartbeat-ttl-ms보다 충분히 짧게 유지(자세한 이유는 QueueProperties.Waiting 참고).
+    reconnect-grace-ms: ${QUEUE_RECONNECT_GRACE_MS:5000}
   polling:
     interval-ms: 2000           # 클라이언트에 안내할 권장 폴링 주기(ms) - 기존 GET /status(유지)용
   sse:
     # WebFlux+SSE 전환분. keep-alive 코멘트 이벤트 주기 - 프록시/브라우저의 idle 커넥션 타임아웃을
     # 막는 것과 동시에, Pub/Sub 신호를 놓쳤을 때의 최후 안전망(이 주기 안에는 반드시 재확인)
-    # 역할도 겸한다. heartbeat-ttl-ms(10000)보다 짧게 유지해야 폴링 하트비트 관례와 어긋나지 않는다.
-    keepalive-ms: ${QUEUE_SSE_KEEPALIVE_MS:8000}
+    # 역할도 겸한다. 기존 8000은 heartbeat-ttl-ms(10000)와 여유가 2초뿐이라(GC 멈춤·Redis
+    # 지연 한 번이면 정상 연결도 스위퍼에 걸릴 수 있었음), 예전 폴링 주기(2000ms)와 비슷한
+    # 여유를 두도록 낮췄다.
+    keepalive-ms: ${QUEUE_SSE_KEEPALIVE_MS:3000}
   entry:
     # 진입 요청 수량 전역 상한(서버 강제 안전망 - 프론트 1~5 제한은 API 직접 호출로 우회 가능).
     # 정책 변경 시 env만 바꾸면 됨. 드롭별 한도는 product의 limitPerUser(drop 해시)를 추가 적용.

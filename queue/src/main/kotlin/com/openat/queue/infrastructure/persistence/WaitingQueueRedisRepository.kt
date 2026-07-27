@@ -54,6 +54,8 @@ class WaitingQueueRedisRepository(
         RedisScript.of(ClassPathResource("redis/mark-asked.lua"), Long::class.java)
     private val sweepDecisionScript: RedisScript<String> =
         RedisScript.of(ClassPathResource("redis/sweep-decision.lua"), String::class.java)
+    private val removeFromQueueScript: RedisScript<Long> =
+        RedisScript.of(ClassPathResource("redis/remove-from-queue.lua"), Long::class.java)
 
     override suspend fun enqueueOrFastAdmit(
         dropId: String,
@@ -266,12 +268,16 @@ class WaitingQueueRedisRepository(
     }
 
     override suspend fun removeFromQueue(dropId: String, userId: String) {
-        Mono.`when`(
-            redisTemplate.opsForZSet().remove(RedisKeys.queue(dropId), userId),
-            redisTemplate.opsForZSet().remove(RedisKeys.heartbeat(dropId), userId),
-            redisTemplate.opsForHash<String, String>().remove(RedisKeys.waitingQuantity(dropId), userId),
-            redisTemplate.opsForHash<String, String>().remove(RedisKeys.decision(dropId), userId),
-        ).awaitSingleOrNull()
+        redisTemplate.execute(
+            removeFromQueueScript,
+            listOf(
+                RedisKeys.queue(dropId),
+                RedisKeys.heartbeat(dropId),
+                RedisKeys.waitingQuantity(dropId),
+                RedisKeys.decision(dropId),
+            ),
+            listOf(userId),
+        ).awaitFirstOrNull()
     }
 
     override suspend fun activeDropIds(): Set<String> =
