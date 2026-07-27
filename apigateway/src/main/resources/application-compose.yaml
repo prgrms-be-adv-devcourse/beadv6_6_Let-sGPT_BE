@@ -18,6 +18,10 @@ spring:
               uri: http://queue:9150
               predicates:
                 - Path=/api/v1/queues/**
+              # WebFlux+SSE 전환분 - application-local.yaml의 동일 라우트 설명 참고.
+              metadata:
+                response-timeout: 600000
+                connect-timeout: 5000
             - id: member-docs
               uri: http://member:9100
               predicates:
