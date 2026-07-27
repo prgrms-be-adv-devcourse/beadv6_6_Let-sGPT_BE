@@ -196,8 +196,8 @@ class OpenDropCacheTest {
   }
 
   @Test
-  @DisplayName("일반 드롭은 마감 임박순으로 정렬하고 마감 시각이 없으면 뒤에 둔다")
-  void findGeneral_sortsByCloseAtWithNullLast() {
+  @DisplayName("일반 드롭은 드롭 API가 준 순서를 그대로 유지한다")
+  void findGeneral_preservesDropApiOrder() {
     DropMeta noDeadline = drop(UUID.randomUUID(), UUID.randomUUID(), null);
     DropMeta later =
         drop(UUID.randomUUID(), UUID.randomUUID(), Instant.parse("2099-02-01T00:00:00Z"));
@@ -206,7 +206,7 @@ class OpenDropCacheTest {
     when(openDropClient.getAllOpenDrops()).thenReturn(List.of(noDeadline, later, sooner));
     cache.refresh();
 
-    assertThat(cache.findGeneral(3)).containsExactly(sooner, later, noDeadline);
+    assertThat(cache.findGeneral(3)).containsExactly(noDeadline, later, sooner);
   }
 
   @Test

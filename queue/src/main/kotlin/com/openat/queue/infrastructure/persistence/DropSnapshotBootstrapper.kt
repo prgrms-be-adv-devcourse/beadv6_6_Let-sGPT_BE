@@ -6,6 +6,8 @@ import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
+import reactor.core.publisher.Mono
+import reactor.core.scheduler.Schedulers
 
 /**
  * product의 `GET /api/v1/drops/{dropId}`(공개 REST API - Redis 직접접근 아님)를 캐시 미스 시
@@ -32,6 +34,19 @@ class DropSnapshotBootstrapper(
 ) {
 
     private val log = LoggerFactory.getLogger(DropSnapshotBootstrapper::class.java)
+
+    /**
+     * WebFlux+SSE 전환: [ensureTotalCached]는 여전히 블로킹(`StringRedisTemplate` GET +
+     * cache-miss 시 `RestClient`로 product REST 호출)이다 - 이 클래스를 `RestClient`→`WebClient`로
+     * 바꾸지 않기로 한 이유는 클래스 상단 주석의 Jackson 2/3 코덱 충돌 버그 이력 참고. 대신
+     * 호출부(StockRedisRepository/ConfirmedSalesRedisRepository)가 이 블로킹 호출 하나만
+     * `boundedElastic`으로 감싸면 되도록 여기서 한 번만 감싸 재사용한다 - "Redis 접근 계층"
+     * 재작성 범위에 든 게 아니라 REST 부트스트랩이라는 걸 이름으로도 명시한다.
+     */
+    fun ensureTotalCachedReactive(dropId: String): Mono<Long> =
+        Mono.fromCallable { ensureTotalCached(dropId) }
+            .subscribeOn(Schedulers.boundedElastic())
+            .mapNotNull { it }
 
     fun ensureTotalCached(dropId: String): Long? {
         redisTemplate.opsForValue().get(RedisKeys.total(dropId))?.toLongOrNull()?.let { return it }

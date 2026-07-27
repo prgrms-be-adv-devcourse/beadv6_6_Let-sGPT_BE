@@ -7,25 +7,30 @@ import com.openat.queue.domain.model.WaitingTicket
 import com.openat.queue.domain.repository.WaitingQueueRepository
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import kotlinx.coroutines.reactive.awaitFirstOrNull
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.core.io.ClassPathResource
-import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import org.springframework.data.redis.core.script.RedisScript
 import org.springframework.stereotype.Repository
+import reactor.core.publisher.Mono
 
 /**
- * infrastructure 계층: 도메인 포트([WaitingQueueRepository])를 구현한다. product 모듈의
- * `DropCacheRedisAdaptor` 관례(`StringRedisTemplate` + `RedisScript.of(ClassPathResource(...))`)를
- * 그대로 따른다.
+ * infrastructure 계층: 도메인 포트([WaitingQueueRepository])를 구현한다.
  *
- * 예전엔 admit.lua 등이 product 소유 `drop:{dropId}` 해시를 직접 읽었으나(MSA 경계 위반),
- * 지금은 `remaining`을 이 큐 소유의 `total(dropId) - reserved(dropId)`로 계산하고,
- * `closeAt`/`limitPerUser`는 `drop-meta(dropId)`(product REST 부트스트랩 캐시)에서 읽는다
- * (queue-remaining-sync 재설계 작업, `docs/_local/queue-remaining-reconciliation-contingency.md`
- * 참고).
+ * feature/queue-remaining-sync(코루틴 전환): `ReactiveStringRedisTemplate`(논블로킹 Redis
+ * 드라이버) 자체는 그대로 쓴다 - 병목 프로파일링 결과 Redis 명령 실행 자체는 병목이 아니었고
+ * (실측: VUS 300 정상부하에서 Redis CPU 10~13%, 순간 최대 34% - 자세한 근거는
+ * three-stage-story.md 참고), 이번 전환은 "Redis를 더 빠르게" 만드는 작업이 아니라 "리액터
+ * 연산자 체인 대신 코루틴 문법으로 같은 호출을 표현"하는 작업이다. 여러 Redis 호출을 동시에
+ * 보내야 하는 자리(예: [ticketOf]의 3개 조회)는 `Mono.zip`으로 여전히 파이프라이닝하되,
+ * 그 결과를 메서드 경계에서 `awaitSingle()`로 한 번만 구독한다 - 그 외 단일 호출은
+ * `execute(...).awaitSingleOrNull()` 형태로 직접 값을 받는다.
  */
 @Repository
 class WaitingQueueRedisRepository(
-    private val redisTemplate: StringRedisTemplate,
+    private val redisTemplate: ReactiveStringRedisTemplate,
 ) : WaitingQueueRepository {
 
     @Suppress("UNCHECKED_CAST")
@@ -49,8 +54,10 @@ class WaitingQueueRedisRepository(
         RedisScript.of(ClassPathResource("redis/mark-asked.lua"), Long::class.java)
     private val sweepDecisionScript: RedisScript<String> =
         RedisScript.of(ClassPathResource("redis/sweep-decision.lua"), String::class.java)
+    private val removeFromQueueScript: RedisScript<Long> =
+        RedisScript.of(ClassPathResource("redis/remove-from-queue.lua"), Long::class.java)
 
-    override fun enqueueOrFastAdmit(
+    override suspend fun enqueueOrFastAdmit(
         dropId: String,
         userId: String,
         quantity: Int,
@@ -70,26 +77,26 @@ class WaitingQueueRedisRepository(
                 RedisKeys.admittedQuantity(dropId),
                 RedisKeys.activeDrops(),
             ),
-            dropId,
-            userId,
-            quantity.toString(),
-            ttlSeconds.toString(),
-        ) ?: return null
-
+            listOf(dropId, userId, quantity.toString(), ttlSeconds.toString()),
+        ).awaitFirstOrNull() ?: return null
         val admitted = result.getOrNull(0)?.toIntOrNull() ?: 0
         val grantedQuantity = result.getOrNull(1)?.toIntOrNull() ?: 0
         return if (admitted == 1) AdmittedEntry(userId = userId, quantity = grantedQuantity) else null
     }
 
-    override fun ticketOf(dropId: String, userId: String): WaitingTicket? {
-        val rank = redisTemplate.opsForZSet().rank(RedisKeys.queue(dropId), userId) ?: return null
-        val total = redisTemplate.opsForZSet().zCard(RedisKeys.queue(dropId)) ?: 0
-        val quantity = redisTemplate.opsForHash<String, String>()
-            .get(RedisKeys.waitingQuantity(dropId), userId)?.toIntOrNull() ?: 1
-        return WaitingTicket(rank = rank, totalWaiting = total, quantity = quantity)
+    override suspend fun ticketOf(dropId: String, userId: String): WaitingTicket? {
+        val tuple = Mono.zip(
+            redisTemplate.opsForZSet().rank(RedisKeys.queue(dropId), userId),
+            redisTemplate.opsForZSet().size(RedisKeys.queue(dropId)).defaultIfEmpty(0),
+            redisTemplate.opsForHash<String, String>()
+                .get(RedisKeys.waitingQuantity(dropId), userId)
+                .mapNotNull { it.toIntOrNull() }
+                .defaultIfEmpty(1),
+        ).awaitSingleOrNull() ?: return null
+        return WaitingTicket(rank = tuple.t1, totalWaiting = tuple.t2, quantity = tuple.t3)
     }
 
-    override fun statusSnapshotOf(
+    override suspend fun statusSnapshotOf(
         dropId: String,
         userId: String,
         now: Instant,
@@ -109,11 +116,12 @@ class WaitingQueueRedisRepository(
                 RedisKeys.decision(dropId),
                 RedisKeys.reserved(dropId),
             ),
-            userId,
-            now.toEpochMilli().toString(),
-            if (touchHeartbeat) "1" else "0",
-        ) ?: error("status-snapshot.lua가 null을 반환했습니다(dropId=$dropId)")
+            listOf(userId, now.toEpochMilli().toString(), if (touchHeartbeat) "1" else "0"),
+        ).awaitFirstOrNull() ?: throw IllegalStateException("status-snapshot.lua가 null을 반환했습니다(dropId=$dropId)")
+        return toSnapshot(flat)
+    }
 
+    private fun toSnapshot(flat: List<String>): QueueStatusSnapshot {
         fun opt(index: Int): String? = flat.getOrNull(index)?.takeIf { it != ABSENT }
 
         // product의 closeAt 미설정 센티널("-1")은 음수 → null(마감 없음)로 정규화한다.
@@ -150,15 +158,14 @@ class WaitingQueueRedisRepository(
         )
     }
 
-    override fun markAskedIfAbsent(dropId: String, userId: String, now: Instant): Long =
+    override suspend fun markAskedIfAbsent(dropId: String, userId: String, now: Instant): Long =
         redisTemplate.execute(
             markAskedScript,
             listOf(RedisKeys.decision(dropId)),
-            userId,
-            now.toEpochMilli().toString(),
-        ) ?: -1
+            listOf(userId, now.toEpochMilli().toString()),
+        ).awaitFirstOrNull() ?: -1
 
-    override fun sweepDecisionTimeout(dropId: String, now: Instant, timeoutMs: Long): String? =
+    override suspend fun sweepDecisionTimeout(dropId: String, now: Instant, timeoutMs: Long): String? =
         redisTemplate.execute(
             sweepDecisionScript,
             listOf(
@@ -170,19 +177,18 @@ class WaitingQueueRedisRepository(
                 RedisKeys.reserved(dropId),
                 RedisKeys.outstanding(dropId),
             ),
-            now.toEpochMilli().toString(),
-            timeoutMs.toString(),
-        )?.takeIf { it.isNotEmpty() }
+            listOf(now.toEpochMilli().toString(), timeoutMs.toString()),
+        ).awaitFirstOrNull()?.takeIf { it.isNotEmpty() }
 
-    override fun sizeOf(dropId: String): Long =
-        redisTemplate.opsForZSet().zCard(RedisKeys.queue(dropId)) ?: 0
+    override suspend fun sizeOf(dropId: String): Long =
+        redisTemplate.opsForZSet().size(RedisKeys.queue(dropId)).defaultIfEmpty(0).awaitSingle()
 
-    override fun admittedQuantityOf(dropId: String, userId: String): Int? =
-        redisTemplate.opsForValue().get(RedisKeys.admission(dropId, userId))?.toIntOrNull()
+    override suspend fun admittedQuantityOf(dropId: String, userId: String): Int? =
+        redisTemplate.opsForValue().get(RedisKeys.admission(dropId, userId)).awaitSingleOrNull()?.toIntOrNull()
 
-    override fun sweepExpired(dropId: String, now: Instant, heartbeatTtlMs: Long): Long {
+    override suspend fun sweepExpired(dropId: String, now: Instant, heartbeatTtlMs: Long): Long {
         val cutoff = now.minus(heartbeatTtlMs, ChronoUnit.MILLIS)
-        val removed = redisTemplate.execute(
+        return redisTemplate.execute(
             sweepScript,
             listOf(
                 RedisKeys.queue(dropId),
@@ -190,12 +196,11 @@ class WaitingQueueRedisRepository(
                 RedisKeys.waitingQuantity(dropId),
                 RedisKeys.decision(dropId),
             ),
-            cutoff.toEpochMilli().toString(),
-        )
-        return removed ?: 0
+            listOf(cutoff.toEpochMilli().toString()),
+        ).awaitFirstOrNull() ?: 0
     }
 
-    override fun admitBatch(dropId: String, maxScan: Int, ttlSeconds: Long): List<AdmittedEntry> {
+    override suspend fun admitBatch(dropId: String, maxScan: Int, ttlSeconds: Long): List<AdmittedEntry> {
         val flat = redisTemplate.execute(
             admitScript,
             listOf(
@@ -210,12 +215,8 @@ class WaitingQueueRedisRepository(
                 RedisKeys.admittedQuantity(dropId),
                 RedisKeys.decision(dropId),
             ),
-            dropId,
-            ttlSeconds.toString(),
-            Instant.now().toEpochMilli().toString(),
-            maxScan.toString(),
-        ) ?: emptyList()
-
+            listOf(dropId, ttlSeconds.toString(), Instant.now().toEpochMilli().toString(), maxScan.toString()),
+        ).awaitFirstOrNull() ?: emptyList()
         val entries = ArrayList<AdmittedEntry>(flat.size / 2)
         var i = 0
         while (i < flat.size) {
@@ -225,24 +226,29 @@ class WaitingQueueRedisRepository(
         return entries
     }
 
-    override fun sweepAdmittedTickets(dropId: String, now: Instant): Long {
-        val reclaimed = redisTemplate.execute(
+    override suspend fun sweepAdmittedTickets(dropId: String, now: Instant): Long =
+        redisTemplate.execute(
             sweepAdmittedScript,
             listOf(RedisKeys.admitted(dropId), RedisKeys.admittedQuantity(dropId), RedisKeys.outstanding(dropId)),
-            now.toEpochMilli().toString(),
-        )
-        return reclaimed ?: 0
-    }
+            listOf(now.toEpochMilli().toString()),
+        ).awaitFirstOrNull() ?: 0
 
-    override fun outstandingOf(dropId: String): Long =
-        redisTemplate.opsForValue().get(RedisKeys.outstanding(dropId))?.toLongOrNull() ?: 0
+    override suspend fun outstandingOf(dropId: String): Long =
+        redisTemplate.opsForValue().get(RedisKeys.outstanding(dropId)).awaitSingleOrNull()?.toLongOrNull() ?: 0
 
-    override fun markWaitConfirmed(dropId: String, userId: String, grantableNowAtConfirm: Long, maxAtConfirm: Long?) {
+    override suspend fun markWaitConfirmed(
+        dropId: String,
+        userId: String,
+        grantableNowAtConfirm: Long,
+        maxAtConfirm: Long?,
+    ) {
         val value = "$WAIT_CONFIRMED_MARKER:$grantableNowAtConfirm:${maxAtConfirm?.toString() ?: NO_MAX_MARKER}"
-        redisTemplate.opsForHash<String, String>().put(RedisKeys.decision(dropId), userId, value)
+        redisTemplate.opsForHash<String, String>()
+            .put(RedisKeys.decision(dropId), userId, value)
+            .awaitSingle()
     }
 
-    override fun admitSingle(dropId: String, userId: String, ttlSeconds: Long): AdmittedEntry? {
+    override suspend fun admitSingle(dropId: String, userId: String, ttlSeconds: Long): AdmittedEntry? {
         val grant = redisTemplate.execute(
             decidePartialScript,
             listOf(
@@ -256,33 +262,39 @@ class WaitingQueueRedisRepository(
                 RedisKeys.admittedQuantity(dropId),
                 RedisKeys.decision(dropId),
             ),
-            dropId,
-            userId,
-            ttlSeconds.toString(),
-            Instant.now().toEpochMilli().toString(),
-        ) ?: 0
-
+            listOf(dropId, userId, ttlSeconds.toString(), Instant.now().toEpochMilli().toString()),
+        ).awaitFirstOrNull() ?: 0
         return if (grant > 0) AdmittedEntry(userId = userId, quantity = grant.toInt()) else null
     }
 
-    override fun removeFromQueue(dropId: String, userId: String) {
-        redisTemplate.opsForZSet().remove(RedisKeys.queue(dropId), userId)
-        redisTemplate.opsForZSet().remove(RedisKeys.heartbeat(dropId), userId)
-        redisTemplate.opsForHash<String, String>().delete(RedisKeys.waitingQuantity(dropId), userId)
-        redisTemplate.opsForHash<String, String>().delete(RedisKeys.decision(dropId), userId)
+    override suspend fun removeFromQueue(dropId: String, userId: String) {
+        redisTemplate.execute(
+            removeFromQueueScript,
+            listOf(
+                RedisKeys.queue(dropId),
+                RedisKeys.heartbeat(dropId),
+                RedisKeys.waitingQuantity(dropId),
+                RedisKeys.decision(dropId),
+            ),
+            listOf(userId),
+        ).awaitFirstOrNull()
     }
 
-    override fun activeDropIds(): Set<String> =
-        redisTemplate.opsForSet().members(RedisKeys.activeDrops()) ?: emptySet()
+    override suspend fun activeDropIds(): Set<String> =
+        redisTemplate.opsForSet().members(RedisKeys.activeDrops()).collectList().awaitSingle().toSet()
 
-    override fun pruneIfIdle(dropId: String): Boolean {
-        if (sizeOf(dropId) > 0 || outstandingOf(dropId) > 0) {
-            return false
-        }
+    override suspend fun pruneIfIdle(dropId: String): Boolean {
+        // 아래 두 조회는 서로 무관하니 zip으로 동시에 보낸다(예전 Reactor 버전과 동일한 왕복 수).
+        val sizeMono = redisTemplate.opsForZSet().size(RedisKeys.queue(dropId)).defaultIfEmpty(0)
+        val outstandingMono = redisTemplate.opsForValue().get(RedisKeys.outstanding(dropId))
+            .mapNotNull { it.toLongOrNull() }.defaultIfEmpty(0)
+        val sizeAndOutstanding = Mono.zip(sizeMono, outstandingMono).awaitSingle()
+        if (sizeAndOutstanding.t1 > 0 || sizeAndOutstanding.t2 > 0) return false
         // 이 체크와 SREM 사이의 좁은 레이스(그 순간 다른 요청이 막 SADD)는 최악의 경우
         // 다음 스케줄러/스위퍼 tick에서 다시 SADD되어 자가치유되므로(active-drops는 권위
         // 있는 상태가 아니라 발견용 힌트일 뿐) 원자성이 필수는 아니다.
-        return redisTemplate.opsForSet().remove(RedisKeys.activeDrops(), dropId) == 1L
+        val removed = redisTemplate.opsForSet().remove(RedisKeys.activeDrops(), dropId).awaitSingle()
+        return removed == 1L
     }
 
     companion object {

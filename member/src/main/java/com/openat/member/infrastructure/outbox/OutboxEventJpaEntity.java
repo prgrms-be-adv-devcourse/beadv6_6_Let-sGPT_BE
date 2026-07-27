@@ -15,7 +15,7 @@ import org.hibernate.annotations.UuidGenerator;
 
 /**
  * 아웃박스 이벤트(최소 버전) — payment 모듈의 outbox 패턴을 member에 이식.
- * 도메인 쓰기와 같은 트랜잭션으로 이 행을 적재하고, {@link OutboxPublisher}가 별도 스케줄러로
+ * 도메인 쓰기와 같은 트랜잭션으로 이 행을 적재하고, 별도 스케줄러({@link OutboxPollingScheduler})가
  * Kafka에 발행한 뒤 PUBLISHED로 표시한다. dual-write(DB 커밋은 됐는데 Kafka 발행만 실패)로 인한
  * 이벤트 유실을 방지하기 위함이다.
  *

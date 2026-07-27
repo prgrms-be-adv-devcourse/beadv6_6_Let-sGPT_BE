@@ -5,6 +5,7 @@ import com.openat.queue.domain.repository.WaitingQueueRepository
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.runBlocking
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Component
 
@@ -34,11 +35,16 @@ class QueueMetricsConfig(
             // 매 tick마다 불필요한 호출 자체를 줄이기 위해 여기서 먼저 걸러낸다).
         }
 
+        // feature/queue-remaining-sync(코루틴 전환): sizeOf/snapshotOf가 suspend fun이므로,
+        // Prometheus 스크레이프 스레드(Netty 이벤트루프가 아니다)에서 값을 읽는 이 순간에만
+        // runBlocking으로 짧게 진입한다 - Micrometer Gauge 콜백은 애초에 동기 함수라야 하고,
+        // 이 스레드에서의 블로킹은 요청 경로와 무관하다(WebFlux+SSE 전환의 `.block()`과
+        // 동등한 경계).
         meterRegistry.gauge(
             "queue.waiting.size",
             Tags.of("dropId", dropId),
             waitingQueueRepository,
-        ) { repository -> repository.sizeOf(dropId).toDouble() }
+        ) { repository -> runBlocking { repository.sizeOf(dropId) }.toDouble() }
 
         meterRegistry.gauge(
             "queue.outstanding",
@@ -50,6 +56,6 @@ class QueueMetricsConfig(
             "queue.stock.remaining",
             Tags.of("dropId", dropId),
             stockRepository,
-        ) { repository -> (repository.snapshotOf(dropId)?.remaining ?: -1L).toDouble() }
+        ) { repository -> runBlocking { repository.snapshotOf(dropId) }?.remaining?.toDouble() ?: -1.0 }
     }
 }

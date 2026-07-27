@@ -23,6 +23,7 @@ data class QueueProperties(
     val polling: Polling = Polling(),
     val entry: Entry = Entry(),
     val decision: Decision = Decision(),
+    val sse: Sse = Sse(),
 ) {
     data class Entry(
         /**
@@ -65,10 +66,26 @@ data class QueueProperties(
         @DefaultValue("10000") val heartbeatTtlMs: Long = 10000,
         /** 만료된 대기자를 정리하는 스위퍼 주기 */
         @DefaultValue("5000") val sweepIntervalMs: Long = 5000,
+        /**
+         * SSE 연결이 전부 끊긴 뒤(같은 dropId+userId의 마지막 구독이 취소된 뒤) 실제로 대기열
+         * 자리를 회수하기까지 기다리는 유예 시간(ms). 지하철 터널 진입, 폰 화면 잠금/앱 전환,
+         * 탭 재연결처럼 "곧 다시 붙는" 끊김과 "진짜로 나간" 끊김을 SSE 연결 하나만 보고는 구분할
+         * 수 없다 - 유예 시간 안에 같은 dropId+userId로 새 구독이 들어오면 예약된 회수를
+         * 취소한다. heartbeatTtlMs(10000)보다 충분히 짧게 잡아야 이 유예 자체가 새로운 지연
+         * 이탈 처리 창이 되지 않는다(진짜로 안 돌아오는 사람은 결국 heartbeatTtlMs 스위퍼가
+         * 잡아준다 - 이 유예는 "더 빠른 회수"라는 최적화의 안전판일 뿐, 유일한 수단이 아니다).
+         */
+        @DefaultValue("5000") val reconnectGraceMs: Long = 5000,
     )
 
     data class Polling(
         /** 클라이언트에 안내할 권장 폴링 주기(ms). 서버가 응답에 실어 클라이언트 폴링 빈도를 제어한다 */
         @DefaultValue("2000") val intervalMs: Long = 2000,
+    )
+
+    data class Sse(
+        /** WebFlux+SSE 전환분: keep-alive 코멘트 이벤트 주기(ms) - idle 커넥션 타임아웃 방지 +
+         * Pub/Sub 신호 유실 시의 최후 재확인 안전망을 겸한다. */
+        @DefaultValue("8000") val keepaliveMs: Long = 8000,
     )
 }
