@@ -12,7 +12,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-// outbox 최소 버전(A8) — DB 커밋과 같은 트랜잭션으로 적재, 별도 스케줄러(OutboxPublisher)가 발행.
+// outbox 최소 버전 — DB 커밋과 같은 트랜잭션으로 적재, 별도 스케줄러(OutboxPollingScheduler)가 발행.
 @Entity
 @Table(name = "outbox_events")
 @Getter
