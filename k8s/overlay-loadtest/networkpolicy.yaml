@@ -1,0 +1,34 @@
+# WireMock 격리. 이 파드의 8080은 목 응답 API와 **인증 없는 관리 API**(/__admin — 스텁
+# 조회·변조·삭제, 요청 저널 열람)를 같은 포트로 노출한다. 정책이 없으면 openat의 모든
+# 파드가 거기 닿을 수 있어(무정책 = 전면 허용), 측정 중 스텁이 바뀌어도 알 수 없다.
+# 실제 호출원은 payment 하나뿐이므로 그것만 연다.
+#
+# 이 정책이 막지 않는 것(의도된 예외):
+#   - kubelet의 readiness/liveness 프로브 — NetworkPolicy 적용 대상이 아니다
+#     (base의 데이터 tier 정책에서 이미 검증된 성질).
+#   - `kubectl port-forward` 경유 접근 — kubelet이 노드에서 파드로 직접 연결하므로 CNI의
+#     파드 간 정책을 타지 않는다. 즉 캠페인 운영(저널 확인, 스텁 수 점검)은 그대로 된다.
+#     지연·스텁 변경은 어차피 매핑 커밋으로 하므로 관리 API 쓰기 경로는 필요 없다.
+#
+# 스타일은 k8s/base/50-networkpolicy.yaml의 exporter 전용 정책과 같다. 다른 워크로드의
+# selector는 건드리지 않는다(신규 리소스 추가만).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wiremock-toss-ingress
+  namespace: openat
+  labels:
+    app: wiremock-toss
+    openat.dev/loadtest: "true"
+spec:
+  podSelector:
+    matchLabels: { app: wiremock-toss }
+  policyTypes: [Ingress]
+  ingress:
+    # payment 파드에서 오는 8080만 허용(PG 아웃바운드 경로). egress는 제한하지 않는다 —
+    # WireMock은 아웃바운드 호출을 하지 않고, 프록시로 쓰지도 않는다.
+    - from:
+        - podSelector:
+            matchLabels: { app: payment }
+      ports:
+        - { port: 8080, protocol: TCP }
