@@ -18,13 +18,13 @@ public class OutboxPollingScheduler {
 
     @Scheduled(fixedDelay = 3_000)
     public void publishPendingEvents() {
-        outboxEventRepository.findPending(BATCH_SIZE).forEach(event -> {
-            try {
-                outboxEventPublisher.publish(event.getId());
-            } catch (RuntimeException exception) {
-                log.error("Unexpected Outbox publishing failure; continuing batch. outboxEventId={}",
-                        event.getId(), exception);
-            }
-        });
+        try {
+            // Single-replica assumption: findPending has no FOR UPDATE SKIP LOCKED / distributed
+            // lock, so multiple replicas would poll the same PENDING rows and duplicate-send.
+            // Running >1 replica requires SKIP LOCKED or a distributed lock here.
+            outboxEventPublisher.publishAll(outboxEventRepository.findPending(BATCH_SIZE));
+        } catch (RuntimeException exception) {
+            log.error("Unexpected Outbox batch publishing failure.", exception);
+        }
     }
 }

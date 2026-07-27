@@ -31,6 +31,11 @@ public class KafkaStringConfig {
     props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
     props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
     props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+    // Bounded producer timeouts: all three together to satisfy Kafka's constraint
+    // delivery.timeout.ms >= linger.ms + request.timeout.ms (otherwise the app fails to boot).
+    props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5_000);
+    props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5_000);
+    props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 10_000);
     return new DefaultKafkaProducerFactory<>(props);
   }
 
