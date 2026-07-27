@@ -9,7 +9,7 @@ k6가 apigateway를 통해 전체 플로우를 돌린다. 토스페이먼츠는 
 
 | | |
 |---|---|
-| 런타임 | k3s 2노드. **server = `semi`** (Name `letsGpt-openAt-semi`, t3.large = 2 vCPU/8GiB, label `tier=hotpath`) 위에 앱 JVM 6개. **agent = `final`** (Name `letsGpt-openAt-final`, t3.medium, label `tier=observability`, taint `dedicated=observability:NoSchedule`) 위에 관측 스택 |
+| 런타임 | k3s 2노드. **server = `semi`** (Name `letsGpt-openAt-semi`, t3.large = 2 vCPU/8GiB, label `tier=hotpath`) 위에 앱 JVM 9개. **agent = `final`** (Name `letsGpt-openAt-final`, t3.medium, label `tier=observability`, taint `dedicated=observability:NoSchedule`) 위에 관측 스택 |
 | 배포 | ArgoCD Application `openat` (branch `deploy/state`, path `k8s/overlay`, `automated{prune,selfHeal}`) |
 | 진입점 | `https://openat.duckdns.org` → traefik → `apigateway:8000` |
 | Grafana | `https://grafana.openat.duckdns.org` |
@@ -134,10 +134,8 @@ git clone https://github.com/prgrms-be-adv-devcourse/beadv6_6_Let-sGPT_BE.git ~/
 cd ~/loadtest-repo && git checkout main && git pull
 ```
 
-> `loadtest/` 가 아직 커밋되지 않았다면 위 클론에는 이 디렉터리가 없다. 그럴 땐 커밋·푸시가
-> 먼저다. 정말 급하면 SSM 세션에서 `cat > loadtest/scripts/pg-mock-on.sh <<'EOF' ... EOF`
-> 로 붙여넣어도 되지만(SSM은 파일 전송을 못 한다), mapping JSON 4개까지 같이 붙여야 하므로
-> 권장하지 않는다.
+`loadtest/`는 현재 `main`에 포함돼 있으므로 위 별도 클론에서 바로 사용할 수 있다. 실행 전에는
+`git pull`로 운영 배포와 같은 revision의 스크립트인지 확인한다.
 
 ---
 
@@ -188,10 +186,10 @@ PROFILE=ramp USER_COUNT=60 node loadtest/k6/seed.js
 
 ### scoped 토큰 (여기가 제일 잘 깨진다)
 
-게이트웨이(`SecurityConfig:189-192`)는 `/api/v1/products`, `/api/v1/drops` 쓰기에
+게이트웨이 `SecurityConfig`는 `/api/v1/products`, `/api/v1/drops` 쓰기에
 **scoped JWT**(`typ=scoped`, `aud` 에 `openat-product`)만 허용하고 일반 회원 access 토큰을
 명시적으로 거부한다. 그리고 그 토큰의 TTL은 **120초**다
-(`member/src/main/resources/application.yml:39` `jwt.scoped-token-expire-seconds: 120`).
+(`member/src/main/resources/application.yml`의 `jwt.scoped-token-expire-seconds`).
 
 시더는 발급 직후 상품·드롭을 연달아 만들고, 남은 수명이 30초 미만이면 알아서 재발급한다.
 그래도 401/403이 나면 "만료였는지 권한이었는지"를 경과 초와 함께 알려준다 — 밋밋한 401로
@@ -510,7 +508,7 @@ OOMKill되지 않았는지 확인할 수 있다(목이 죽으면 그 뒤 수치�
 
 ### 알 수 없는 것
 
-- **절대 처리량 숫자.** 앱 노드는 2 vCPU에 JVM 6개가 같이 산다. payment가 얻는 CPU는 다른
+- **절대 처리량 숫자.** 앱 노드는 2 vCPU에 JVM 9개가 같이 산다. payment가 얻는 CPU는 다른
   서비스가 그 순간 무엇을 하느냐에 따라 매 실행 달라진다. "초당 N건"을 외부에 인용하지 말 것.
 - **PG 자체의 실제 지연 특성.** WireMock의 lognormal은 우리가 정한 숫자다. 실 토스의 꼬리
   지연(p99), 커넥션 재사용 실패, TLS 재협상, 레이트리밋은 재현하지 않는다.
@@ -543,9 +541,11 @@ OOMKill되지 않았는지 확인할 수 있다(목이 죽으면 그 뒤 수치�
 | `SKIP_STOCK_CHECK` | — | 재고 사전조건 검사 우회(권장하지 않음) |
 | `QTY` | `1` | 큐 진입 시 요청 수량 |
 | `MAX_WAIT_MS` / `MAX_POLLS` | `120000` / `120` | 폴링 상한 — 멈춘 VU가 영원히 돌지 않게 |
+| `POLL_FLOOR_MS` | `200` | 서버 권고 폴링 간격의 하한 |
 | `POLL_CEIL_MS` | `5000` | 서버 권고 `pollIntervalMs` 상한. 큐 heartbeat TTL 10s 아래 유지 |
 | `DECISION_CHOICE` | `PARTIAL` | `DECISION_REQUIRED` 응답 |
 | `FAULT_RATE_4XX` / `FAULT_RATE_5XX` | `0` / `0` | 결함 주입 비율 |
+| `THINK_TIME_MS` | `1000` | iteration 끝의 사용자 대기 시간 |
 | `USERS_FILE` | `./users.json` | `loadtest/k6/` 기준 상대경로 |
 
 시더(`seed.js`):
@@ -565,7 +565,7 @@ OOMKill되지 않았는지 확인할 수 있다(목이 죽으면 그 뒤 수치�
 | `DROP_CLOSE_AFTER_S` | — (무기한) | 켜면 테스트 도중 드롭이 닫힐 수 있다 |
 | `EST_ITER_SEC` | `4` | 사이징용 iteration 소요 가정(초) |
 | `QTY` | `1` | 사이징용 iteration당 수량 |
-| `USER_PREFIX` / `USER_PASSWORD` | `lt` / — | 계정·판매자 식별자 접두사 |
+| `USER_PREFIX` / `USER_PASSWORD` | `lt` / `loadtestPass1234` | 계정·판매자 식별자 접두사와 테스트 계정 비밀번호 |
 | `USERS_FILE` / `TARGET_FILE` | `./users.json` / `./target.json` | 산출물 경로 |
 
 스크립트(`pg-mock-*.sh`): `KUBECONFIG`(`/etc/rancher/k3s/k3s.yaml`), `LT_PG_DELAY_MEDIAN_MS`(300),

@@ -1,129 +1,140 @@
-# letsGPT - AWS 인프라 (Terraform)
+# openAt AWS 인프라 (Terraform)
 
-세미 프로젝트 기준 단일 EC2(t3.large) + 단일 퍼블릭 서브넷 + 단일 S3 버킷 구성.
-모듈화 없이 루트 모듈 평탄 구조로 작성되어 있다.
+> 2026-07-27 `dev` 구현 기준. Terraform은 AWS 기반 2노드 k3s 클러스터와 S3·IAM·네트워크를
+> 관리한다. 애플리케이션 배포 자체는 `main` CI 이후 `deploy.yml`과 ArgoCD가 담당한다.
 
-## 파일 구조
+## 현재 토폴로지
 
-| 파일 | 역할 |
+| 영역 | 현재 구성 |
 |---|---|
-| `provider.tf` | Terraform/AWS provider 설정, S3 backend(2단계 부트스트랩용) |
-| `network.tf` | VPC, 퍼블릭 서브넷 1개, IGW, 라우트 테이블, S3 Gateway VPC 엔드포인트 |
-| `security.tf` | EC2용 보안그룹 (80/443 공개, SSH 없음 - 접속은 SSM Session Manager 사용) |
-| `iam.tf` | EC2 인스턴스 프로파일(S3 접근 + SSM) |
-| `s3.tf` | S3 버킷(app 데이터 + tfstate 공용), 버전관리/암호화/Public Access Block/버킷 정책 |
-| `compute.tf` | EC2 인스턴스(들) + Elastic IP, IMDSv2 강제, user_data 로딩 |
-| `user_data.sh.tpl` | 부트스트랩 스크립트 템플릿 (Docker 설치 + deployer 계정 + SSM Agent 확인) |
-| `variables.tf` | 변수 정의 |
-| `outputs.tf` | 출력값 (IP, 버킷명, Role ARN, SSM 접속 명령어 등) |
-| `terraform.tfvars` | 실제 적용 값 |
+| 리전·네트워크 | `ap-northeast-2`, VPC 1개, 퍼블릭 서브넷 1개, IGW, S3 Gateway VPC Endpoint |
+| k3s server | `semi`: `t3.large`, gp3 50GB, label `tier=hotpath`, 계획 고정 사설 IP `10.0.1.10` |
+| k3s agent | `final`: `t3.medium`, gp3 50GB, label `tier=observability`, taint `dedicated=observability:NoSchedule` |
+| 외부 주소 | EC2별 Elastic IP 1개 |
+| 접근 | SSH 없이 SSM Session Manager |
+| 공개 인바운드 | HTTP 80, HTTPS 443 |
+| 노드 간 인바운드 | 같은 보안그룹에서만 k3s API 6443/TCP, Flannel 8472/UDP, kubelet 10250/TCP |
+| State | `team02-letsgpt-bucket/tfstate/letsGPT-openAt/terraform.tfstate`, S3 네이티브 lock |
 
-## 사전 준비
+`terraform.tfvars`에는 `semi`와 `final` 두 인스턴스가 모두 활성화돼 있다. 과거의
+“세미 1대에서 파이널 노드를 나중에 추가”하는 상태가 아니다.
 
-- Terraform >= 1.10 (S3 네이티브 락 `use_lockfile` 사용)
-- AWS CLI 자격 증명 설정 (`aws configure` 또는 환경변수)
-- AWS Session Manager Plugin (SSM 접속용, 로컬 PC에 설치)
+## 파일별 책임
 
-## State 백엔드 부트스트랩 (닭-달걀 문제 해결: 2단계)
+| 파일 | 책임 |
+|---|---|
+| `provider.tf` | Terraform/AWS·TLS·random provider와 S3 backend |
+| `network.tf` | VPC, 퍼블릭 서브넷, IGW, 라우트, S3 Gateway Endpoint |
+| `security.tf` | 80/443 공개와 k3s 노드 간 self 규칙 |
+| `compute.tf` | EC2 2대, EIP, k3s 조인 토큰, user data 주입 |
+| `user_data.sh.tpl` | Docker·AWS CLI·SSM Agent·runner·zram·k3s 설치와 역할별 설정 |
+| `iam.tf` | EC2 인스턴스 프로파일, SSM, 공용 S3의 `app/`·`ops/` 접근 |
+| `iam-oidc-k3s.tf` | k3s ServiceAccount OIDC와 `openat/product-sa` 전용 S3 Role |
+| `github-oidc.tf` | GitHub-hosted Terraform plan용 OIDC Role — AWS 리소스 조회와 `tfstate/` 읽기·lock 권한 |
+| `s3.tf` | 앱·이미지 prefix·tfstate가 함께 있는 주 버킷 |
+| `images.tf` | 별도 staging/final 이미지 버킷과 OIDC JWKS 미러 버킷 |
+| `variables.tf` / `terraform.tfvars` | 변수 계약과 현재 적용값 |
+| `outputs.tf` | 인스턴스·S3·IAM·OIDC 출력값 |
 
-이 코드는 state를 저장할 S3 버킷 자체도 직접 생성한다. 따라서 처음에는
-backend 없이(로컬 state로) 버킷을 먼저 만들고, 그 다음에 state를 S3로 옮긴다.
+## S3와 이미지 저장 경로
 
-### 1단계: 로컬 state로 최초 apply (버킷 생성)
+현재 k3s 애플리케이션 경로는 주 버킷 하나를 prefix로 나눠 쓴다.
 
-1. `terraform.tfvars`에서 `s3_bucket_name`을 전역적으로 유일한 이름으로 변경한다.
-2. `provider.tf`의 `backend "s3" { ... }` 블록은 **주석 상태 그대로 둔다**.
-3. 실행:
-   ```bash
-   terraform init
-   terraform apply
-   ```
-   이 시점의 state는 로컬 `terraform.tfstate`에 저장되며, `aws_s3_bucket.this`
-   (app 데이터 + tfstate 공용 버킷)가 생성된다.
+| prefix | 용도 |
+|---|---|
+| `images/staging/` | 브라우저 presigned PUT 임시 업로드, 1일 후 미승격 객체 정리 |
+| `images/final/` | product가 검증·승격한 서비스 이미지 |
+| `app/` | 애플리케이션 데이터 |
+| `ops/` | k3s·ArgoCD 운영 산출물 |
+| `tfstate/` | Terraform state와 lock |
 
-### 2단계: state를 S3로 이전
+`k8s/base/01-configmap.yaml`은 staging/final 버킷 이름을 모두
+`team02-letsgpt-bucket`으로 설정하고, `product-s3` Role도 이 버킷의 두 이미지 prefix만
+허용한다. `images.tf`의 별도 staging/final 버킷 리소스와 관련 output은 아직 코드에 남아
+있지만 현재 애플리케이션 런타임에는 연결되지 않는다.
 
-1. `provider.tf`의 `backend "s3" { ... }` 블록 주석을 해제한다.
-2. `bucket` 값을 1단계에서 사용한 `s3_bucket_name`과 동일하게 채운다.
-3. 실행:
-   ```bash
-   terraform init -migrate-state
-   ```
-   프롬프트에서 로컬 state를 S3로 복사할지 물으면 `yes`를 선택한다.
-   이후부터는 `tfstate/letsGPT-openAt/terraform.tfstate` 경로에
-   state가 저장되고, S3 네이티브 락(`use_lockfile = true`)으로 동시 실행을 방지한다.
-4. 로컬 `terraform.tfstate` / `terraform.tfstate.backup`은 더 이상 필요 없으므로
-   삭제해도 된다 (`.gitignore`에 의해 git에는 포함되지 않음).
+OIDC JWKS 미러 버킷은 discovery와 JWKS 두 객체만 익명 읽기를 허용하고 쓰기는 잠근다.
+실제 k3s issuer URL은 `https://openat.duckdns.org`이며, frontend가 같은 두 경로를
+ConfigMap으로 서빙한다.
 
-## 일반 적용(apply) 절차 (2단계 완료 후)
+## IAM과 키리스 인증
+
+- EC2는 인스턴스 프로파일로 SSM과 주 버킷의 `app/`·`ops/`만 접근한다.
+- product 파드는 `system:serviceaccount:openat:product-sa` 토큰을
+  `sts:AssumeRoleWithWebIdentity`로 교환한다. 정적 AWS 키를 파드에 저장하지 않는다.
+- product Role은 주 버킷의 `images/staging/*`·`images/final/*` 객체 권한만 갖고
+  `tfstate/*` 접근은 명시적으로 거부한다.
+- search는 product 이미지 API를 사용하므로 S3 Role이 없다.
+- `.github/workflows/terraform-plan.yml`은 GitHub OIDC Role로 PR의 `terraform/**`
+  변경을 plan한다. AWS 리소스는 `ReadOnlyAccess`로 조회하고, S3 `tfstate/`에는 state 읽기와
+  native lock 생성·해제를 위한 Put/Delete만 추가로 허용한다. CI는 `terraform apply`를 실행하지 않는다.
+
+## EC2 부트스트랩
+
+`user_data.sh.tpl`은 두 노드에 Docker, AWS CLI v2, deb 기반 SSM Agent, GitHub Actions
+self-hosted runner 바이너리, zram을 설치한다. 이어서 역할에 따라 k3s server 또는 agent를
+설치한다.
+
+- server는 외부 OIDC issuer, secrets encryption, CPU·메모리 예약, eviction 임계값을 설정하고
+  Helm을 설치한다.
+- agent는 server `10.0.1.10:6443`을 기다린 뒤 같은 사전공유 토큰으로 조인하고
+  observability taint를 적용한다.
+- runner 바이너리만 설치하며 GitHub 등록 토큰은 user data에 저장하지 않는다. 등록은
+  인스턴스 생성 후 한 번 수동으로 한다.
+
+`compute.tf`는 라이브 노드 교체를 막기 위해 `ami`, `user_data`, `private_ip` 변경을
+`ignore_changes`로 봉인한다. 이 세 값의 코드 변경은 기존 인스턴스에 자동 적용되지 않고 다음
+콜드 리빌드부터 반영된다. k3s 조인 토큰은 민감값이지만 Terraform state에는 저장되므로 state
+버킷 접근을 엄격히 제한해야 한다.
+
+## 실행
+
+사전 조건:
+
+- Terraform 1.10 이상
+- AWS CLI 자격증명
+- SSM 접속 시 Session Manager Plugin
+- `terraform.tfvars`의 전역 유일 S3 버킷 이름 확인
+
+현재 backend가 이미 구성된 일반 작업:
 
 ```bash
-terraform init      # backend가 이미 설정되어 있으면 자동으로 S3 state 사용
+cd terraform
+terraform init
+terraform fmt -check
+terraform validate
 terraform plan
+```
+
+`apply`는 plan을 사람이 확인한 뒤 로컬에서 명시적으로 실행한다.
+
+```bash
 terraform apply
 ```
 
-## 변수 설명 (`variables.tf`)
+완전히 새 AWS 계정에서 state 버킷부터 만드는 경우에만 2단계 부트스트랩이 필요하다.
 
-| 변수 | 설명 | 기본값 |
-|---|---|---|
-| `aws_region` | 리전 | `ap-northeast-2` |
-| `project_name` | 리소스 Name 태그/식별자 접두어 | `letsGpt-openAt` |
-| `vpc_cidr` | VPC CIDR | `10.0.0.0/16` |
-| `public_subnet_cidr` | 퍼블릭 서브넷 CIDR | `10.0.1.0/24` |
-| `availability_zone` | 서브넷 가용영역 | `ap-northeast-2a` |
-| `ec2_instances` | 생성할 EC2 맵 (`instance_type`, `root_volume_size`) | (필수, tfvars에서 정의) |
-| `deployer_user` | 배포 전용 계정 이름 (docker 그룹만, sudo 없음) | `deployer` |
-| `s3_bucket_name` | S3 버킷 이름 (app 데이터 + tfstate 공용, 전역 유일) | (필수) |
-| `s3_app_prefix` | IAM Role이 접근 가능한 S3 prefix | `app/` |
+1. `provider.tf`의 `backend "s3"` 블록을 잠시 주석 처리하고 로컬 state로 주 버킷을 만든다.
+2. backend를 복구하고 실제 버킷 이름을 설정한다.
+3. `terraform init -migrate-state`로 state를 S3에 옮긴다.
 
 ## SSM 접속
 
-SSH 대신 AWS Systems Manager Session Manager를 사용한다. 키페어, 인바운드 포트 불필요.
-
 ```bash
-# apply 후 인스턴스 ID 확인
 terraform output instance_ids
-
-# SSM으로 접속 (AWS CLI + Session Manager Plugin 필요)
-aws ssm start-session --target i-0abc1234... --region ap-northeast-2
+terraform output ssm_connect_commands
+aws ssm start-session --target <instance-id> --region ap-northeast-2
 ```
 
-접속 명령어는 `terraform output ssm_connect_commands`에서도 확인 가능.
+## 주요 출력값
 
-## GitHub Actions 배포 (self-hosted runner)
+- `instance_ids`, `instance_public_ips`, `instance_private_ips`
+- `ssm_connect_commands`
+- `s3_bucket_name`
+- `k3s_server_private_ip_planned`
+- `k3s_oidc_issuer_url`, `product_s3_role_arn`
+- `images_staging_bucket_name`, `images_final_bucket_name`, `oidc_jwks_bucket_name`
+- `github_terraform_plan_role_arn`
 
-GitHub Actions는 AWS API를 직접 호출하지 않는다(OIDC/액세스 키 불필요) — self-hosted runner를
-EC2 인스턴스 위에 직접 설치해서 그 박스 안에서 잡을 실행하므로, 인증 자체가 필요 없다.
-러너 등록 절차는 `user_data.sh.tpl`의 "GitHub Actions self-hosted runner" 섹션 참고.
-
-## 파이널 전환 시 변경할 값
-
-| 항목 | 세미 | 파이널 |
-|---|---|---|
-| `ec2_instances` | `semi` (t3.large) 1개만 | `final` (t3.medium) 항목을 맵에 추가 - 코드 수정 불필요, `terraform.tfvars`만 수정 |
-
-`ec2_instances`에 항목을 추가하면 `for_each`에 의해 EC2 인스턴스와 Elastic IP가
-각각 하나씩 추가 생성된다. 기존 `semi` 인스턴스는 영향받지 않는다.
-
-## 보안그룹 / 네트워크 정책 요약
-
-- 인바운드: `80`, `443` 전체 공개. SSH 포트 없음 (접속은 SSM 사용).
-- 그 외 포트(PostgreSQL, Kafka 등 내부 서비스)는 SG에서 전혀 열지 않는다.
-  서비스 간 통신은 docker-compose의 내부 네트워크에서만 이루어져야 한다
-  (`user_data.sh.tpl` 주석 참고 - 호스트 포트로 `ports:` publish 금지).
-- 아웃바운드는 전체 허용 (패키지 설치, 이미지 pull, S3 접근, SSM Agent 통신 등).
-- NACL은 별도로 설정하지 않고 기본값(전체 허용)을 유지한다 - 통제는 SG로 일원화.
-
-## IAM
-
-- EC2 인스턴스 프로파일: `s3_app_prefix` 하위 S3 접근 + `AmazonSSMManagedInstanceCore` (Session Manager + Run Command).
-- 액세스 키를 서버나 GitHub에 저장하지 않는다.
-
-## S3
-
-- 단일 버킷을 app 데이터(`s3_app_prefix`)와 Terraform state(`tfstate/` prefix)에 공용으로 사용한다.
-- ACL은 비활성화(`BucketOwnerEnforced`), Public Access Block 4개 옵션 모두 활성화.
-- 버전 관리 + SSE-S3(AES256) 기본 암호화 활성화.
-- 버킷 정책으로 비-HTTPS 요청을 거부한다.
-- S3 Gateway VPC 엔드포인트를 통해 EC2 <-> S3 트래픽이 인터넷(IGW)을 거치지 않는다.
+`images_staging_bucket_name`과 `images_final_bucket_name`은 Terraform에 남아 있는 별도 버킷의
+출력값이다. 현재 k3s runtime의 실제 이미지 버킷은 `s3_bucket_name`이다.

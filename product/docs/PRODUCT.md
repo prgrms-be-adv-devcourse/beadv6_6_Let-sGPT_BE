@@ -74,12 +74,13 @@ com.openat
 - **엔티티 변수명**: 로드한 **기존** 엔티티는 엔티티명 그대로(`category`), **새로 생성**(미영속) 엔티티는 `new<Entity>`(`newCategory`·`newProduct`). 단, 한 스코프에 신규·기존이 함께 있어 비교가 필요하면 맥락에 어울리는 이름으로 구분한다.
 - **메서드 본문 — 사고 흐름 단계대로**: 메서드 내부 코드는 사람의 사고 흐름 단계와 일치하도록 단계별로 작성한다. 동일 성능이면 가독성을 우선하고, 중첩 호출로 압축하기보다 단계를 지역 변수로 풀어 한 문장당 하나의 일로 읽히게 한다.
 - **로컬 헬퍼 추출 기준**: 한 메서드에서만 쓰는 로직은 private 메서드로 분리하지 않고 본문에 인라인한다(위 단계 원칙대로 푼다). **둘 이상의 메서드가 공유할 때만** private로 추출한다(예: `ProductCommandService.toCategory`·`getOwnedProduct`). 서브도메인을 넘어 반복되면 `support`로 승격을 검토한다.
-- **에러코드**: 서브도메인별 enum(`CategoryErrorCode` 등)이 `common.error.ErrorCode`를 구현. 클라이언트 노출 `code` 문자열은 안정적으로 유지(예: `"CATEGORY_NOT_FOUND"`).
+- **에러코드**: 서브도메인별 enum(`CategoryErrorCode` 등)이 `common.error.ErrorCode`를 구현. 클라이언트 응답의 `error` 문자열은 안정적으로 유지(예: `"CATEGORY_NOT_FOUND"`).
 
 ---
 
 ## 7. 영속성 컨벤션
-- PK **UUIDv7**(`@UuidGenerator(style = TIME)`).
+- PK는 UUID이며 현재 `@UuidGenerator(style = TIME)`을 사용한다. Hibernate의 `TIME`은
+  RFC 4122 v1 호환 전략이고 `VERSION_7`과 다르다.
 - 엔티티 단수 / 테이블 복수, 컬럼 `snake_case`, `@Column(comment=...)`로 의도 명시. (전역 규칙은 PROJECT §7)
 - **인덱스**: FK 및 타 도메인 값 참조 컬럼에 부여. 이름 `idx_<table>_<column>`, 유니크 `uk_<table>_<…>`. (DECISIONS 2026-06-19 #6)
 - 타 도메인/서비스 참조는 **값 참조(UUID)**, FK 아님(예: `StockHistory.orderId`/`buyerId`).
@@ -125,13 +126,14 @@ com.openat
 - 외부 인증·인가는 게이트웨이가 담당한다. product의 `config.SecurityConfig`는 `csrf` off + `anyRequest().permitAll()`을 유지하며, 서비스 직접 포트는 외부에 노출하지 않는다.
 - 게이트웨이는 클라이언트가 보낸 `X-User-Id`·`X-User-Roles`·`X-Seller-Id`를 모두 제거한 뒤 검증된 토큰에서 신뢰 헤더를 다시 만든다.
 - 상품·드롭 쓰기 경로는 `typ=scoped`, `aud=openat-product` 판매자 JWT만 허용한다. product의 `CurrentUserArgumentResolver`는 `X-Seller-Id`가 없거나 UUID 형식이 아니면 `UNAUTHENTICATED(401)`로 거절한다.
+- 카테고리 GET은 공개다. 카테고리 POST/PATCH/DELETE는 현재 Gateway의 catch-all 정책에 따라 일반 access JWT만 요구하고 역할 제한은 없다. ADMIN 전용이 제품 의도라면 Gateway 정책을 별도로 보강해야 한다.
 
 ---
 
 ## 10. 설정 / 시드
-- `application.yml`: `default_schema=product`, `ddl-auto=update`(콜드부팅 재고 이력 복구를 검증하려면 부팅 간 원장이 보존돼야 해 `create`→`update` 전환; PROJECT §6 전역 기본과 일치), `defer-datasource-initialization=true` + `sql.init.mode=always`.
+- `application.yml`: `default_schema=product`, `ddl-auto=update`(콜드부팅 재고 이력 복구를 검증하려면 부팅 간 원장이 보존돼야 해 `create`→`update` 전환), `defer-datasource-initialization=true` + `sql.init.mode=always`.
 - `data.sql`: `categories` 시드(의류·액세서리·문구·전자기기·피규어·기타), `ON CONFLICT (name) DO NOTHING`.
-- **데모 시드(`support.seed.SeedDataRunner`)**: `local`/`dev` 한정 `ApplicationRunner`(`@Order(0)`, 부트스트랩보다 먼저). 상품이 비었을 때만 멱등 삽입 — 상품 16·드롭 10·`SellerStore` 데모 1. OPEN/SOLD_OUT 드롭의 잔여는 **재고 이력 원장 DEDUCT로 선반영**해 기동 워밍이 `총량+원장`으로 계산하게 한다(직접 캐시 워밍은 부트스트랩에 덮임).
+- **데모 시드(`support.seed.SeedDataRunner`)**: `local`/`dev`/`compose` 프로필의 `ApplicationRunner`(`@Order(0)`, 부트스트랩보다 먼저). 상품이 비었을 때만 멱등 삽입 — 상품 16·드롭 10·`SellerStore` 데모 1. OPEN/SOLD_OUT 드롭의 잔여는 **재고 이력 원장 DEDUCT로 선반영**해 기동 워밍이 `총량+원장`으로 계산하게 한다(직접 캐시 워밍은 부트스트랩에 덮임). k3s도 `compose` 프로필을 사용하므로 운영형 데이터를 별도로 적재할 때는 이 조건을 함께 고려한다.
 
 ---
 
