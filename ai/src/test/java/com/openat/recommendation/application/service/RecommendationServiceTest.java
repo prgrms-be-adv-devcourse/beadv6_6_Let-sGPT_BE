@@ -252,7 +252,7 @@ class RecommendationServiceTest {
     ProductDetailResponse selected = product(candidateId, "선택", 200L);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
-    when(promptBuilder.build(current, List.of(candidate(candidateId)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId)))).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId)))
         .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
@@ -290,7 +290,7 @@ class RecommendationServiceTest {
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
     when(searchClient.recommend(any()))
         .thenReturn(List.of(candidate(firstId), candidate(secondId)));
-    when(promptBuilder.build(current, List.of(candidate(firstId), candidate(secondId))))
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(firstId), candidate(secondId))))
         .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(firstId, secondId)))
@@ -333,13 +333,13 @@ class RecommendationServiceTest {
     when(searchClient.recommend(any()))
         .thenReturn(List.of(candidate(currentId), candidate(otherId)));
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
-    when(promptBuilder.build(current, List.of(candidate(otherId)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(otherId)))).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(otherId))).thenReturn(List.of());
 
     service.recommend(currentId);
 
-    verify(promptBuilder).build(current, List.of(candidate(otherId)));
+    verify(promptBuilder).build(RecommendationMode.DETAIL, current, List.of(candidate(otherId)));
     verify(postProcessor).process("raw", List.of(otherId));
   }
 
@@ -351,7 +351,7 @@ class RecommendationServiceTest {
     ProductDetailResponse selected = product(purchasedId, "선택", 200L);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(purchasedId)));
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
-    when(promptBuilder.build(current, List.of(candidate(purchasedId)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(purchasedId)))).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(purchasedId)))
         .thenReturn(List.of(new SelectedSection("연관", List.of(purchasedId))));
@@ -359,7 +359,7 @@ class RecommendationServiceTest {
 
     var response = service.recommend(currentId);
 
-    verify(promptBuilder).build(current, List.of(candidate(purchasedId)));
+    verify(promptBuilder).build(RecommendationMode.DETAIL, current, List.of(candidate(purchasedId)));
     verify(postProcessor).process("raw", List.of(purchasedId));
     verify(seedService, never()).collect();
     assertThat(response.sections())
@@ -375,7 +375,7 @@ class RecommendationServiceTest {
     when(seedService.collect()).thenReturn(seeds());
     when(searchClient.recommend(any())).thenReturn(candidates);
     when(openDropCache.filterOpenProductIds(ids)).thenReturn(ids);
-    when(promptBuilder.build(null, candidates)).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.HOME, null, candidates)).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", ids))
         .thenReturn(
@@ -410,7 +410,7 @@ class RecommendationServiceTest {
     List<SimilarProductResponse> candidates = ids.stream().map(this::candidate).toList();
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
     when(searchClient.recommend(any())).thenReturn(candidates);
-    when(promptBuilder.build(current, candidates)).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, candidates)).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", ids))
         .thenReturn(
@@ -437,13 +437,13 @@ class RecommendationServiceTest {
     when(searchClient.recommend(seeds))
         .thenReturn(List.of(candidate(purchasedId), candidate(candidateId)));
     when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
-    when(promptBuilder.build(null, List.of(candidate(candidateId)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.HOME, null, List.of(candidate(candidateId)))).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId))).thenReturn(List.of());
 
     service.recommend(null);
 
-    verify(promptBuilder).build(null, List.of(candidate(candidateId)));
+    verify(promptBuilder).build(RecommendationMode.HOME, null, List.of(candidate(candidateId)));
   }
 
   @Test
@@ -467,7 +467,7 @@ class RecommendationServiceTest {
     ProductDetailResponse current = product(currentId, categoryId);
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
-    when(promptBuilder.build(current, List.of(candidate(candidateId)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId)))).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenThrow(new RuntimeException("llm"));
     when(openDropCache.findByCategory(categoryId, 3)).thenReturn(List.of(fallback));
 
@@ -518,7 +518,7 @@ class RecommendationServiceTest {
     ProductDetailResponse current = product(currentId, categoryId);
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
-    when(promptBuilder.build(current, List.of(candidate(candidateId)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId)))).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId))).thenReturn(List.of());
     when(openDropCache.findByCategory(categoryId, 3)).thenReturn(List.of(fallback));
@@ -607,7 +607,7 @@ class RecommendationServiceTest {
     ProductDetailResponse current = product(currentId, "현재", 100L);
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
     when(searchClient.recommend(any())).thenReturn(candidates);
-    when(promptBuilder.build(current, candidates)).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, candidates)).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", tenIds))
         .thenReturn(List.of(new SelectedSection("연관", tenIds)));
@@ -678,7 +678,7 @@ class RecommendationServiceTest {
               return List.of(candidate(id));
             });
     when(openDropCache.filterOpenProductIds(List.of(id))).thenReturn(List.of(id));
-    when(promptBuilder.build(null, List.of(candidate(id)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.HOME, null, List.of(candidate(id)))).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(id)))
         .thenReturn(List.of(new SelectedSection("추천", List.of(id))));
@@ -794,7 +794,7 @@ class RecommendationServiceTest {
     when(seedService.collect()).thenReturn(seeds());
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(id)));
     when(openDropCache.filterOpenProductIds(List.of(id))).thenReturn(List.of(id));
-    when(promptBuilder.build(null, List.of(candidate(id)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.HOME, null, List.of(candidate(id)))).thenReturn("prompt");
   }
 
   private List<Seed> seeds() {

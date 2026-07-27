@@ -29,7 +29,7 @@ class RecommendationPromptBuilderTest {
             null);
     var candidate = new SimilarProductResponse(UUID.randomUUID(), "후보", "설명", "이미지 설명");
 
-    String prompt = builder.build(current, List.of(candidate));
+    String prompt = builder.build(RecommendationMode.DETAIL, current, List.of(candidate));
 
     assertThat(prompt).contains("[현재 보는 상품]").contains("현재 상품").contains("현재 설명");
     assertThat(prompt).contains("최대 1개의 주제 그룹으로").contains("한 그룹은 최대 6개");
@@ -39,7 +39,7 @@ class RecommendationPromptBuilderTest {
   void build_forHome_omitsCurrentProductSection() {
     var candidate = new SimilarProductResponse(UUID.randomUUID(), "후보", "설명", "이미지 설명");
 
-    String prompt = builder.build(null, List.of(candidate));
+    String prompt = builder.build(RecommendationMode.HOME, null, List.of(candidate));
 
     assertThat(prompt).doesNotContain("[현재 보는 상품]");
     assertThat(prompt).contains("주제에 따라 1~3개 그룹으로").contains("각 그룹은 최대 4개");
@@ -52,7 +52,7 @@ class RecommendationPromptBuilderTest {
     var first = new SimilarProductResponse(firstId, "첫 후보", "첫 설명", "첫 이미지 설명");
     var second = new SimilarProductResponse(secondId, "둘째 후보", "둘째 설명", "둘째 이미지 설명");
 
-    String prompt = builder.build(null, List.of(first, second));
+    String prompt = builder.build(RecommendationMode.HOME, null, List.of(first, second));
 
     assertThat(prompt)
         .contains("1 | 첫 후보 | 첫 설명 첫 이미지 설명")
@@ -62,7 +62,7 @@ class RecommendationPromptBuilderTest {
 
   @Test
   void build_instructsJsonOnlyOutputFormat() {
-    String prompt = builder.build(null, List.of());
+    String prompt = builder.build(RecommendationMode.HOME, null, List.of());
 
     assertThat(prompt)
         .contains("items에는 위 후보 목록에 있는 인덱스 번호만 사용하세요")

@@ -1,7 +1,5 @@
 package com.openat.recommendation.application.service;
 
-import com.openat.common.auth.UserContext;
-import com.openat.common.auth.UserContextHolder;
 import com.openat.recommendation.application.port.out.LlmClient;
 import com.openat.recommendation.application.service.RecommendationPostProcessor.SelectedSection;
 import com.openat.recommendation.application.service.RecommendationResponse.Product;
@@ -37,13 +35,6 @@ import org.springframework.web.client.HttpClientErrorException;
 public class RecommendationService {
 
   private static final Logger log = LoggerFactory.getLogger(RecommendationService.class);
-  private static final int HOME_MAX_SECTIONS = 3;
-  private static final int HOME_MAX_PRODUCTS_PER_SECTION = 4;
-  private static final int HOME_MAX_PRODUCTS_TOTAL = 12;
-  private static final int DETAIL_MAX_SECTIONS = 1;
-  private static final int DETAIL_MAX_PRODUCTS_PER_SECTION = 6;
-  private static final int DETAIL_MAX_PRODUCTS_TOTAL = 6;
-
   private final RecommendationSeedService seedService;
   private final SeedScorer seedScorer;
   private final SearchRecommendClient searchClient;
@@ -96,18 +87,19 @@ public class RecommendationService {
   }
 
   public RecommendationResponse recommend(UUID productId) {
-    boolean home = productId == null;
+    RecommendationMode mode = RecommendationMode.fromProductId(productId);
     // 캐시 키 계산·조회는 추천 성공의 전제가 아니다. 키 계산이 실패해도(잘못된 id, 캐시 장애)
     // 폴백까지 가지 못하고 빈 응답이 나가면 안 되므로, 실패 시 캐시만 건너뛴다.
-    Optional<String> cacheKey = cacheKey(productId);
-    Optional<RecommendationResponse> cached = lookup(home, cacheKey);
+    Optional<String> cacheKey = cacheKey(mode, productId);
+    Optional<RecommendationResponse> cached = lookup(mode.isHome(), cacheKey);
     if (cached.isPresent()) {
       return cached.get();
     }
     try {
-      return singleFlight(cacheKey, () -> guardedPipeline(home, productId, cacheKey));
+      return singleFlight(cacheKey, () -> guardedPipeline(mode, productId, cacheKey));
     } catch (Exception exception) {
-      log.warn("recommendation failed, returning empty response: home={}", home, exception);
+      log.warn(
+          "recommendation failed, returning empty response: home={}", mode.isHome(), exception);
       return RecommendationResponse.empty();
     }
   }
@@ -173,123 +165,134 @@ public class RecommendationService {
 
   /** 미스 파이프라인 동시 실행을 제한한다. 허가를 못 얻으면 폴백만 준다(다운스트림 보호). */
   private RecommendationResponse guardedPipeline(
-      boolean home, UUID productId, Optional<String> cacheKey) {
+      RecommendationMode mode, UUID productId, Optional<String> cacheKey) {
     if (!pipelineLimiter.tryAcquire()) {
-      log.warn("recommendation pipeline overloaded, serving fallback: home={}", home);
-      return home ? homeFallback("overloaded") : RecommendationResponse.empty();
+      log.warn("recommendation pipeline overloaded, serving fallback: home={}", mode.isHome());
+      return mode.isHome() ? homeFallback("overloaded") : RecommendationResponse.empty();
     }
     try {
-      return home ? recommendHome(cacheKey) : recommendDetail(productId, cacheKey);
+      return recommendPipeline(mode, productId, cacheKey);
     } finally {
       pipelineLimiter.release();
     }
   }
 
-  private RecommendationResponse recommendHome(Optional<String> cacheKey) {
+  private RecommendationResponse recommendPipeline(
+      RecommendationMode mode, UUID productId, Optional<String> cacheKey) {
+    ProductDetailResponse currentProduct =
+        mode == RecommendationMode.DETAIL ? productDetailClient.getProduct(productId) : null;
+
     List<Seed> seeds;
-    try {
-      seeds = seedService.collect();
-    } catch (Exception exception) {
-      log.warn("recommendation seed collection failed: home=true", exception);
-      return homeFallback("seed-collection-failed");
+    if (mode.isHome()) {
+      try {
+        seeds = seedService.collect();
+      } catch (Exception exception) {
+        log.warn("recommendation seed collection failed: home=true", exception);
+        return fallback(mode, currentProduct, "seed-collection-failed");
+      }
+    } else {
+      seeds = seedScorer.currentProductSeed(productId);
     }
-    if (seeds.isEmpty()) {
-      return homeFallback("no-seeds");
-    }
-
-    List<SimilarProductResponse> candidates;
-    try {
-      candidates = searchClient.recommend(seeds);
-    } catch (HttpClientErrorException exception) {
-      log.error("recommendation search failed: home=true, seeds={}", seeds.size(), exception);
-      return homeFallback("search-failed");
-    } catch (Exception exception) {
-      log.warn("recommendation search failed: home=true, seeds={}", seeds.size(), exception);
-      return homeFallback("search-failed");
+    if (mode.isHome() && seeds.isEmpty()) {
+      return fallback(mode, currentProduct, "no-seeds");
     }
 
-    Set<UUID> purchasedProductIds = purchasedProductIds(seeds);
-    candidates =
-        candidates.stream()
-            .filter(candidate -> !purchasedProductIds.contains(candidate.id()))
-            .toList();
-    Set<UUID> openIds =
-        Set.copyOf(
-            openDropCache.filterOpenProductIds(
-                candidates.stream().map(SimilarProductResponse::id).toList()));
-    candidates = candidates.stream().filter(candidate -> openIds.contains(candidate.id())).toList();
+    Optional<List<SimilarProductResponse>> searchResult = searchCandidates(mode, seeds);
+    if (searchResult.isEmpty()) {
+      return fallback(mode, currentProduct, "search-failed");
+    }
+    List<SimilarProductResponse> candidates =
+        filterCandidates(mode, productId, seeds, searchResult.orElseThrow());
+
     if (candidates.isEmpty()) {
-      return homeFallback("no-open-candidates");
-    }
-
-    List<SelectedSection> selected;
-    try {
-      selected = select(null, candidates);
-    } catch (Exception exception) {
-      log.warn("recommendation LLM failed: home=true", exception);
-      return homeFallback("llm-failed");
-    }
-    RecommendationResponse response =
-        personalizedResponse(selected, true, seeds.size(), candidates.size(), cacheKey);
-    return response.sections().isEmpty() ? homeFallback("empty-llm-result") : response;
-  }
-
-  private RecommendationResponse recommendDetail(UUID productId, Optional<String> cacheKey) {
-    ProductDetailResponse currentProduct = productDetailClient.getProduct(productId);
-    List<Seed> seeds = seedScorer.currentProductSeed(productId);
-
-    List<SimilarProductResponse> candidates;
-    try {
-      candidates = searchClient.recommend(seeds);
-    } catch (HttpClientErrorException exception) {
-      log.error("recommendation search failed: home=false, seeds={}", seeds.size(), exception);
-      return detailFallback(currentProduct.categoryId(), "search-failed");
-    } catch (Exception exception) {
-      log.warn("recommendation search failed: home=false, seeds={}", seeds.size(), exception);
-      return detailFallback(currentProduct.categoryId(), "search-failed");
-    }
-
-    candidates =
-        candidates.stream().filter(candidate -> !candidate.id().equals(productId)).toList();
-    if (candidates.isEmpty()) {
+      if (mode.isHome()) {
+        return fallback(mode, currentProduct, "no-open-candidates");
+      }
       log.info("recommendation empty: home=false, reason=no-candidates");
       return RecommendationResponse.empty();
     }
 
     List<SelectedSection> selected;
     try {
-      selected = select(currentProduct, candidates);
+      selected = select(mode, currentProduct, candidates);
     } catch (Exception exception) {
-      log.warn("recommendation LLM failed: home=false", exception);
-      return detailFallback(currentProduct.categoryId(), "llm-failed");
+      log.warn("recommendation LLM failed: home={}", mode.isHome(), exception);
+      return fallback(mode, currentProduct, "llm-failed");
     }
     RecommendationResponse response =
-        personalizedResponse(selected, false, seeds.size(), candidates.size(), cacheKey);
+        personalizedResponse(selected, mode, seeds.size(), candidates.size(), cacheKey);
     return response.sections().isEmpty()
-        ? detailFallback(currentProduct.categoryId(), "empty-llm-result")
+        ? fallback(mode, currentProduct, "empty-llm-result")
         : response;
   }
 
+  private Optional<List<SimilarProductResponse>> searchCandidates(
+      RecommendationMode mode, List<Seed> seeds) {
+    List<SimilarProductResponse> candidates;
+    try {
+      candidates = searchClient.recommend(seeds);
+    } catch (HttpClientErrorException exception) {
+      log.error(
+          "recommendation search failed: home={}, seeds={}",
+          mode.isHome(),
+          seeds.size(),
+          exception);
+      return Optional.empty();
+    } catch (Exception exception) {
+      log.warn(
+          "recommendation search failed: home={}, seeds={}",
+          mode.isHome(),
+          seeds.size(),
+          exception);
+      return Optional.empty();
+    }
+    return Optional.of(candidates);
+  }
+
+  private List<SimilarProductResponse> filterCandidates(
+      RecommendationMode mode,
+      UUID productId,
+      List<Seed> seeds,
+      List<SimilarProductResponse> candidates) {
+    if (mode == RecommendationMode.DETAIL) {
+      return candidates.stream().filter(candidate -> !candidate.id().equals(productId)).toList();
+    }
+    Set<UUID> purchasedProductIds = purchasedProductIds(seeds);
+    List<SimilarProductResponse> unpurchasedCandidates =
+        candidates.stream()
+            .filter(candidate -> !purchasedProductIds.contains(candidate.id()))
+            .toList();
+    Set<UUID> openIds =
+        Set.copyOf(
+            openDropCache.filterOpenProductIds(
+                unpurchasedCandidates.stream().map(SimilarProductResponse::id).toList()));
+    return unpurchasedCandidates.stream()
+        .filter(candidate -> openIds.contains(candidate.id()))
+        .toList();
+  }
+
   private List<SelectedSection> select(
-      ProductDetailResponse currentProduct, List<SimilarProductResponse> candidates) {
-    String prompt = promptBuilder.build(currentProduct, candidates);
+      RecommendationMode mode,
+      ProductDetailResponse currentProduct,
+      List<SimilarProductResponse> candidates) {
+    String prompt = promptBuilder.build(mode, currentProduct, candidates);
     List<UUID> orderedCandidateIds = candidates.stream().map(SimilarProductResponse::id).toList();
     return postProcessor.process(llmClient.complete(prompt), orderedCandidateIds);
   }
 
   private RecommendationResponse personalizedResponse(
       List<SelectedSection> selected,
-      boolean home,
+      RecommendationMode mode,
       int seedCount,
       int candidateCount,
       Optional<String> cacheKey) {
-    RecommendationResponse response = assemble(selected, home);
+    RecommendationResponse response = assemble(selected, mode);
     if (!response.sections().isEmpty()) {
       cacheKey.ifPresent(key -> resultCache.save(key, response));
     }
     log.info(
         "recommendation served: home={}, seeds={}, candidates={}, sections={}",
-        home,
+        mode.isHome(),
         seedCount,
         candidateCount,
         response.sections().size());
@@ -297,39 +300,30 @@ public class RecommendationService {
   }
 
   /** 키를 못 만들면 캐시만 건너뛰고 파이프라인은 그대로 태운다(잘못된 id → 정상 폴백). */
-  private Optional<String> cacheKey(UUID productId) {
+  private Optional<String> cacheKey(RecommendationMode mode, UUID productId) {
     try {
-      if (productId != null) {
-        return Optional.of(resultCache.cacheKey(productId, null));
-      }
-      return currentMemberId().map(memberId -> resultCache.cacheKey(null, memberId));
+      return mode.cacheKey(resultCache, productId);
     } catch (RuntimeException exception) {
       log.warn(
           "recommendation cache key unavailable, serving uncached: home={}",
-          productId == null,
+          mode.isHome(),
           exception);
       return Optional.empty();
     }
   }
 
-  private Optional<UUID> currentMemberId() {
-    UserContext context = UserContextHolder.get();
-    if (context == null) {
-      return Optional.empty();
-    }
-    // X-User-Id가 UUID가 아니면 익명으로 강등한다(요청을 깨뜨리는 대신 폴백 경로로).
-    try {
-      return Optional.of(UUID.fromString(context.userId()));
-    } catch (IllegalArgumentException exception) {
-      log.warn("malformed X-User-Id, treating as anonymous");
-      return Optional.empty();
-    }
+  private RecommendationResponse fallback(
+      RecommendationMode mode, ProductDetailResponse currentProduct, String reason) {
+    return switch (mode) {
+      case HOME -> homeFallback(reason);
+      case DETAIL -> detailFallback(currentProduct.categoryId(), reason);
+    };
   }
 
   private RecommendationResponse homeFallback(String reason) {
     List<DropMeta> drops = openDropCache.findGeneral(fallbackLimit);
     if (!drops.isEmpty()) {
-      return fallbackResponse(true, "이런 드롭은 어떠세요?", drops, reason);
+      return fallbackResponse(RecommendationMode.HOME, "이런 드롭은 어떠세요?", drops, reason);
     }
     // 최후 폴백: 열린 드롭이 하나도 없어도 최신 상품으로 홈을 절대 비우지 않는다.
     List<Product> popular = popularProductsCache.get();
@@ -348,50 +342,52 @@ public class RecommendationService {
       return RecommendationResponse.empty();
     }
     return fallbackResponse(
-        false, "이 카테고리의 다른 드롭", openDropCache.findByCategory(categoryId, fallbackLimit), reason);
+        RecommendationMode.DETAIL,
+        "이 카테고리의 다른 드롭",
+        openDropCache.findByCategory(categoryId, fallbackLimit),
+        reason);
   }
 
   private RecommendationResponse fallbackResponse(
-      boolean home, String title, List<DropMeta> drops, String reason) {
+      RecommendationMode mode, String title, List<DropMeta> drops, String reason) {
     if (drops.isEmpty()) {
-      log.info("recommendation fallback empty: home={}, reason={}", home, reason);
+      log.info("recommendation fallback empty: home={}, reason={}", mode.isHome(), reason);
       return RecommendationResponse.empty();
     }
     List<Product> products = drops.stream().map(this::toProduct).toList();
     log.info(
         "recommendation fallback served: home={}, reason={}, count={}",
-        home,
+        mode.isHome(),
         reason,
         products.size());
     return new RecommendationResponse(List.of(new Section(title, products)));
   }
 
-  private RecommendationResponse assemble(List<SelectedSection> selected, boolean home) {
-    int maxSections = home ? HOME_MAX_SECTIONS : DETAIL_MAX_SECTIONS;
-    int maxProductsPerSection =
-        home ? HOME_MAX_PRODUCTS_PER_SECTION : DETAIL_MAX_PRODUCTS_PER_SECTION;
-    int maxProductsTotal = home ? HOME_MAX_PRODUCTS_TOTAL : DETAIL_MAX_PRODUCTS_TOTAL;
+  private RecommendationResponse assemble(List<SelectedSection> selected, RecommendationMode mode) {
     int productCount = 0;
     List<Section> sections = new ArrayList<>();
     for (SelectedSection selectedSection : selected) {
-      if (sections.size() >= maxSections || productCount >= maxProductsTotal) {
+      if (sections.size() >= mode.maxSections() || productCount >= mode.maxProductsTotal()) {
         break;
       }
       List<Product> products = new ArrayList<>();
-      int remainingSlots = Math.min(maxProductsPerSection, maxProductsTotal - productCount);
+      int remainingSlots =
+          Math.min(mode.maxProductsPerSection(), mode.maxProductsTotal() - productCount);
       List<UUID> sectionProductIds =
           selectedSection.productIds().stream().limit(remainingSlots).toList();
       List<CompletableFuture<Optional<Product>>> productFutures =
-          home
+          mode.isHome()
               ? List.of()
               : sectionProductIds.stream()
                   .map(
                       productId ->
-                          CompletableFuture.supplyAsync(() -> product(false, productId), executor))
+                          CompletableFuture.supplyAsync(() -> product(mode, productId), executor))
                   .toList();
       for (int index = 0; index < sectionProductIds.size(); index++) {
         Optional<Product> product =
-            home ? product(true, sectionProductIds.get(index)) : productFutures.get(index).join();
+            mode.isHome()
+                ? product(mode, sectionProductIds.get(index))
+                : productFutures.get(index).join();
         product.ifPresent(products::add);
       }
       if (!products.isEmpty()) {
@@ -406,22 +402,24 @@ public class RecommendationService {
     return seeds.stream().filter(Seed::buy).map(Seed::productId).collect(Collectors.toSet());
   }
 
-  private Optional<Product> product(boolean home, UUID productId) {
+  private Optional<Product> product(RecommendationMode mode, UUID productId) {
     try {
-      if (home) {
-        return openDropCache.findByProductId(productId).map(this::toProduct);
-      }
-      ProductDetailResponse detail = productDetailClient.getProduct(productId);
-      if (detail.price() == null) {
-        return Optional.empty();
-      }
-      return Optional.of(
-          new Product(
-              detail.id(),
-              detail.name(),
-              detail.sellerName(),
-              detail.price(),
-              detail.thumbnailKey()));
+      return switch (mode) {
+        case HOME -> openDropCache.findByProductId(productId).map(this::toProduct);
+        case DETAIL -> {
+          ProductDetailResponse detail = productDetailClient.getProduct(productId);
+          if (detail.price() == null) {
+            yield Optional.empty();
+          }
+          yield Optional.of(
+              new Product(
+                  detail.id(),
+                  detail.name(),
+                  detail.sellerName(),
+                  detail.price(),
+                  detail.thumbnailKey()));
+        }
+      };
     } catch (Exception ignored) {
       return Optional.empty();
     }
