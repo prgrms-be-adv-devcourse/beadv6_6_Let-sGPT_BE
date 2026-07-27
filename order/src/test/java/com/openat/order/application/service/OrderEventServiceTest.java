@@ -3,9 +3,7 @@ package com.openat.order.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -252,8 +250,8 @@ class OrderEventServiceTest {
   }
 
   @Test
-  @DisplayName("환불 완료 이벤트 금액이 주문 금액을 초과하면 환불 완료로 전이하지 않는다")
-  void refundCompleted_whenAmountExceedsOrder_throwInvalidInput() {
+  @DisplayName("환불 완료 이벤트 금액이 주문 금액과 다르면 환불 완료로 전이하지 않는다")
+  void refundCompleted_whenAmountMismatch_throwInvalidInput() {
     // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
@@ -277,8 +275,8 @@ class OrderEventServiceTest {
   }
 
   @Test
-  @DisplayName("환불 진행 중 주문은 잔액 환불 이벤트로 환불 완료 처리한다")
-  void refundCompleted_whenRemainingAmount_changesToRefunded() {
+  @DisplayName("환불 진행 중 주문의 부분환불 이벤트는 거부하고 보상을 시작하지 않는다")
+  void refundCompleted_whenPendingPartialRefund_rejectsWithoutCompensation() {
     // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
@@ -286,43 +284,67 @@ class OrderEventServiceTest {
     when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
 
     // when
-    orderEventService.handleRefundCompleted(
-        new RefundCompletedCommand(order.getId(), UUID.randomUUID(), 4_000L, UUID.randomUUID()));
+    BusinessException ex =
+        assertThrows(
+            BusinessException.class,
+            () ->
+                orderEventService.handleRefundCompleted(
+                    new RefundCompletedCommand(
+                        order.getId(), UUID.randomUUID(), 4_000L, UUID.randomUUID())));
 
     // then
-    assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
-    verify(orderHistoryRecorder)
-        .record(
-            any(),
-            any(),
-            eq("ORDER_REFUNDED"),
-            contains("잔액 환불로 완결"),
-            any());
-    verify(orderSagaRecorder).recordCompensating(order.getId());
-    verify(applicationEventPublisher).publishEvent(any(RefundStockRestoreRequested.class));
+    assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
+    verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
+    verify(orderSagaRecorder, never()).recordCompensating(any());
+    verify(applicationEventPublisher, never()).publishEvent(any());
   }
 
   @Test
-  @DisplayName("결제 완료 주문의 직행 부분환불 이벤트는 상태 전이와 재고복구를 건너뛴다")
-  void refundCompleted_whenDirectPartialRefund_skipsTransitionAndStockRestore() {
+  @DisplayName("결제 완료 주문의 직행 부분환불 이벤트는 거부한다")
+  void refundCompleted_whenDirectPartialRefund_rejects() {
     // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
     when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
 
     // when
-    orderEventService.handleRefundCompleted(
-        new RefundCompletedCommand(order.getId(), UUID.randomUUID(), 4_000L, UUID.randomUUID()));
+    BusinessException ex =
+        assertThrows(
+            BusinessException.class,
+            () ->
+                orderEventService.handleRefundCompleted(
+                    new RefundCompletedCommand(
+                        order.getId(), UUID.randomUUID(), 4_000L, UUID.randomUUID())));
 
     // then
+    assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
     assertThat(order.getStatus()).isEqualTo(OrderStatus.COMPLETED);
-    verify(orderHistoryRecorder)
-        .record(
-            any(),
-            any(),
-            eq("PARTIAL_REFUND_COMPLETED"),
-            contains("직행 부분환불 처리"),
-            any());
+    verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
+    verify(orderSagaRecorder, never()).recordCompensating(any());
+    verify(applicationEventPublisher, never()).publishEvent(any());
+  }
+
+  @Test
+  @DisplayName("이미 환불 완료된 주문도 부분환불 이벤트는 거부한다")
+  void refundCompleted_whenAlreadyRefundedPartialRefund_rejects() {
+    Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
+    order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
+    order.requestRefund(Instant.parse("2026-06-26T00:00:02Z"));
+    order.refund(Instant.parse("2026-06-26T00:00:03Z"));
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+
+    BusinessException ex =
+        assertThrows(
+            BusinessException.class,
+            () ->
+                orderEventService.handleRefundCompleted(
+                    new RefundCompletedCommand(
+                        order.getId(), UUID.randomUUID(), 4_000L, UUID.randomUUID())));
+
+    assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
+    verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
     verify(orderSagaRecorder, never()).recordCompensating(any());
     verify(applicationEventPublisher, never()).publishEvent(any());
   }
