@@ -97,6 +97,8 @@ public class OrderEventService {
   public void handleRefundCompleted(RefundCompletedCommand command) {
     Order order = getOrder(command.orderId());
 
+    validateAmount(order, command.amount());
+
     if (order.getStatus() == OrderStatus.REFUNDED) {
       return;
     }
@@ -110,19 +112,6 @@ public class OrderEventService {
         OrderStatus.CANCELLED,
         OrderStatus.COMPLETED);
 
-    validateRefundAmountLimit(order, command.amount());
-
-    if (order.getStatus() == OrderStatus.COMPLETED
-        && command.amount() < order.getTotalPrice()) {
-      orderHistoryRecorder.record(
-          order,
-          order.getStatus(),
-          "PARTIAL_REFUND_COMPLETED",
-          refundAmountMessage("직행 부분환불 처리", command.amount(), order.getTotalPrice()),
-          eventSourceKey("refund-completed", command.orderId(), command.refundId()));
-      return;
-    }
-
     OrderStatus before = order.getStatus();
     if (!order.refund(Instant.now())) {
       throw new BusinessException(OrderErrorCode.INVALID_STATUS);
@@ -132,9 +121,7 @@ public class OrderEventService {
         order,
         before,
         "ORDER_REFUNDED",
-        command.amount() < order.getTotalPrice()
-            ? refundAmountMessage("잔액 환불로 완결", command.amount(), order.getTotalPrice())
-            : "환불 완료 이벤트 처리",
+        "환불 완료 이벤트 처리",
         eventSourceKey("refund-completed", command.orderId(), command.refundId()));
     boolean compensationCompleted = orderSagaRecorder.isCompensationCompleted(order.getId());
     if (!compensationCompleted) {
@@ -179,19 +166,6 @@ public class OrderEventService {
           "주문 금액과 이벤트 금액이 일치하지 않습니다: orderId=%s, orderAmount=%d, eventAmount=%d"
               .formatted(order.getId(), order.getTotalPrice(), eventAmount));
     }
-  }
-
-  private void validateRefundAmountLimit(Order order, long eventAmount) {
-    if (eventAmount > order.getTotalPrice()) {
-      throw new BusinessException(
-          OrderErrorCode.INVALID_INPUT,
-          "환불 이벤트 금액이 주문 금액을 초과합니다: orderId=%s, orderAmount=%d, eventAmount=%d"
-              .formatted(order.getId(), order.getTotalPrice(), eventAmount));
-    }
-  }
-
-  private String refundAmountMessage(String prefix, long eventAmount, long orderAmount) {
-    return "%s (이벤트 금액 %d / 주문 금액 %d)".formatted(prefix, eventAmount, orderAmount);
   }
 
   private void requireStatus(Order order, String eventName, OrderStatus... allowedStatuses) {

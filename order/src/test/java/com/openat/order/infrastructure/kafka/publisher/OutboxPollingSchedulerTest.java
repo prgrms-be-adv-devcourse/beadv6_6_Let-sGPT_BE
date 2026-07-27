@@ -1,8 +1,7 @@
 package com.openat.order.infrastructure.kafka.publisher;
 
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.openat.order.domain.model.OutboxEvent;
@@ -11,28 +10,21 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.InOrder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class OutboxPollingSchedulerTest {
 
     @Test
-    @DisplayName("한 Outbox 행 발행이 예외여도 다음 행 처리를 계속한다")
-    void publishPendingEvents_whenOneEventFails_continuesBatch() {
+    @DisplayName("findPending 결과를 통째로 publishAll에 넘긴다")
+    void publishPendingEvents_handsOffWholeBatch() {
         OutboxEventRepository repository = mock(OutboxEventRepository.class);
         OutboxEventPublisher publisher = mock(OutboxEventPublisher.class);
-        OutboxEvent first = outboxEvent();
-        OutboxEvent second = outboxEvent();
-        when(repository.findPending(100)).thenReturn(List.of(first, second));
-        doThrow(new IllegalStateException("poison event"))
-                .when(publisher)
-                .publish(first.getId());
+        List<OutboxEvent> pending = List.of(outboxEvent(), outboxEvent());
+        when(repository.findPending(100)).thenReturn(pending);
 
         new OutboxPollingScheduler(repository, publisher).publishPendingEvents();
 
-        InOrder order = inOrder(publisher);
-        order.verify(publisher).publish(first.getId());
-        order.verify(publisher).publish(second.getId());
+        verify(publisher).publishAll(pending);
     }
 
     private OutboxEvent outboxEvent() {

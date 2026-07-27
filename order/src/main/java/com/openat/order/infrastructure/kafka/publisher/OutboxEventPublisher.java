@@ -6,18 +6,22 @@ import com.openat.order.domain.model.OutboxEvent;
 import com.openat.order.domain.repository.OutboxEventRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import lombok.RequiredArgsConstructor;
+import java.util.concurrent.TimeoutException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class OutboxEventPublisher {
 
   private final OutboxEventRepository outboxEventRepository;
@@ -25,45 +29,108 @@ public class OutboxEventPublisher {
   private final ObjectMapper objectMapper;
   private final MeterRegistry meterRegistry;
 
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void publish(UUID outboxEventId) {
-    OutboxEvent event = outboxEventRepository.findById(outboxEventId).orElse(null);
-    if (event == null
-        || event.getStatus() != com.openat.order.domain.model.OutboxEventStatus.PENDING) {
+  // Kept comfortably above delivery.timeout.ms (10s) so a slow send loop cannot push later
+  // futures past the wait window and produce sent-but-marked-PENDING false partials.
+  private final long batchTimeoutSeconds;
+
+  public OutboxEventPublisher(
+      OutboxEventRepository outboxEventRepository,
+      KafkaTemplate<String, String> kafkaTemplate,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      @Value("${order.outbox.batch-timeout-seconds:15}") long batchTimeoutSeconds) {
+    this.outboxEventRepository = outboxEventRepository;
+    this.kafkaTemplate = kafkaTemplate;
+    this.objectMapper = objectMapper;
+    this.meterRegistry = meterRegistry;
+    this.batchTimeoutSeconds = batchTimeoutSeconds;
+  }
+
+  public void publishAll(List<OutboxEvent> events) {
+    if (events == null || events.isEmpty()) {
       return;
     }
 
-    String orderId;
+    Map<UUID, CompletableFuture<SendResult<String, String>>> futures = new LinkedHashMap<>();
+    for (OutboxEvent event : events) {
+      String orderId = extractOrderId(event.getPayload());
+      if (orderId == null) {
+        outboxEventRepository.markFailed(event.getId());
+        meterRegistry.counter("order.outbox.failed").increment();
+        log.error(
+            "Outbox event payload is invalid; marked FAILED. outboxEventId={}, topic={}",
+            event.getId(),
+            event.getTopic());
+        continue;
+      }
+      try {
+        futures.put(
+            event.getId(), kafkaTemplate.send(event.getTopic(), orderId, event.getPayload()));
+      } catch (RuntimeException exception) {
+        // Synchronous send() failure (buffer full, max.block.ms exceeded, serialization,
+        // producer closed) isolates to this event: leave it PENDING for the next poll and
+        // keep firing the rest so their futures are still awaited and marked.
+        log.error(
+            "Outbox event synchronous send failed; left PENDING for next poll. "
+                + "outboxEventId={}, topic={}",
+            event.getId(),
+            event.getTopic(),
+            exception);
+      }
+    }
+
+    if (futures.isEmpty()) {
+      return;
+    }
+
+    awaitBatch(futures.values());
+
+    List<UUID> succeeded = new ArrayList<>();
+    for (Map.Entry<UUID, CompletableFuture<SendResult<String, String>>> entry : futures.entrySet()) {
+      CompletableFuture<SendResult<String, String>> future = entry.getValue();
+      if (future.isDone() && !future.isCancelled() && !future.isCompletedExceptionally()) {
+        succeeded.add(entry.getKey());
+      }
+    }
+
+    int pendingRemaining = futures.size() - succeeded.size();
+    if (pendingRemaining > 0) {
+      log.warn(
+          "Outbox batch partially delivered; {} event(s) remain PENDING for next poll.",
+          pendingRemaining);
+    }
+
+    if (succeeded.isEmpty()) {
+      return;
+    }
+
+    int updated = outboxEventRepository.markPublishedAll(succeeded, Instant.now());
+    meterRegistry.counter("order.outbox.published").increment(succeeded.size());
+    if (updated != succeeded.size()) {
+      log.warn(
+          "Outbox publish drift detected. successCount={}, updatedRows={}",
+          succeeded.size(),
+          updated);
+    }
+    log.info(
+        "Outbox batch published. successCount={}, updatedRows={}", succeeded.size(), updated);
+  }
+
+  private void awaitBatch(
+      java.util.Collection<CompletableFuture<SendResult<String, String>>> futures) {
+    CompletableFuture<Void> all =
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
     try {
-      orderId = extractOrderId(event.getPayload());
-      kafkaTemplate.send(event.getTopic(), orderId, event.getPayload()).get(5, TimeUnit.SECONDS);
-      event.markPublished(Instant.now());
-      meterRegistry.counter("order.outbox.published").increment();
-      log.info(
-          "Outbox event published. outboxEventId={}, orderId={}, topic={}",
-          event.getId(),
-          orderId,
-          event.getTopic());
-    } catch (InvalidOutboxPayloadException exception) {
-      event.markFailed();
-      log.error(
-          "Outbox event payload is invalid; marked FAILED. outboxEventId={}, topic={}",
-          event.getId(),
-          event.getTopic(),
-          exception);
+      all.get(batchTimeoutSeconds, TimeUnit.SECONDS);
+    } catch (TimeoutException exception) {
+      log.warn(
+          "Outbox batch send timed out after {}s; incomplete events remain PENDING.",
+          batchTimeoutSeconds);
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
-      log.warn(
-          "Outbox event publishing interrupted; remains PENDING. outboxEventId={}, topic={}",
-          event.getId(),
-          event.getTopic(),
-          exception);
+      log.warn("Outbox batch send interrupted; incomplete events remain PENDING.");
     } catch (Exception exception) {
-      log.error(
-          "Outbox event publish failed; remains PENDING. outboxEventId={}, topic={}",
-          event.getId(),
-          event.getTopic(),
-          exception);
+      log.warn("Outbox batch send had failures; failed events remain PENDING.", exception);
     }
   }
 
@@ -72,14 +139,7 @@ public class OutboxEventPublisher {
       JsonNode root = objectMapper.readTree(payload);
       return UUID.fromString(root.required("orderId").asText()).toString();
     } catch (Exception exception) {
-      throw new InvalidOutboxPayloadException("Outbox payload에 orderId가 없습니다.", exception);
-    }
-  }
-
-  private static class InvalidOutboxPayloadException extends RuntimeException {
-
-    private InvalidOutboxPayloadException(String message, Throwable cause) {
-      super(message, cause);
+      return null;
     }
   }
 }
