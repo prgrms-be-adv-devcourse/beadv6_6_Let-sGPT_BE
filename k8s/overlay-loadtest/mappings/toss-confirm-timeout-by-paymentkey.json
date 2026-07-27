@@ -1,0 +1,25 @@
+{
+  "name": "toss-confirm-timeout-by-paymentkey",
+  "priority": 1,
+  "metadata": {
+    "comment": "LTTIMEOUT... -> exceeds the 5s RestClient read timeout on purpose (ResourceAccessException path)."
+  },
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/payments/confirm",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": {
+          "expression": "$.paymentKey",
+          "matches": "^LTTIMEOUT.*"
+        }
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "fixedDelayMilliseconds": 8000,
+    "jsonBody": { "lastTransactionKey": "wiremock_txn_timeout" }
+  }
+}

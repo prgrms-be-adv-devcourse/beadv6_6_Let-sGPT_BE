@@ -9,6 +9,7 @@ kind: Kustomization
 resources:
   - ../overlay          # base + 이미지 태그 핀 전부 상속
   - wiremock.yaml       # 가짜 PG — 이 오버레이가 활성일 때만 desired-state에 존재
+  - networkpolicy.yaml  # 인증 없는 WireMock 관리 API를 payment 파드에만 노출
 
 patches:
   - path: patch-payment-pg-mock.yaml
@@ -17,6 +18,11 @@ patches:
 # mappings/*.json이 목 응답의 유일한 원본. 이름에 내용 해시가 붙으므로 매핑을 고치는
 # 커밋만으로 wiremock 파드가 자동 재생성된다(rollout restart 불필요, 지연값이 재시작에도
 # 살아남는다 — 관리 API 런타임 편집이 파드 재시작마다 증발하던 문제의 해소).
+#
+# 파일 하나당 스텁 하나로 유지한다. {"mappings":[...]} 묶음 형식은 관리 API의
+# bulk import 용이라 파일 로딩 경로에서는 형식이 갈릴 수 있어, 애초에 갈릴 여지를
+# 없애는 쪽을 택했다. 스텁을 추가하면 파일을 하나 만들고 아래 목록에 한 줄 더한다
+# (목록에 안 적힌 파일은 ConfigMap에 실리지 않아 조용히 누락된다).
 configMapGenerator:
   - name: wiremock-toss-mappings
     namespace: openat   # 필수 — 생략하면 생성 ConfigMap이 namespace 없이 렌더되고,
@@ -25,7 +31,17 @@ configMapGenerator:
                         # base의 namespace 트랜스포머는 base 서브트리에만 적용되므로
                         # 오버레이 레벨 generator에는 이 명시가 필요하다.
     files:
+      # confirm — 정상 경로(캠페인 표준 지연 800ms)
       - mappings/toss-confirm-ok.json
-      - mappings/toss-confirm-faults.json
-      - mappings/toss-cancel.json
+      # confirm — 결함 주입(paymentKey 접두어 셀렉터 3, 수동 curl용 헤더 셀렉터 2)
+      - mappings/toss-confirm-reject-4xx-by-paymentkey.json
+      - mappings/toss-confirm-error-5xx-by-paymentkey.json
+      - mappings/toss-confirm-timeout-by-paymentkey.json
+      - mappings/toss-confirm-reject-4xx-by-header.json
+      - mappings/toss-confirm-error-5xx-by-header.json
+      # cancel — 정상 1, 결함 2
+      - mappings/toss-cancel-happy.json
+      - mappings/toss-cancel-reject-4xx.json
+      - mappings/toss-cancel-error-5xx.json
+      # 조회
       - mappings/toss-query-payment.json
