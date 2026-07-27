@@ -2262,7 +2262,7 @@ data:
           "id": 30,
           "type": "timeseries",
           "title": "커넥션 상태 분해 (state별)",
-          "description": "부하 중 커넥션이 어떤 상태로 잡혀 있는지 분해한다 — 쿼리는 `sum by (state) (pg_stat_activity_count)`. 총합만 보는 상단 'Active connections' 스탯으로는 구분되지 않는 정보다.\n\nactive는 SQL을 실제로 실행 중인 커넥션이고, idle in transaction은 트랜잭션(BEGIN)을 연 채 아무 SQL도 돌리지 않고 대기 중인 커넥션이다. idle in transaction이 지속적으로 0보다 크면 트랜잭션 안에서 DB가 아닌 외부 I/O(Kafka 동기 발행, 외부 HTTP 호출 등)를 기다리는 코드가 있다는 뜻이다. 이때는 DB가 느린 게 아니므로 커넥션풀을 키워도 나아지지 않고, 외부 호출을 트랜잭션 경계 밖으로 빼야 한다.\n\n실측(성능 측정 라운드): 부하 중 active가 0인데 idle in transaction 평균 1.15였고, 이것이 '트랜잭션을 연 채 Kafka 동기 발행을 기다린다'는 판정의 유일한 지표 증거였다. idle(트랜잭션 밖 유휴)과 idle in transaction은 이름만 비슷할 뿐 전혀 다르니 혼동하지 말 것.",
+          "description": "부하 중 커넥션이 어떤 상태로 잡혀 있는지 분해한다 — 쿼리는 `sum by (state) (pg_stat_activity_count)`. 총합만 보는 상단 'Active connections' 스탯으로는 구분되지 않는 정보다.\n\n각 상태가 말하는 것은 딱 여기까지다. active는 서버가 지금 SQL을 실행 중인 커넥션이다. idle in transaction은 클라이언트가 트랜잭션(BEGIN)을 연 채 다음 명령을 보내지 않고 있는 커넥션이다 — 서버는 대기 중이라는 사실만 알 뿐, 클라이언트가 그 시간에 무엇을 하고 있는지는 이 지표에 담기지 않는다. idle(트랜잭션 밖 유휴)과는 이름만 비슷할 뿐 전혀 다르니 혼동하지 말 것.\n\n지속적으로 0보다 크면 조사 대상이다(순간적으로 뜨는 건 정상 — 모든 트랜잭션은 명령 사이에 잠깐 이 상태를 지난다). 원인 후보는 트랜잭션 안에서 DB가 아닌 작업(외부 HTTP 호출, 메시지 발행 등)을 기다림, 커밋/롤백 누락, 애플리케이션·클라이언트 자체 지연, 커넥션을 반납하지 않고 붙들고 있음 등 여럿이고 이 패널만으로는 어느 쪽인지 가려지지 않는다.\n\n원인을 좁히려면 교차확인한다. (1) 아래 '커넥션풀 (HikariCP)' 행의 'Active vs Max (서비스별)'·'Pending threads (서비스별)'로 어느 서비스의 풀이 잡혀 있는지 본다. (2) 커넥션 점유 시간 `hikaricp_connections_usage_seconds_max`(전용 패널은 아직 없어 Explore에서 직접 조회)가 함께 길어졌는지 본다 — 길어졌다면 애플리케이션이 커넥션을 쥔 채 무언가를 기다린 것이다. (3) 'E2E — 주문·결제·정산 흐름' 대시보드의 'Outbox 발행' 패널에서 발행 rate가 주저앉았는지 본다. (4) Tempo 트레이스로 해당 트랜잭션 스팬 안에 어떤 자식 스팬이 시간을 먹었는지 직접 확인한다 — 원인을 지목할 수 있는 건 사실상 이것뿐이다.\n\n실측(성능 측정 라운드): 부하 중 active가 0인데 idle in transaction 평균 1.15가 관측됐다. 이 수치가 말하는 것은 '커넥션이 트랜잭션을 연 채 서버 밖에서 대기했다'까지이며, 무엇을 기다렸는지는 위 교차확인으로 따로 확인해야 한다.",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -3608,14 +3608,14 @@ data:
           "id": 35,
           "type": "stat",
           "title": "현재 노드 압력 요약 (PSI some, 노드별)",
-          "description": "노드별 CPU·I/O·메모리의 현재 PSI some 비율(직전 5분 평균). 사용률이 아니라 '자원을 못 얻어 멈춰 있던 시간'의 비율이다 — 사용률이 낮아도 여기가 높을 수 있고, 그때 병목은 그 자원이다.\n\n눈금: 20% 미만이면 여유, 20~50%는 경합 시작, 50%를 넘으면 해당 자원이 병목, 80% 이상이면 그 자원을 더 요구하는 방향의 튜닝(풀 크기·동시성 상향)은 역효과다. 값이 비어 있으면 node-exporter DaemonSet이 뜨지 않은 것이다.",
+          "description": "노드별 CPU·I/O·메모리의 현재 PSI some 비율(직전 5분 평균). 사용률이 아니라 '자원을 못 얻어 멈춰 있던 시간'의 비율이다 — 사용률이 낮아도 여기가 높을 수 있고, 그때 병목은 그 자원이다.\n\n눈금: 20% 미만이면 여유, 20~50%는 경합 시작, 50%를 넘으면 해당 자원이 병목, 80% 이상이면 그 자원을 더 요구하는 방향의 튜닝(풀 크기·동시성 상향)은 역효과다.\n\n값이 비어 있다고 해서 원인이 하나로 정해지지 않는다. DaemonSet 파드가 안 떴을 수도, 떴는데 pressure 컬렉터가 지표를 못 냈을 수도(커널이 PSI 미지원이거나 /proc/pressure 읽기 실패), 서비스 디스커버리가 파드를 못 찾았을 수도, 스크레이프가 실패했을 수도 있다. 오른쪽 '수집기 상태 (node-exporter up, 노드별)' 패널로 먼저 가른다 — up이 1인데 여기가 비면 스크레이프는 되는 중이므로 exporter가 PSI를 안 내는 쪽이고, up이 0이거나 노드가 아예 목록에 없으면 파드·디스커버리 쪽이다.",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
           "gridPos": {
             "h": 5,
-            "w": 24,
+            "w": 18,
             "x": 0,
             "y": 105
           },
@@ -3691,6 +3691,86 @@ data:
               "expr": "max by (node) (rate(node_pressure_memory_waiting_seconds_total[5m])) * 100",
               "legendFormat": "{{node}} MEM",
               "refId": "C"
+            }
+          ]
+        },
+        {
+          "id": 36,
+          "type": "stat",
+          "title": "수집기 상태 (node-exporter up, 노드별)",
+          "description": "왼쪽 PSI 패널들이 비었을 때 '수집기가 안 뜬 것'인지 '뜨는데 지표가 없는 것'인지를 가르는 판별용 패널이다. 쿼리는 `max by (node) (up{job=\"node-exporter\"})`.\n\n읽는 법. 노드가 1로 보이면 그 노드의 exporter를 스크레이프하는 데 성공하고 있다는 뜻이고, 이때 PSI가 비면 원인은 파드가 아니라 exporter가 node_pressure_* 를 내놓지 않는 쪽이다(커널 PSI 미지원, pressure 컬렉터 오류, /proc/pressure 마운트 문제). 0으로 보이면 대상은 발견됐는데 스크레이프가 실패한 것이다 — 파드 미기동·NetworkPolicy·포트를 본다. 노드가 아예 목록에 없으면 서비스 디스커버리가 그 노드의 파드를 못 찾은 것이다(DaemonSet 미배포, 라벨 불일치, 스케줄 실패).\n\nup은 스크레이프 루프가 metric_relabel 이후에 붙이는 합성 시리즈라 otel-collector의 keep 필터(`node_pressure_.*|up`)에 걸려 죽지 않는다. node 라벨은 relabel 단계에서 파드의 노드명으로 채워진다. 파드 교체 중에는 같은 노드에 대상이 잠깐 둘이 되므로 `max by (node)`로 접는다 — 새 파드가 올라왔다면 1로 보인다.\n\n배포 직후 확인 절차와 롤백 방법은 리포지터리의 k8s/observability/README-node-exporter.md 참조.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 6,
+            "x": 18,
+            "y": 105
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "max": 1,
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": {
+                      "text": "스크레이프 실패",
+                      "index": 0
+                    },
+                    "1": {
+                      "text": "수집 중",
+                      "index": 1
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "none",
+            "textMode": "value_and_name",
+            "orientation": "vertical"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max by (node) (up{job=\"node-exporter\"})",
+              "legendFormat": "{{node}}",
+              "refId": "A"
             }
           ]
         },

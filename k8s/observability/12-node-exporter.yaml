@@ -13,6 +13,10 @@
 # 전부 사라지고, 노드당 노출 시리즈가 한 자릿수로 떨어진다.
 # 남은 사각지대(MemAvailable, 디스크·네트워크)는 이 안건 범위 밖이며, 필요해지면
 # meminfo 컬렉터만 추가로 켜는 식으로 증분 확장한다.
+#
+# 배포 직후 검증 절차와 롤백 방법: README-node-exporter.md.
+# 이 워크로드는 자동동기화(prune·selfHeal) 대상이라 클러스터에서 손으로 지워도 되살아난다 —
+# 되돌리려면 리버트 커밋이 필요하다.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -45,8 +49,8 @@ spec:
         runAsUser: 65534
         runAsGroup: 65534
         seccompProfile: { type: RuntimeDefault }
-      # hostNetwork/hostPID는 쓰지 않는다. pressure 컬렉터는 호스트 /proc 마운트만 있으면
-      # 되고, hostNetwork를 켜면 노드의 9100 포트를 점유해 충돌 위험만 생긴다.
+      # hostNetwork/hostPID는 쓰지 않는다. pressure 컬렉터는 호스트 /proc/pressure 마운트만
+      # 있으면 되고, hostNetwork를 켜면 노드의 9100 포트를 점유해 충돌 위험만 생긴다.
       # 파드 IP:9100으로 스크레이프하며 NetworkPolicy(observability-intra-only)의
       # 네임스페이스 내부 전면허용으로 otel-collector에서 도달한다.
       containers:
@@ -83,7 +87,36 @@ spec:
             limits: { memory: "64Mi" }
             requests: { cpu: "10m", memory: "24Mi" }
           volumeMounts:
-            - { name: proc, mountPath: /host/proc, readOnly: true }
+            # 순서가 의미를 갖는다 — 부모(/host/proc)가 먼저 걸려야 그 위에 자식
+            # (/host/proc/pressure)이 얹힌다. 런타임은 이 배열 순서대로 마운트하며,
+            # 경로 길이로 정렬하는 런타임에서도 짧은 쪽이 먼저라 결과는 같다.
+            - { name: procfs-root, mountPath: /host/proc }
+            - { name: proc-pressure, mountPath: /host/proc/pressure, readOnly: true }
       volumes:
-        - name: proc
-          hostPath: { path: /proc, type: Directory }
+        # 호스트 /proc 전체를 넣지 않는다. --path.procfs 가 가리키는 루트는 빈 디렉터리이고,
+        # 실제 데이터는 그 아래 pressure 한 곳에만 얹는다.
+        #
+        # 왜 이 구성이 성립하는가 — 추정이 아니라 v1.9.1이 고정한 소스를 확인한 결과다.
+        #  1) 읽는 경로가 pressure 하나뿐이다. procfs(v0.15.x)의 PSIStatsForResource는 경로를
+        #     "<path.procfs>/pressure/<resource>" 로만 조립하고, resource는 cpu·io·memory·irq다.
+        #     --collector.disable-defaults 로 나머지 컬렉터가 전부 꺼져 있어 /proc의 다른 곳을
+        #     읽는 코드 경로 자체가 없다(자기관측 메트릭도 --web.disable-exporter-metrics로 차단).
+        #  2) 기동 시 procfs.NewFS(<path.procfs>)가 도는데, 이 검증은 os.Stat + IsDir 두 가지뿐이다.
+        #     statfs 매직으로 "진짜 procfs인가"를 보지 않는다(procfs internal/fs/fs.go). 그래서
+        #     루트가 빈 emptyDir여도 초기화가 깨지지 않는다 — 여기가 좁히기의 성패를 가르는 지점이라
+        #     매직 검증 유무를 소스로 직접 확인했다.
+        #
+        # 얻는 것: 호스트의 프로세스 목록(/proc/<pid>/*)·네트워크 상태(/proc/net/*)·커널 파라미터가
+        # 컨테이너에 아예 보이지 않는다. exporter가 침해돼도 노출면이 pressure 파일 3~4개다.
+        # readOnly 마운트는 "못 바꾼다"만 보장하지 "못 본다"는 보장하지 않으므로 범위 축소가 본질이다.
+        #
+        # 배포 후 이 구성이 실제로 뜨는지 확인하는 절차는 README-node-exporter.md 참조.
+        # (파드가 CrashLoop면 --path.procfs 초기화 실패이므로 즉시 리버트 대상)
+        - name: procfs-root
+          # 읽기전용으로 잡지 않는다 — 그 위에 자식 마운트를 얹으려면 런타임이 마운트 지점
+          # 디렉터리를 만들 수 있어야 한다. 내용물은 pressure 마운트 하나가 전부다.
+          emptyDir: {}
+        - name: proc-pressure
+          # 파일 단위(/proc/pressure/cpu 등)로 고정하지 않고 디렉터리째 건다. irq는 커널 6.1+
+          # 에서만 존재해 파일 단위로 박으면 없는 노드에서 hostPath type 검증이 실패한다.
+          hostPath: { path: /proc/pressure, type: Directory }
