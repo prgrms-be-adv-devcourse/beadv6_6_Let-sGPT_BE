@@ -18,7 +18,7 @@ public class KafkaConsumerConfig {
   public ConsumerFactory<String, String> consumerFactory(
       @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
       @Value("${spring.kafka.consumer.group-id}") String groupId,
-      @Value("${spring.kafka.consumer.auto-offset-reset:earliest}") String autoOffsetReset) {
+      @Value("${spring.kafka.consumer.auto-offset-reset:latest}") String autoOffsetReset) {
     Map<String, Object> props = new HashMap<>();
     props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
     props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);

@@ -35,7 +35,10 @@ public class OpenDropCache {
     this.openDropClient = openDropClient;
   }
 
-  @Scheduled(initialDelay = 0, fixedDelayString = "${recommendation.drop-cache.refresh-interval}")
+  @Scheduled(
+      scheduler = "recommendationTaskScheduler",
+      initialDelay = 0,
+      fixedDelayString = "${recommendation.drop-cache.refresh-interval}")
   public void refresh() {
     try {
       Map<UUID, DropMeta> refreshed =
@@ -53,6 +56,14 @@ public class OpenDropCache {
     } catch (RuntimeException exception) {
       log.warn("Failed to refresh open drop cache; keeping the previous cache", exception);
     }
+  }
+
+  /** 현재 열려 있는 드롭의 상품 id 집합. 캐시 크기로 상한이 잡힌 유한 집합이다. */
+  public List<UUID> openProductIds() {
+    return cache.get().values().stream()
+        .filter(this::isStillOpen)
+        .map(DropMeta::productId)
+        .toList();
   }
 
   public List<UUID> filterOpenProductIds(Collection<UUID> candidateProductIds) {
@@ -82,7 +93,6 @@ public class OpenDropCache {
   public List<DropMeta> findGeneral(int limit) {
     return cache.get().values().stream()
         .filter(this::isStillOpen)
-        .sorted(CLOSE_AT_ORDER)
         .limit(limit)
         .toList();
   }
