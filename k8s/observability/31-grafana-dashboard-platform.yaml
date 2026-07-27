@@ -2262,7 +2262,7 @@ data:
           "id": 30,
           "type": "timeseries",
           "title": "커넥션 상태 분해 (state별)",
-          "description": "부하 중 커넥션이 어떤 상태로 잡혀 있는지 분해한다 — 쿼리는 `sum by (state) (pg_stat_activity_count)`. 총합만 보는 상단 'Active connections' 스탯으로는 구분되지 않는 정보다.\n\n각 상태가 말하는 것은 딱 여기까지다. active는 서버가 지금 SQL을 실행 중인 커넥션이다. idle in transaction은 클라이언트가 트랜잭션(BEGIN)을 연 채 다음 명령을 보내지 않고 있는 커넥션이다 — 서버는 대기 중이라는 사실만 알 뿐, 클라이언트가 그 시간에 무엇을 하고 있는지는 이 지표에 담기지 않는다. idle(트랜잭션 밖 유휴)과는 이름만 비슷할 뿐 전혀 다르니 혼동하지 말 것.\n\n지속적으로 0보다 크면 조사 대상이다(순간적으로 뜨는 건 정상 — 모든 트랜잭션은 명령 사이에 잠깐 이 상태를 지난다). 원인 후보는 트랜잭션 안에서 DB가 아닌 작업(외부 HTTP 호출, 메시지 발행 등)을 기다림, 커밋/롤백 누락, 애플리케이션·클라이언트 자체 지연, 커넥션을 반납하지 않고 붙들고 있음 등 여럿이고 이 패널만으로는 어느 쪽인지 가려지지 않는다.\n\n원인을 좁히려면 교차확인한다. (1) 아래 '커넥션풀 (HikariCP)' 행의 'Active vs Max (서비스별)'·'Pending threads (서비스별)'로 어느 서비스의 풀이 잡혀 있는지 본다. (2) 커넥션 점유 시간 `hikaricp_connections_usage_seconds_max`(전용 패널은 아직 없어 Explore에서 직접 조회)가 함께 길어졌는지 본다 — 길어졌다면 애플리케이션이 커넥션을 쥔 채 무언가를 기다린 것이다. (3) 'E2E — 주문·결제·정산 흐름' 대시보드의 'Outbox 발행' 패널에서 발행 rate가 주저앉았는지 본다. (4) Tempo 트레이스로 해당 트랜잭션 스팬 안에 어떤 자식 스팬이 시간을 먹었는지 직접 확인한다 — 원인을 지목할 수 있는 건 사실상 이것뿐이다.\n\n실측(성능 측정 라운드): 부하 중 active가 0인데 idle in transaction 평균 1.15가 관측됐다. 이 수치가 말하는 것은 '커넥션이 트랜잭션을 연 채 서버 밖에서 대기했다'까지이며, 무엇을 기다렸는지는 위 교차확인으로 따로 확인해야 한다.",
+          "description": "부하 중 커넥션이 어떤 상태로 잡혀 있는지 분해한다 — 쿼리는 `sum by (state) (pg_stat_activity_count)`. 총합만 보는 상단 'Active connections' 스탯으로는 구분되지 않는 정보다.\n\n각 상태가 말하는 것은 딱 여기까지다. active는 서버가 지금 SQL을 실행 중인 커넥션이다. idle in transaction은 클라이언트가 트랜잭션(BEGIN)을 연 채 다음 명령을 보내지 않고 있는 커넥션이다 — 서버는 대기 중이라는 사실만 알 뿐, 클라이언트가 그 시간에 무엇을 하고 있는지는 이 지표에 담기지 않는다. idle(트랜잭션 밖 유휴)과는 이름만 비슷할 뿐 전혀 다르니 혼동하지 말 것.\n\n지속적으로 0보다 크면 조사 대상이다(순간적으로 뜨는 건 정상 — 모든 트랜잭션은 명령 사이에 잠깐 이 상태를 지난다). 원인 후보는 트랜잭션 안에서 DB가 아닌 작업(외부 HTTP 호출, 메시지 발행 등)을 기다림, 커밋/롤백 누락, 애플리케이션·클라이언트 자체 지연, 커넥션을 반납하지 않고 붙들고 있음 등 여럿이고 이 패널만으로는 어느 쪽인지 가려지지 않는다.\n\n원인을 좁히려면 교차확인한다. (1) 아래 '커넥션풀 (HikariCP)' 행의 'Active vs Max (서비스별)'·'Pending threads (서비스별)'로 어느 서비스의 풀이 잡혀 있는지 본다. (2) 같은 행의 '평균 커넥션 점유 시간'·'최대 커넥션 점유·획득 시간'이 함께 길어졌는지 본다 — 길어졌다면 애플리케이션이 커넥션을 쥔 채 무언가를 기다린 구간이 있었다는 뜻이고, 무엇을 기다렸는지는 여전히 이 지표들에 담기지 않는다. (3) 아래 '아웃박스 적체 (Outbox)' 행에서 발행 rate가 주저앉거나 PENDING이 쌓였는지 본다. (4) Tempo 트레이스로 해당 트랜잭션 스팬 안에 어떤 자식 스팬이 시간을 먹었는지 직접 확인한다 — 원인을 지목할 수 있는 건 사실상 이것뿐이다.\n\n실측(성능 측정 라운드): 부하 중 active가 0인데 idle in transaction 평균 1.15가 관측됐다. 이 수치가 말하는 것은 '커넥션이 트랜잭션을 연 채 서버 밖에서 대기했다'까지이며, 무엇을 기다렸는지는 위 교차확인으로 따로 확인해야 한다.",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -2734,6 +2734,380 @@ data:
           ]
         },
         {
+          "id": 37,
+          "type": "timeseries",
+          "title": "점유 중인 커넥션 수 (서비스별)",
+          "description": "구간 평균으로 몇 개의 커넥션이 동시에 쥐여 있었는지. `hikaricp_connections_usage_seconds_sum`의 초당 증가분은 '벽시계 1초 동안 쌓인 커넥션 점유 시간의 합'이라 그대로 '상시 점유 커넥션 수'(단위 개수)로 읽힌다. 풀 크기 선에 붙으면 포화다.\n\n같은 행의 'Active vs Max'는 스크레이프 순간의 스냅샷이라 그 사이에 잡혔다 풀린 커넥션을 놓친다. 이 패널은 구간 평균이라 순간적으로 비는 타이밍에 속지 않는다 — 둘이 어긋나면 이쪽을 믿는다.\n\n이 값은 '초당 획득 횟수 × 평균 점유 시간'으로 분해된다. 즉 같은 값이 '호출이 많아서'로도 '건당 오래 쥐어서'로도 나올 수 있고, 어느 쪽인지는 이 지표만으로 갈리지 않는다. 옆의 '평균 커넥션 점유 시간'을 같이 봐야 한다. 대응이 갈리기 때문에 중요하다 — 호출이 많은 거면 풀을 키우는 게 듣고, 오래 쥐는 거면 풀을 키워도 대기만 늘어난다.\n\n실측(목 결제사 지연 800ms, 결제 풀 4, 동시 사용자 5→40): 결제에서 초당 획득 6회 × 평균 점유 0.6초 = 3.6개가 상시 점유되어 풀 4를 거의 다 채웠다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 47
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app) (rate(hikaricp_connections_usage_seconds_sum[$__rate_interval]))",
+              "legendFormat": "{{app}} 점유 중",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app)(hikaricp_connections_max)",
+              "legendFormat": "{{app}} 풀 크기",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "id": 38,
+          "type": "timeseries",
+          "title": "평균 커넥션 점유 시간 (서비스별)",
+          "description": "커넥션을 풀에서 받아 반납할 때까지 쥐고 있던 시간의 평균 — `usage_seconds_sum / usage_seconds_count`.\n\n옆의 '평균 커넥션 획득 대기'와 혼동하지 말 것. 획득 대기는 풀이 빌 때까지 '기다린' 시간이고, 점유는 받은 뒤 '쥐고 있던' 시간이다. 획득 대기가 크면 풀이 모자라거나 남들이 오래 쥐는 것이고, 점유가 크면 그 서비스 자신이 오래 쥔다.\n\n이 지표는 '얼마나 오래 쥐었나'까지만 말한다. 왜 오래 쥐었는지는 담기지 않는다 — 쿼리 자체가 느림, 트랜잭션 안에서 DB가 아닌 작업(외부 HTTP 호출, 메시지 발행 등)을 기다림, 커넥션을 연 채 애플리케이션 로직이 길게 돎, 반납 누락 등이 모두 같은 모양으로 나타난다.\n\n좁히려면 교차확인한다. (1) 상단 '커넥션 상태 분해 (state별)'에서 idle in transaction이 같이 올랐는지 — 올랐다면 트랜잭션은 열려 있는데 서버는 명령을 받지 못한 구간이 있었다는 뜻이다. (2) 'Tuples fetched / returned'로 DB 작업량 자체가 늘었는지. (3) Tempo 트레이스로 해당 트랜잭션 스팬 안의 자식 스팬을 본다 — 원인을 지목할 수 있는 건 사실상 트레이스뿐이다.\n\n실측(목 결제사 지연 800ms, 결제 풀 4, 동시 사용자 5→40): 결제는 무부하 161ms에서 부하 중 450ms→780ms로 올랐고, 같은 시각 order는 평균 7ms였다. 특정 서비스만 수백 ms대로 튀면 그 서비스의 트랜잭션 경계를 의심할 근거가 된다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 55
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app) (rate(hikaricp_connections_usage_seconds_sum[$__rate_interval])) / sum by (app) (rate(hikaricp_connections_usage_seconds_count[$__rate_interval]))",
+              "legendFormat": "{{app}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 39,
+          "type": "timeseries",
+          "title": "평균 커넥션 획득 대기 (서비스별)",
+          "description": "풀에 커넥션을 요청하고 실제로 받기까지 기다린 시간의 평균 — `acquire_seconds_sum / acquire_seconds_count`. 이 구간 동안 요청 스레드는 아직 커넥션을 못 받고 멈춰 있으므로, 이 시간은 사용자 응답 지연에 그대로 더해진다.\n\n옆의 '평균 커넥션 점유 시간'과 다르다. 여기는 '기다린' 시간, 저기는 '쥐고 있던' 시간이다.\n\n이 지표는 '기다렸다'까지만 말한다. 내 서비스가 느려서인지 같은 풀을 쓰는 다른 경로가 오래 쥐어서인지는 구분되지 않는다. 점유가 길면서 대기도 길면 오래 쥐는 쪽이 유력하고, 점유는 짧은데 대기만 길면 동시 요청 수 대비 풀이 작은 쪽이 유력하다 — 같은 행의 'Pending threads (서비스별)'로 대기 큐가 실제로 쌓였는지 확인한다.\n\n한계선은 Hikari의 획득 타임아웃(`connection-timeout`)이다. 평균이 타임아웃에 다가가고 있으면 분포의 꼬리는 이미 넘고 있으므로, 같은 행의 'Timeouts (5m rate)'가 0인지 반드시 같이 본다.\n\n실측(목 결제사 지연 800ms, 결제 풀 4, 동시 사용자 5→40): 결제 평균 대기가 1.21초에서 4.06초로 올랐고, 획득 타임아웃 5초를 꼬리가 넘겨 획득 실패 212건이 발생했다. 평균이 아직 한계선 아래여도 실패는 이미 나고 있었다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 55
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app) (rate(hikaricp_connections_acquire_seconds_sum[$__rate_interval])) / sum by (app) (rate(hikaricp_connections_acquire_seconds_count[$__rate_interval]))",
+              "legendFormat": "{{app}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 40,
+          "type": "timeseries",
+          "title": "최대 커넥션 점유·획득 시간 (서비스별)",
+          "description": "평균이 숨기는 꼬리를 본다. 위 두 패널이 평균이라면 여기는 같은 구간의 최댓값이다.\n\nMicrometer의 `_max`는 프로세스 시작 이후 누적 최댓값이 아니라 최근 슬라이딩 윈도우 안의 최댓값이라, 사건이 지나가면 다시 내려간다. 값이 낮다고 '한 번도 없었다'가 아니라 '최근 구간에는 없었다'는 뜻이며, 조회 구간을 넓게 잡으면 지나간 스파이크도 그래프에 남는다.\n\n평균과 최대의 간격 자체가 정보다. 평균은 낮은데 최대만 튀면 소수의 요청만 오래 쥔 것이고(특정 엔드포인트, 배치, 재시도 등이 후보), 평균과 최대가 같이 올라가면 그 서비스의 부하 전반이 느려진 것이다. 어느 쪽인지는 이 패널만으로 확정되지 않으니 Tempo 트레이스에서 느린 스팬을 직접 집는다.\n\n서비스 간 비교가 원인 범위를 좁혀준다. 모든 서비스가 같이 오르면 DB·노드 같은 공통 자원을 의심하고(아래 '노드 압력 (PSI)' 행과 상단 PostgreSQL 패널 교차확인), 한 서비스만 오르면 그 서비스 고유의 경로를 먼저 본다.\n\n실측(목 결제사 지연 800ms, 결제 풀 4, 동시 사용자 5→40): 결제의 최대 점유가 5.176초였고 같은 시각 order의 최대는 96ms였다. 두 자릿수 배 차이라 공통 원인보다 결제 고유 경로를 먼저 본 근거가 됐다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 63
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max by (app) (hikaricp_connections_usage_seconds_max)",
+              "legendFormat": "{{app}} 점유 최대",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max by (app) (hikaricp_connections_acquire_seconds_max)",
+              "legendFormat": "{{app}} 획득 대기 최대",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "id": 41,
+          "type": "row",
+          "title": "아웃박스 적체 (Outbox)",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 71
+          },
+          "panels": []
+        },
+        {
+          "id": 42,
+          "type": "timeseries",
+          "title": "아웃박스 PENDING 적체 (결제)",
+          "description": "발행 대기 상태로 결제 아웃박스 테이블에 남아 있는 이벤트 수 — `payment_outbox_pending`. 발행기가 고정 주기로 PENDING을 훑어 카프카로 보내므로 톱니 모양으로 오르내리는 건 정상이고, 판단 기준은 골짜기가 0으로 돌아오는가다. 골짜기가 0에서 뜬 채 우상향이면 발행이 생성을 못 따라간다는 뜻이다.\n\n이 값은 '몇 건이 남았나'까지만 말한다. 발행기가 멈췄는지, 카프카 전송이 느린지, 발행기는 도는데 생성이 더 빠른지는 구분되지 않는다 — 옆의 '아웃박스 발행 rate'가 0인지(발행 경로 정지가 후보) 0은 아닌데 적체가 늘어나는지(생성이 더 빠름)로 갈린다.\n\n집계 방식: 이 게이지는 각 인스턴스가 같은 DB를 세어 보고하므로 결제 파드가 여러 개면 같은 수가 중복 보고된다. 합치면 replica 배수로 부풀기 때문에 `sum`이 아니라 `max by (app)`으로 접는다.\n\n비대칭 주의 — 주문 서비스에는 대응하는 게이지가 없다. 코드에 발행 카운터(`order.outbox.published`)만 등록돼 있고 PENDING 게이지는 없어서 이 패널에는 결제만 나온다. 주문 쪽 적체는 이 화면으로 판단할 수 없고, 옆 패널의 주문 발행 rate와 주문 DB를 직접 봐야 한다.\n\n실측(목 결제사 지연 800ms, 결제 풀 4, 동시 사용자 5→40): 결제 아웃박스 적체가 최대 434건까지 올랐다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 72
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max by (app) (payment_outbox_pending)",
+              "legendFormat": "{{app}} PENDING",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 43,
+          "type": "timeseries",
+          "title": "아웃박스 발행 rate (서비스별)",
+          "description": "초당 몇 건이 카프카로 실제 발행됐는지 — 결제는 `payment_outbox_published_total`, 주문은 `order_outbox_published_total`.\n\n두 서비스 모두 카프카 전송이 성공한 뒤에만 카운터를 올린다. 따라서 이 rate는 성공 발행만 세고, 실패는 카운터에 나타나지 않은 채 다음 주기에 재시도된다. 실패 건수를 직접 세는 지표는 없고 파드 로그에만 남는다 — 이 패널이 0이라고 '요청이 없었다'로 읽으면 안 되는 이유다.\n\n옆의 'PENDING 적체'와 짝으로 읽는다. rate가 0인데 적체가 쌓이면 발행 경로가 멈춘 쪽이 유력하고(발행 스케줄러 정지, 카프카 연결 실패 등이 후보 — 파드 로그로 확인), rate가 0이 아닌데도 적체가 늘면 생성이 발행보다 빠른 쪽이다. 후자는 발행 주기·배치 크기 때문일 수도, 건당 발행이 느려서일 수도 있어 이 두 패널만으로는 갈리지 않는다.\n\n주문에는 PENDING 게이지가 없으므로, 주문은 이 rate와 'E2E — 주문·결제·정산 흐름' 대시보드의 주문 생성 rate를 비교해 간접 판단한다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 72
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "lineWidth": 1,
+                "axisPlacement": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app) (rate(payment_outbox_published_total[$__rate_interval]))",
+              "legendFormat": "{{app}} 발행",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (app) (rate(order_outbox_published_total[$__rate_interval]))",
+              "legendFormat": "{{app}} 발행",
+              "refId": "B"
+            }
+          ]
+        },
+        {
           "id": 18,
           "type": "row",
           "title": "JVM 상세 (기존 수집분)",
@@ -2742,7 +3116,7 @@ data:
             "h": 1,
             "w": 24,
             "x": 0,
-            "y": 55
+            "y": 80
           },
           "panels": []
         },
@@ -2759,7 +3133,7 @@ data:
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 56
+            "y": 81
           },
           "fieldConfig": {
             "defaults": {
@@ -2823,7 +3197,7 @@ data:
             "h": 8,
             "w": 8,
             "x": 8,
-            "y": 56
+            "y": 81
           },
           "fieldConfig": {
             "defaults": {
@@ -2878,7 +3252,7 @@ data:
             "h": 8,
             "w": 8,
             "x": 16,
-            "y": 56
+            "y": 81
           },
           "fieldConfig": {
             "defaults": {
@@ -2938,7 +3312,7 @@ data:
             "h": 1,
             "w": 24,
             "x": 0,
-            "y": 64
+            "y": 89
           },
           "panels": []
         },
@@ -2955,7 +3329,7 @@ data:
             "h": 9,
             "w": 12,
             "x": 0,
-            "y": 65
+            "y": 90
           },
           "fieldConfig": {
             "defaults": {
@@ -3053,7 +3427,7 @@ data:
             "h": 9,
             "w": 12,
             "x": 12,
-            "y": 65
+            "y": 90
           },
           "fieldConfig": {
             "defaults": {
@@ -3120,7 +3494,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 74
+            "y": 99
           },
           "fieldConfig": {
             "defaults": {
@@ -3175,7 +3549,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 74
+            "y": 99
           },
           "fieldConfig": {
             "defaults": {
@@ -3230,7 +3604,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 82
+            "y": 107
           },
           "fieldConfig": {
             "defaults": {
@@ -3285,7 +3659,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 82
+            "y": 107
           },
           "fieldConfig": {
             "defaults": {
@@ -3340,7 +3714,7 @@ data:
             "h": 6,
             "w": 24,
             "x": 0,
-            "y": 90
+            "y": 115
           },
           "fieldConfig": {
             "defaults": {
@@ -3402,7 +3776,7 @@ data:
             "h": 1,
             "w": 24,
             "x": 0,
-            "y": 96
+            "y": 121
           },
           "panels": []
         },
@@ -3419,7 +3793,7 @@ data:
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 97
+            "y": 122
           },
           "fieldConfig": {
             "defaults": {
@@ -3485,7 +3859,7 @@ data:
             "h": 8,
             "w": 8,
             "x": 8,
-            "y": 97
+            "y": 122
           },
           "fieldConfig": {
             "defaults": {
@@ -3551,7 +3925,7 @@ data:
             "h": 8,
             "w": 8,
             "x": 16,
-            "y": 97
+            "y": 122
           },
           "fieldConfig": {
             "defaults": {
@@ -3617,7 +3991,7 @@ data:
             "h": 5,
             "w": 18,
             "x": 0,
-            "y": 105
+            "y": 130
           },
           "fieldConfig": {
             "defaults": {
@@ -3707,7 +4081,7 @@ data:
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 105
+            "y": 130
           },
           "fieldConfig": {
             "defaults": {
@@ -3782,7 +4156,7 @@ data:
             "h": 4,
             "w": 24,
             "x": 0,
-            "y": 110
+            "y": 135
           },
           "options": {
             "mode": "markdown",
