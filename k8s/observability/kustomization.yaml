@@ -8,6 +8,7 @@ resources:
   - 00-namespace.yaml
   - 10-tempo.yaml
   - 11-otel-collector.yaml
+  - 12-node-exporter.yaml
   - 20-prometheus.yaml
   - 30-grafana.yaml
   - 31-grafana-dashboard-platform.yaml

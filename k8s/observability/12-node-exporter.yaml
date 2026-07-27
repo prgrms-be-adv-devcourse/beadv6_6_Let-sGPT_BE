@@ -1,0 +1,89 @@
+# 노드 PSI(Pressure Stall Information) 전용 node-exporter DaemonSet.
+#
+# 왜 필요한가: kubectl top / cAdvisor가 보여주는 건 "자원을 쓴 시간"(사용률)뿐이라
+# "자원을 못 얻어 멈춰 있던 시간"(포화)을 못 잡는다. 실측에서 노드 CPU 사용률 32%일 때
+# /proc/pressure/cpu 의 some avg10 이 96%였다 — 코어 2개에 실행 가능 스레드가 몰려
+# 런큐 대기가 심한 상태다. 사용률만 보면 "여유 있음"으로 오판하고 커넥션풀·스레드풀을
+# 더 키우는 잘못된 처방으로 간다. 그 판정을 대시보드에서 바로 하려고 들인다.
+#
+# 왜 최소 구성인가: 노드 두 대 모두 메모리가 빡빡하다(한 대는 사용률 95%, 다른 한 대는
+# 요청 기준 93% 할당). 과거에 "노드 수집기"는 바로 이 자원 사유로 도입을 컷했던 항목이다.
+# 그래서 --collector.disable-defaults 로 전 컬렉터를 끄고 pressure 하나만 켠다.
+# filesystem/netdev/diskstats/meminfo/cpu/textfile 등 기본 컬렉터가 내는 수백 시리즈가
+# 전부 사라지고, 노드당 노출 시리즈가 한 자릿수로 떨어진다.
+# 남은 사각지대(MemAvailable, 디스크·네트워크)는 이 안건 범위 밖이며, 필요해지면
+# meminfo 컬렉터만 추가로 켜는 식으로 증분 확장한다.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: observability
+spec:
+  selector:
+    matchLabels: { app: node-exporter }
+  updateStrategy:
+    type: RollingUpdate
+    # 노드 여유가 없어 신규 파드가 Pending으로 막히는 사고를 피한다(20-prometheus.yaml의
+    # maxSurge:0과 같은 취지). DaemonSet은 maxSurge 기본이 0이라 구파드가 먼저 내려간다.
+    rollingUpdate: { maxUnavailable: 1 }
+  template:
+    metadata:
+      labels: { app: node-exporter }
+      # prometheus.io/scrape 어노테이션을 일부러 붙이지 않는다.
+      # 이 파드는 otel-collector의 전용 잡(node-exporter)이 파드 라벨로 직접 발견한다.
+      # 어노테이션을 붙이면 공용 kubernetes-pods 잡에도 걸려 이중 스크레이프가 된다.
+      # 근거 상세는 config/otel-collector.yaml 의 node-exporter 잡 주석 참조.
+    spec:
+      # PSI는 노드마다 다르므로 전 노드에 떠야 한다. observability 전용 노드에 걸린
+      # dedicated=observability:NoSchedule 을 포함해 모든 테인트를 허용한다.
+      tolerations:
+        - operator: Exists
+      # 파드 하드닝 — 비루트 고정. /proc/pressure/{cpu,io,memory}는 0444(world-readable)라
+      # 루트 없이 읽힌다. node-exporter 이미지 기본 USER도 nobody(65534)다.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
+      # hostNetwork/hostPID는 쓰지 않는다. pressure 컬렉터는 호스트 /proc 마운트만 있으면
+      # 되고, hostNetwork를 켜면 노드의 9100 포트를 점유해 충돌 위험만 생긴다.
+      # 파드 IP:9100으로 스크레이프하며 NetworkPolicy(observability-intra-only)의
+      # 네임스페이스 내부 전면허용으로 otel-collector에서 도달한다.
+      containers:
+        - name: node-exporter
+          image: quay.io/prometheus/node-exporter:v1.9.1
+          args:
+            # 전 컬렉터 비활성화 후 pressure 하나만 활성. 이 조합이 메모리·시리즈 절감의 핵심.
+            - --collector.disable-defaults
+            - --collector.pressure
+            # go_*/process_*/promhttp_* 자기관측 메트릭도 노출하지 않는다(수십 시리즈 추가 절감).
+            - --web.disable-exporter-metrics
+            - --path.procfs=/host/proc
+            - --web.listen-address=:9100
+          env:
+            # Go 런타임이 limit(64Mi)에 닿기 전에 스스로 GC하도록. 20-prometheus.yaml과 같은 패턴.
+            - { name: GOMEMLIMIT, value: "48MiB" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          ports: [{ containerPort: 9100, name: metrics }]
+          readinessProbe:
+            httpGet: { path: /metrics, port: 9100 }
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            # 컬렉터 1개짜리 node-exporter의 실사용은 Go 런타임 베이스라인 수준(약 10~15Mi).
+            # requests 24Mi는 실사용보다 넉넉해 kubelet의 메모리 압박 축출 순위(사용량 −
+            # requests 초과분 기준)에서 뒤로 밀린다 — 압박을 관측해야 할 에이전트가 압박 때
+            # 먼저 죽는 걸 막는다. 그러면서 노드당 24Mi만 점유해 93% 할당 노드에도 들어간다.
+            # limits 64Mi는 목표치가 아니라 폭주 시 크래시 가드다(예상치의 4배 이상).
+            # CPU limit은 두지 않는다(20-prometheus.yaml과 동일 관행) — 30초 주기로 파일 3개
+            # 읽는 작업에 스로틀이 걸려 스크레이프가 타임아웃되는 편이 손해가 크다.
+            limits: { memory: "64Mi" }
+            requests: { cpu: "10m", memory: "24Mi" }
+          volumeMounts:
+            - { name: proc, mountPath: /host/proc, readOnly: true }
+      volumes:
+        - name: proc
+          hostPath: { path: /proc, type: Directory }
