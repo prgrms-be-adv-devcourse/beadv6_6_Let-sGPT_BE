@@ -10,11 +10,16 @@ import com.openat.queue.domain.model.StockAdjustmentReason
  * 파생 데이터**다: 총재고는 product의 값을 한 번 읽어와 캐싱한 것이고, 확정 수량은 order의
  * `StockAdjustment` Kafka 이벤트(결제 확정/환불)를 큐가 직접 구독해 가감한 것 - order/product에
  * 새 계산을 떠넘기지 않고, "이 값이 왜 필요한지" 아는 큐가 직접 조합한다.
+ *
+ * [confirmedOf]/[totalOf]는 HTTP 요청 처리 경로(QueueService)에서 쓰이므로 `suspend fun`이다.
+ * [applyStockAdjustment]는 Kafka 리스너 스레드에서만 호출되고(StockAdjustmentConsumer) 그
+ * 스레드는 애초에 Netty 이벤트루프가 아니므로 그대로 블로킹 `fun`으로 남겨뒀다 - 굳이
+ * 코루틴/리액티브로 감싸봐야 얻는 게 없다(그 자리에서 바로 `.block()` 해야 할 뿐).
  */
 interface ConfirmedSalesRepository {
 
     /** 지금까지 결제 완료(확정)된 누적 수량(환불로 되돌아간 만큼은 이미 차감됨). 이벤트가 아직 안 왔으면 0. */
-    fun confirmedOf(dropId: String): Long
+    suspend fun confirmedOf(dropId: String): Long
 
     /**
      * `StockAdjustment` 이벤트를 소비해 확정 수량을 가감한다 - [StockAdjustmentReason.COMPLETED]면
@@ -30,5 +35,5 @@ interface ConfirmedSalesRepository {
      * 드롭의 총 수량(불변값). 캐시에 없으면 product에 1회 조회해 캐싱한다.
      * @return 조회 실패(드롭 없음/product 응답 불가)면 null - 호출부는 "낙관적 최대를 모른다"로 처리해야 한다.
      */
-    fun totalOf(dropId: String): Long?
+    suspend fun totalOf(dropId: String): Long?
 }

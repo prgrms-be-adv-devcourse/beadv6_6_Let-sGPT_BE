@@ -3,8 +3,13 @@ package com.openat.queue.infrastructure.schedule
 import com.openat.queue.application.usecase.AdmitWaitersUseCase
 import com.openat.queue.domain.repository.WaitingQueueRepository
 import com.openat.queue.infrastructure.config.QueueMetricsConfig
+import com.openat.queue.infrastructure.persistence.QueueEventPublisher
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
@@ -24,6 +29,13 @@ import org.springframework.stereotype.Component
  * 나지 않는다(같은 outstanding/remaining을 놓고 경쟁하므로). 다만 tick 주기 자체가 파드마다
  * 겹치면 Redis 호출량이 배가되니, 멀티 파드 스케줄러 단일화(분산 락/리더 선출)는 여전히
  * 확장 여지로 남겨둔다.
+ *
+ * feature/queue-remaining-sync(코루틴 전환): `@Scheduled` 메서드는 Spring의 전용 태스크
+ * 스케줄러 스레드에서 돈다(Netty 이벤트루프가 아니다) - 그래서 이 스레드에서 `runBlocking`으로
+ * 코루틴을 시작해 끝까지 기다리는 게 boundedElastic 브릿지를 새로 만드는 것과 다르다(원래도
+ * 블로킹이 자연스러운 자리, 이 스케줄러 전용 스레드 하나만 잠깐 점유할 뿐 Netty 워커를
+ * 붙잡지 않는다 - Reactor 버전의 `.blockLast()`와 동등한 경계). dropId별 처리는 `async`로
+ * 동시에 실행해 예전 `Flux.flatMap`의 동시성을 그대로 유지한다.
  */
 @Component
 class AdmissionScheduler(
@@ -31,26 +43,34 @@ class AdmissionScheduler(
     private val waitingQueueRepository: WaitingQueueRepository,
     private val queueMetricsConfig: QueueMetricsConfig,
     private val meterRegistry: MeterRegistry,
+    private val queueEventPublisher: QueueEventPublisher,
 ) {
 
     private val log = LoggerFactory.getLogger(AdmissionScheduler::class.java)
 
     @Scheduled(fixedDelayString = "\${queue.admission.interval-ms}")
-    fun admit() {
-        waitingQueueRepository.activeDropIds().forEach { dropId ->
-            queueMetricsConfig.ensureRegistered(dropId)
-            val admitted = admitWaitersUseCase.admitBatch(dropId)
-            if (admitted.isNotEmpty()) {
-                val totalQuantity = admitted.sumOf { it.quantity }
-                log.info(
-                    "[queue-admit] dropId={} userCount={} totalQuantity={} entries={}",
-                    dropId, admitted.size, totalQuantity, admitted,
-                )
-                meterRegistry.counter("queue.admission.count", Tags.of("dropId", dropId))
-                    .increment(admitted.size.toDouble())
-                meterRegistry.counter("queue.admission.quantity", Tags.of("dropId", dropId))
-                    .increment(totalQuantity.toDouble())
-            }
+    fun admit() = runBlocking {
+        val dropIds = waitingQueueRepository.activeDropIds()
+        coroutineScope {
+            dropIds.map { dropId ->
+                async {
+                    queueMetricsConfig.ensureRegistered(dropId)
+                    val admitted = admitWaitersUseCase.admitBatch(dropId)
+                    if (admitted.isNotEmpty()) {
+                        val totalQuantity = admitted.sumOf { it.quantity }
+                        log.info(
+                            "[queue-admit] dropId={} userCount={} totalQuantity={} entries={}",
+                            dropId, admitted.size, totalQuantity, admitted,
+                        )
+                        meterRegistry.counter("queue.admission.count", Tags.of("dropId", dropId))
+                            .increment(admitted.size.toDouble())
+                        meterRegistry.counter("queue.admission.quantity", Tags.of("dropId", dropId))
+                            .increment(totalQuantity.toDouble())
+                        // SSE 전환분: 입장 허가가 나면 이 dropId를 구독 중인 커넥션들이 재확인하도록 신호.
+                        queueEventPublisher.publishChanged(dropId)
+                    }
+                }
+            }.awaitAll()
         }
     }
 }

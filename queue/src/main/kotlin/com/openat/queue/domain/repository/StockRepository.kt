@@ -12,5 +12,5 @@ import com.openat.queue.domain.model.DropStockSnapshot
 interface StockRepository {
 
     /** 캐시가 없으면(워밍 전이거나 존재하지 않는 드롭) null. */
-    fun snapshotOf(dropId: String): DropStockSnapshot?
+    suspend fun snapshotOf(dropId: String): DropStockSnapshot?
 }

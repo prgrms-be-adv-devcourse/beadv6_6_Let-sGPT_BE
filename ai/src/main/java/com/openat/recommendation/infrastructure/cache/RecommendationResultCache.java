@@ -17,32 +17,19 @@ public class RecommendationResultCache {
   private static final Duration TTL = Duration.ofHours(12);
 
   private final StringRedisTemplate redisTemplate;
-  private final ObjectMapper objectMapper;
+  private final JsonRedisStore jsonRedisStore;
 
   public RecommendationResultCache(StringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
     this.redisTemplate = redisTemplate;
-    this.objectMapper = objectMapper;
+    this.jsonRedisStore = new JsonRedisStore(redisTemplate, objectMapper);
   }
 
   public Optional<RecommendationResponse> find(String key) {
-    try {
-      String value = redisTemplate.opsForValue().get(key);
-      return value == null
-          ? Optional.empty()
-          : Optional.of(objectMapper.readValue(value, RecommendationResponse.class));
-    } catch (Exception exception) {
-      log.warn(
-          "Failed to read recommendation result cache; treating as miss: key={}", key, exception);
-      return Optional.empty();
-    }
+    return jsonRedisStore.read(key, RecommendationResponse.class);
   }
 
   public void save(String key, RecommendationResponse response) {
-    try {
-      redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(response), TTL);
-    } catch (Exception exception) {
-      log.warn("Failed to save recommendation result cache: key={}", key, exception);
-    }
+    jsonRedisStore.write(key, response, TTL);
   }
 
   public void invalidateMember(UUID memberId) {
