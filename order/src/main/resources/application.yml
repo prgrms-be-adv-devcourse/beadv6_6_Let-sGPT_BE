@@ -14,6 +14,10 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         spring.json.trusted.packages: "*"
+    template:
+      # KafkaTemplate.send를 Observation으로 감싸 producer 스팬을 만들고 트레이스 헤더를 전파한다.
+      # KafkaStringConfig가 KafkaTemplate을 직접 등록하므로 이 값을 그 빈에서 읽어 적용한다.
+      observation-enabled: true
   profiles:
     active: local
   application:
@@ -29,6 +33,20 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true # 기존 ddl-auto로 이미 떠 있는 스키마는 V1을 재실행하지 않고 자동으로 베이스라인 처리
     baseline-version: 1
+
+# JDBC 계측(datasource-micrometer). 커넥션 획득/쿼리/페치가 각각 자식 스팬으로 떨어져
+# "요청 시간이 커넥션 대기인지 쿼리인지"를 트레이스에서 가를 수 있게 된다.
+jdbc:
+  datasource-proxy:
+    # 바인딩 파라미터 값은 스팬 태그·로그 어디에도 넣지 않는다(개인정보 유출 방지).
+    # 기본값도 false지만 무심코 켜지지 않도록 명시 고정한다.
+    include-parameter-values: false
+    # SQL 로깅은 계측 목적이 아니고 로그량만 늘리므로 끈 채로 둔다(기본값 명시).
+    query:
+      enable-logging: false
+    slow-query:
+      enable-logging: false
+
 springdoc:
   api-docs:
     path: /api-docs
@@ -62,11 +80,21 @@ management:
       # 지연 퍼센타일·SLO 준수율 계산용 누적 버킷. 대상은 HTTP 서버 타이머 하나로 한정.
       percentiles-histogram:
         "[http.server.requests]": true
+        # 커넥션 풀 대기(acquire)·점유(usage)는 지금 sum/count/max뿐이라 평균밖에 못 본다.
+        # 히스토그램을 켜야 p50/p99가 갈려 "일부 요청만 오래 대기"를 잡아낼 수 있다.
+        "[hikaricp.connections.acquire]": true
+        "[hikaricp.connections.usage]": true
       # 버킷 51개로 클램프(무클램프 69개). 하한은 빠른 엔드포인트 해상도, 상한은 재고 차감 read 여유.
       minimum-expected-value:
         "[http.server.requests]": 5ms
+        # 커넥션 대기는 정상일 때 1ms 미만이라 하한을 더 낮게 잡는다.
+        "[hikaricp.connections.acquire]": 1ms
+        "[hikaricp.connections.usage]": 1ms
       maximum-expected-value:
         "[http.server.requests]": 10s
+        # 상한 10s로 클램프해 버킷 수가 무한정 늘지 않게 한다(카디널리티 억제).
+        "[hikaricp.connections.acquire]": 10s
+        "[hikaricp.connections.usage]": 10s
   tracing:
     export:
       otlp:
