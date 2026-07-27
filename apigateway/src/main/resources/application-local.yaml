@@ -17,6 +17,13 @@ spring:
               uri: http://localhost:9150
               predicates:
                 - Path=/api/v1/queues/**
+              # WebFlux+SSE 전환분: /status/stream은 몇 분씩 열려 있는 커넥션이라 게이트웨이의
+              # 기본 응답 타임아웃(설정 안 하면 무제한이지만, 명시적으로 남겨 의도를 분명히 함)에
+              # 걸려 중간에 끊기면 안 된다. 이 라우트만 넉넉하게(10분) 잡는다 - 다른 라우트에는
+              # 영향 없음.
+              metadata:
+                response-timeout: 600000
+                connect-timeout: 5000
             - id: member-docs
               uri: http://localhost:9100
               predicates:

@@ -8,7 +8,9 @@ import com.openat.queue.domain.repository.ConfirmedSalesRepository
 import com.openat.queue.domain.repository.StockRepository
 import com.openat.queue.domain.repository.WaitingQueueRepository
 import com.openat.queue.infrastructure.config.QueueProperties
+import com.openat.queue.infrastructure.persistence.QueueEventPublisher
 import java.time.Instant
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.DisplayName
@@ -29,6 +31,9 @@ import org.mockito.kotlin.whenever
  * 둘 다 항상 0 이상). 이 테스트는 이제 `total`/`confirmed` 조합으로 SOLD_OUT 여부를 검증한다.
  * `remaining`은(대기열 등록/즉시입장 분기에는 여전히 쓰이지만) 더 이상 이 소진 판정 자체에는
  * 관여하지 않는다.
+ *
+ * feature/queue-remaining-sync(코루틴 전환): [QueueService.enter]가 `suspend fun`이므로
+ * `runBlocking { }` 안에서 호출해야 실제로 실행된다. mock 리턴값도 값을 직접 반환한다.
  */
 @DisplayName("QueueService - 소진 진입 가드")
 class QueueServiceSoldOutTest {
@@ -38,7 +43,7 @@ class QueueServiceSoldOutTest {
 
     @Test
     @DisplayName("확정 수량이 총재고에 도달하면 대기열에 넣지 않고 즉시 SOLD_OUT을 반환한다")
-    fun enter_confirmedReachesTotal_returnsSoldOutWithoutEnqueue() {
+    fun enter_confirmedReachesTotal_returnsSoldOutWithoutEnqueue() = runBlocking<Unit> {
         // total=10, confirmed=10 → confirmed >= total
         val service = serviceWith(remaining = 0, closeAt = null, total = 10, confirmed = 10)
         val waitingQueueRepository = service.waitingQueueRepository
@@ -52,7 +57,7 @@ class QueueServiceSoldOutTest {
 
     @Test
     @DisplayName("확정 수량이 총재고보다 적으면(아직 미확정 여지가 있으면) 정상적으로 대기열에 등록된다")
-    fun enter_confirmedBelowTotal_enqueuesNormally() {
+    fun enter_confirmedBelowTotal_enqueuesNormally() = runBlocking<Unit> {
         // total=10, confirmed=7 → confirmed < total
         val service = serviceWith(remaining = 0, closeAt = null, total = 10, confirmed = 7, waitingQuantity = 2)
         val waitingQueueRepository = service.waitingQueueRepository
@@ -66,7 +71,7 @@ class QueueServiceSoldOutTest {
 
     @Test
     @DisplayName("total 캐시가 아직 없으면(부트스트랩 미완료) confirmed 조회 없이 안전하게 대기시킨다")
-    fun enter_totalNotCachedYet_neverConsultsConfirmedAndDoesNotSoldOut() {
+    fun enter_totalNotCachedYet_neverConsultsConfirmedAndDoesNotSoldOut() = runBlocking<Unit> {
         val service = serviceWith(remaining = 5, closeAt = null, total = null, confirmed = 0)
 
         val result = service.instance.enter(dropId, userId, 1)
@@ -78,7 +83,7 @@ class QueueServiceSoldOutTest {
 
     @Test
     @DisplayName("마감 시각이 지났으면 재고 계산과 무관하게 SOLD_OUT(CLOSED)이다")
-    fun enter_closed_returnsSoldOutWithClosedReason() {
+    fun enter_closed_returnsSoldOutWithClosedReason() = runBlocking<Unit> {
         val service = serviceWith(remaining = 100, closeAt = Instant.now().minusSeconds(60), total = 100, confirmed = 0)
         val waitingQueueRepository = service.waitingQueueRepository
 
@@ -91,21 +96,21 @@ class QueueServiceSoldOutTest {
 
     @Test
     @DisplayName("전역 상한(기본 5)을 초과하는 수량은 대기열에 넣지 않고 즉시 거부한다(서버 강제)")
-    fun enter_quantityOverGlobalMax_rejectsWithoutEnqueue() {
+    fun enter_quantityOverGlobalMax_rejectsWithoutEnqueue() = runBlocking<Unit> {
         val service = serviceWith(remaining = 100, closeAt = null, total = 100, confirmed = 0)
         val waitingQueueRepository = service.waitingQueueRepository
 
-        assertThatThrownBy { service.instance.enter(dropId, userId, 999999) }
+        assertThatThrownBy { runBlocking { service.instance.enter(dropId, userId, 999999) } }
             .isInstanceOf(BusinessException::class.java)
         verify(waitingQueueRepository, never()).enqueueOrFastAdmit(any(), any(), any(), any())
     }
 
     @Test
     @DisplayName("드롭별 1인 구매 한도(limitPerUser)가 전역 상한보다 작으면 그것도 강제한다")
-    fun enter_quantityOverLimitPerUser_rejects() {
+    fun enter_quantityOverLimitPerUser_rejects() = runBlocking<Unit> {
         val service = serviceWith(remaining = 100, closeAt = null, total = 100, confirmed = 0, limitPerUser = 2)
 
-        assertThatThrownBy { service.instance.enter(dropId, userId, 3) }
+        assertThatThrownBy { runBlocking { service.instance.enter(dropId, userId, 3) } }
             .isInstanceOf(BusinessException::class.java)
     }
 
@@ -116,7 +121,7 @@ class QueueServiceSoldOutTest {
         val ttlSeconds: Long,
     )
 
-    private fun serviceWith(
+    private suspend fun serviceWith(
         remaining: Long,
         closeAt: Instant?,
         total: Long?,
@@ -126,6 +131,12 @@ class QueueServiceSoldOutTest {
     ): ServiceFixture {
         val waitingQueueRepository = mock<WaitingQueueRepository>()
         whenever(waitingQueueRepository.admittedQuantityOf(any(), any())).thenReturn(null)
+        // 기본값: 대부분의 테스트는 실제로 어떤 입장권이 발급됐는지에 관심이 없다(마지막
+        // resolveStatus가 다시 스냅샷을 읽으므로).
+        whenever(waitingQueueRepository.enqueueOrFastAdmit(any(), any(), any(), any())).thenReturn(null)
+        // DECISION_REQUIRED로 떨어지는 조합(예: remaining 부족)에서 resolveFromSnapshot이
+        // 첫 질의 시각을 기록하려고 호출한다.
+        whenever(waitingQueueRepository.markAskedIfAbsent(any(), any(), any())).thenReturn(0L)
         // enter() 마지막의 resolveStatus가 읽는 원자 스냅샷 - 진입 가드와 동일한 상태를 반영한다.
         whenever(waitingQueueRepository.statusSnapshotOf(eq(dropId), eq(userId), any(), any()))
             .thenReturn(
@@ -152,8 +163,11 @@ class QueueServiceSoldOutTest {
         whenever(confirmedSalesRepository.totalOf(dropId)).thenReturn(total)
         whenever(confirmedSalesRepository.confirmedOf(dropId)).thenReturn(confirmed)
 
+        val queueEventPublisher = mock<QueueEventPublisher>()
         val queueProperties = QueueProperties()
-        val service = QueueService(waitingQueueRepository, stockRepository, confirmedSalesRepository, queueProperties)
+        val service = QueueService(
+            waitingQueueRepository, stockRepository, confirmedSalesRepository, queueProperties, queueEventPublisher,
+        )
         return ServiceFixture(service, waitingQueueRepository, confirmedSalesRepository, queueProperties.admission.ttlSeconds)
     }
 }

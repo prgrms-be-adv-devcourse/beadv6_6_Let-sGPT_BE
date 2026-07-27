@@ -14,8 +14,29 @@ dependencies {
     // Spring이 코틀린 클래스의 파라미터 이름을 리플렉션으로 읽기 위해 필요(@ConfigurationProperties 등)
     implementation("org.jetbrains.kotlin:kotlin-reflect")
 
-    // 대기열 자료구조(ZSET) + 입장권 저장소
+    // stage1(MVC+폴링)에서는 대기열 자료구조(ZSET)+입장권 저장소가 이 블로킹 스타터만으로
+    // 충분했다. stage2-webflux-sse-full로 오면서 요청 경로(WaitingQueueRepository/
+    // StockRepository/ConfirmedSalesRepository)는 전부 data-redis-reactive 쪽으로 옮겼지만,
+    // 이 스타터는 여전히 남아있다 - ReservedStockRepository(Kafka 컨슈머 전용, 요청 경로
+    // 밖이라 재작성 범위 밖)가 아직 이걸 쓴다.
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
+
+    // WebFlux+SSE 전환분: 웹 계층(spring.main.web-application-type=reactive, application.yml)뿐
+    // 아니라 Redis 접근 계층(WaitingQueueRepository/StockRepository/ConfirmedSalesRepository)도
+    // ReactiveStringRedisTemplate으로 전면 재작성했다 - Schedulers.boundedElastic() 브릿지가
+    // 요청 경로에 없다(예외 하나: DropSnapshotBootstrapper의 product REST 호출 - Redis가 아니라
+    // REST이고 드롭당 캐시 미스 1회뿐이라 범위 밖으로 명시적으로 남겨둠, 해당 클래스 주석 참고).
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
+    implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
+    // mapNotNull 등 Mono/Flux용 코틀린 확장 함수 - 위 재작성 전반에서 "값 있으면 변환, 없으면
+    // 빈 Mono"를 표현하는 데 계속 쓰인다.
+    implementation("io.projectreactor.kotlin:reactor-kotlin-extensions")
+    // Reactor -> 코루틴 전환분: Mono<T>.awaitSingle()/awaitSingleOrNull(), Flux<T>.asFlow() 같은
+    // 브릿지 확장 함수 + Spring WebFlux의 suspend fun 컨트롤러 지원(CoroutinesUtils)이 이 의존성을
+    // 요구한다. ReactiveStringRedisTemplate 자체는 그대로 두고(Redis 접근은 여전히 리액티브
+    // 드라이버 기반), 그 위에서 코루틴 스타일로 호출부를 다시 쓰는 방식 - Redis 병목 자체를 손대는
+    // 작업(Option B)은 이번 세션에서 실측으로 전제가 깨져 범위 밖으로 확정됨(별도 기록 참고).
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
 
     // 진입 요청 바디(QueueEntryRequest.quantity) 검증(@Min) - product/order와 동일 관례
     implementation("org.springframework.boot:spring-boot-starter-validation")

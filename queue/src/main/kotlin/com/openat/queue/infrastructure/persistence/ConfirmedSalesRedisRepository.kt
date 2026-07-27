@@ -2,9 +2,10 @@ package com.openat.queue.infrastructure.persistence
 
 import com.openat.queue.domain.model.StockAdjustmentReason
 import com.openat.queue.domain.repository.ConfirmedSalesRepository
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.ClassPathResource
-import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import org.springframework.data.redis.core.script.RedisScript
 import org.springframework.stereotype.Repository
 
@@ -12,10 +13,15 @@ import org.springframework.stereotype.Repository
  * `confirmed`(확정 수량)는 큐 자신의 Redis 카운터(Kafka 컨슈머가 가감, [confirmed]).
  * `total`(총재고) 부트스트랩은 [DropSnapshotBootstrapper]에 위임한다(`drop-meta` 캐시도 같은
  * REST 호출에서 함께 채워야 해서 - queue-remaining-sync 재설계 작업 참고).
+ *
+ * WebFlux+SSE 전환: [confirmedOf]/[totalOf]는 QueueService(HTTP 요청 경로)가 쓰므로
+ * 논블로킹이다. [applyStockAdjustment]는 Kafka 리스너 스레드에서만 호출되는데 - 그 스레드는
+ * 애초에 Netty 이벤트루프가 아니라 Spring Kafka 컨슈머 전용 스레드풀이라, 여기서 `.block()`
+ * 하는 건 boundedElastic 브릿지를 새로 만드는 것과 다르다(원래도 블로킹이 허용되는 자리).
  */
 @Repository
 class ConfirmedSalesRedisRepository(
-    private val redisTemplate: StringRedisTemplate,
+    private val redisTemplate: ReactiveStringRedisTemplate,
     private val dropSnapshotBootstrapper: DropSnapshotBootstrapper,
 ) : ConfirmedSalesRepository {
 
@@ -24,8 +30,8 @@ class ConfirmedSalesRedisRepository(
     private val applyStockAdjustmentScript: RedisScript<Long> =
         RedisScript.of(ClassPathResource("redis/apply-stock-adjustment.lua"), Long::class.java)
 
-    override fun confirmedOf(dropId: String): Long =
-        redisTemplate.opsForValue().get(RedisKeys.confirmed(dropId))?.toLongOrNull() ?: 0
+    override suspend fun confirmedOf(dropId: String): Long =
+        redisTemplate.opsForValue().get(RedisKeys.confirmed(dropId)).awaitSingleOrNull()?.toLongOrNull() ?: 0
 
     override fun applyStockAdjustment(dropId: String, eventId: String, count: Int, reason: StockAdjustmentReason) {
         // 멱등 마킹(SADD)과 카운터 가감(INCRBY)을 Lua 하나로 원자 실행한다 - 두 명령 사이에서
@@ -44,13 +50,13 @@ class ConfirmedSalesRedisRepository(
         val applied = redisTemplate.execute(
             applyStockAdjustmentScript,
             listOf(RedisKeys.confirmedSeen(dropId), RedisKeys.confirmed(dropId)),
-            eventId,
-            delta.toString(),
-        ) ?: 0
+            listOf(eventId, delta.toString()),
+        ).next().defaultIfEmpty(0).block() ?: 0
         if (applied <= 0) {
             log.debug("[confirmed-sales] dropId={} eventId={} 이미 반영된 이벤트 - 재전달 무시", dropId, eventId)
         }
     }
 
-    override fun totalOf(dropId: String): Long? = dropSnapshotBootstrapper.ensureTotalCached(dropId)
+    override suspend fun totalOf(dropId: String): Long? =
+        dropSnapshotBootstrapper.ensureTotalCachedReactive(dropId).awaitSingleOrNull()
 }

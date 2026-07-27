@@ -23,6 +23,7 @@ data class QueueProperties(
     val polling: Polling = Polling(),
     val entry: Entry = Entry(),
     val decision: Decision = Decision(),
+    val sse: Sse = Sse(),
 ) {
     data class Entry(
         /**
@@ -70,5 +71,11 @@ data class QueueProperties(
     data class Polling(
         /** 클라이언트에 안내할 권장 폴링 주기(ms). 서버가 응답에 실어 클라이언트 폴링 빈도를 제어한다 */
         @DefaultValue("2000") val intervalMs: Long = 2000,
+    )
+
+    data class Sse(
+        /** WebFlux+SSE 전환분: keep-alive 코멘트 이벤트 주기(ms) - idle 커넥션 타임아웃 방지 +
+         * Pub/Sub 신호 유실 시의 최후 재확인 안전망을 겸한다. */
+        @DefaultValue("8000") val keepaliveMs: Long = 8000,
     )
 }

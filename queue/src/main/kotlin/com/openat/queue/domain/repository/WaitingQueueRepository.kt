@@ -8,6 +8,12 @@ import java.time.Instant
 /**
  * 대기열 도메인이 소유하는 출력 포트. 구현은 infrastructure.persistence에 둔다.
  *
+ * feature/queue-remaining-sync(코루틴 전환): WebFlux+SSE 전환의 `Mono<T>` 반환을
+ * `suspend fun`으로 바꿨다 - 구현체는 여전히 `ReactiveStringRedisTemplate`(논블로킹 Redis
+ * 드라이버)을 쓰지만, 그 Mono/Flux를 `awaitSingle()`/`awaitFirstOrNull()`로 호출부에서
+ * 곧바로 구독해 값을 꺼낸다(리액터 연산자 체인을 쌓는 대신 순차적인 코드로 표현). "없음"을
+ * 표현하던 빈 Mono는 이제 그냥 nullable 반환 타입(`T?`)이다.
+ *
  * 통신 방식(MVC/폴링 vs WebFlux/SSE)과 무관한 순수 도메인 포트로 분리해
  * 이후 통신 어댑터를 교체해도(전면 재작성 없이) 이 계약은 그대로 재사용된다.
  */
@@ -28,30 +34,30 @@ interface WaitingQueueRepository {
      * (데모에서 실제 재현됨). 그래서 이 메서드는 `now` 파라미터를 받지 않는다.
      * @return 즉시 입장권이 발급됐으면 그 [AdmittedEntry], 대기열에 등록됐을 뿐이면 null
      */
-    fun enqueueOrFastAdmit(dropId: String, userId: String, quantity: Int, ttlSeconds: Long): AdmittedEntry?
+    suspend fun enqueueOrFastAdmit(dropId: String, userId: String, quantity: Int, ttlSeconds: Long): AdmittedEntry?
 
     /** 현재 순번 스냅샷(+요청 수량). 대기열에 없으면 null. */
-    fun ticketOf(dropId: String, userId: String): WaitingTicket?
+    suspend fun ticketOf(dropId: String, userId: String): WaitingTicket?
 
     /**
-     * 상태 폴링(hot path) 한 번에 필요한 모든 값을 단일 원자 실행(1왕복)으로 읽고,
+     * 상태 폴링/스트림(hot path) 한 번에 필요한 모든 값을 단일 원자 실행(1왕복)으로 읽고,
      * [touchHeartbeat]가 true고 대기 중이면 하트비트도 함께 갱신한다(status-snapshot.lua).
      * 예전의 개별 조회 조합(입장권→순번→재고→outstanding→확정→결정, 최대 9왕복)을 대체한다.
      */
-    fun statusSnapshotOf(dropId: String, userId: String, now: Instant, touchHeartbeat: Boolean): QueueStatusSnapshot
+    suspend fun statusSnapshotOf(dropId: String, userId: String, now: Instant, touchHeartbeat: Boolean): QueueStatusSnapshot
 
     /** 현재 대기 인원(ZCARD). 성능 측정 하네스(Phase 4)의 Gauge 지표용. */
-    fun sizeOf(dropId: String): Long
+    suspend fun sizeOf(dropId: String): Long
 
-    /** 입장권(admission ticket)이 발급되어 있으면 그 수량을, 없으면 null을 반환한다(소진하지 않음 - peek). */
-    fun admittedQuantityOf(dropId: String, userId: String): Int?
+    /** 입장권(admission ticket)이 발급되어 있으면 그 수량, 없으면 null(소진하지 않음 - peek). */
+    suspend fun admittedQuantityOf(dropId: String, userId: String): Int?
 
     /**
      * 하트비트가 끊긴(마지막 폴링이 `now - heartbeatTtl` 이전인) 대기자를
      * 대기열/하트비트/수량 해시 전부에서 제거한다.
      * @return 회수된 인원 수
      */
-    fun sweepExpired(dropId: String, now: Instant, heartbeatTtlMs: Long): Long
+    suspend fun sweepExpired(dropId: String, now: Instant, heartbeatTtlMs: Long): Long
 
     /**
      * 대기열 맨 앞(지금 차례인 사람)부터 순서대로, product의 실재고(remaining)에서 현재
@@ -64,18 +70,18 @@ interface WaitingQueueRepository {
      * 멀티 파드가 동시에 호출해도 중복 입장이 발생하지 않는다.
      * @return 이번 tick에서 입장 처리된 (userId, quantity) 목록
      */
-    fun admitBatch(dropId: String, maxScan: Int, ttlSeconds: Long): List<AdmittedEntry>
+    suspend fun admitBatch(dropId: String, maxScan: Int, ttlSeconds: Long): List<AdmittedEntry>
 
     /**
      * 발급됐지만 아직 소진되지 않은 입장권 중 TTL이 지난 것을 회수하고, 그만큼 outstanding을
      * 되돌린다(자리를 잃음 - 방치된 입장권이 영원히 재고를 묶어두지 않도록 하는 자가치유).
      * @return 회수된 입장권 수
      */
-    fun sweepAdmittedTickets(dropId: String, now: Instant): Long
+    suspend fun sweepAdmittedTickets(dropId: String, now: Instant): Long
 
     /** 현재 미소진 입장권 수량 합(outstanding). admit.lua가 쓰는 값과 동일한 것을 애플리케이션
      * 계층에서도 읽어 `available = remaining - outstanding`을 status 응답용으로 계산한다. */
-    fun outstandingOf(dropId: String): Long
+    suspend fun outstandingOf(dropId: String): Long
 
     /**
      * "기다림(WAIT)"을 확정 상태로 기록한다 - 이후 무응답 타임아웃 제거 대상에서 빠진다(정책).
@@ -87,7 +93,7 @@ interface WaitingQueueRepository {
      * (QueueService.resolveStatus 참고) - optimisticMax만으로는 주문 취소(CANCELLED)로
      * 재고가 회복되는 신호를 못 잡기 때문에 grantableNow도 같이 필요하다.
      */
-    fun markWaitConfirmed(dropId: String, userId: String, grantableNowAtConfirm: Long, maxAtConfirm: Long?)
+    suspend fun markWaitConfirmed(dropId: String, userId: String, grantableNowAtConfirm: Long, maxAtConfirm: Long?)
 
     /**
      * DECISION_REQUIRED를 처음 노출하는 순간 "물어본 시각"을 원자적으로 기록한다(이미 기록돼
@@ -95,7 +101,7 @@ interface WaitingQueueRepository {
      * 기준점이자, 클라이언트 카운트다운용 마감 시각(deadline) 계산의 근거다.
      * @return 적용되는 askedAt(epoch ms). WAIT 확정자면 -1(타임아웃 대상 아님).
      */
-    fun markAskedIfAbsent(dropId: String, userId: String, now: Instant): Long
+    suspend fun markAskedIfAbsent(dropId: String, userId: String, now: Instant): Long
 
     /**
      * 맨 앞(rank 0) 사용자가 DECISION_REQUIRED에 [timeoutMs] 넘게 무응답이면 대기열에서
@@ -104,7 +110,7 @@ interface WaitingQueueRepository {
      * 사람도 원자적 재확인으로 보호한다.
      * @return 제거된 userId, 아무도 제거하지 않았으면 null
      */
-    fun sweepDecisionTimeout(dropId: String, now: Instant, timeoutMs: Long): String?
+    suspend fun sweepDecisionTimeout(dropId: String, now: Instant, timeoutMs: Long): String?
 
     /**
      * 특정 사용자 한 명을 그 순간의 가용 재고만큼만 즉시 원자적으로 입장 처리한다("부분구매"
@@ -115,16 +121,17 @@ interface WaitingQueueRepository {
      * 그렇지 않으면 대기열 뒤쪽 사용자가 자기 순서를 건너뛰고 가용 재고를 가로챌 수 있다.
      * @return 실제로 발급된 (userId, quantity) - 발급 불가(맨 앞이 아니거나 재고 부족)면 null
      */
-    fun admitSingle(dropId: String, userId: String, ttlSeconds: Long): AdmittedEntry?
+    suspend fun admitSingle(dropId: String, userId: String, ttlSeconds: Long): AdmittedEntry?
 
-    /** 대기열/하트비트/수량/결정상태 전부에서 이 사용자를 제거한다("포기" 선택). */
-    fun removeFromQueue(dropId: String, userId: String)
+    /** 대기열/하트비트/수량/결정상태 전부에서 이 사용자를 제거한다("포기" 선택, 또는 SSE
+     * 커넥션이 끊겼을 때의 즉시 회수 - QueueStreamService 참고). */
+    suspend fun removeFromQueue(dropId: String, userId: String)
 
     /**
      * 정적 hot-drops 목록을 대체하는 동적 발견 레지스트리 - 현재 대기자가 있거나 미소진
      * 입장권이 남아있어 스케줄러/스위퍼가 살펴봐야 하는 dropId 전체를 반환한다.
      */
-    fun activeDropIds(): Set<String>
+    suspend fun activeDropIds(): Set<String>
 
     /**
      * 이 dropId가 완전히 유휴 상태(대기자 0명 + 미소진 입장권 0개)면 [activeDropIds]에서
@@ -132,5 +139,5 @@ interface WaitingQueueRepository {
      * 무한히 커지지 않게 한다.
      * @return 실제로 제거됐으면 true
      */
-    fun pruneIfIdle(dropId: String): Boolean
+    suspend fun pruneIfIdle(dropId: String): Boolean
 }
