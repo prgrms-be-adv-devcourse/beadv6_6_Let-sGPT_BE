@@ -9,7 +9,8 @@ build/
 .gitattributes
 personal_workplan/
 docs/_local/
-queue/demo/
+queue/demo/*
+!queue/demo/test/
 CLAUDE.md
 AGENTS.md
 
