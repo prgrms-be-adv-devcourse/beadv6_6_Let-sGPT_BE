@@ -31,6 +31,15 @@ springdoc:
         url: /ai/api-docs
 
 
+gateway:
+  concurrency:
+    # WebFlux/Netty에는 MVC(Tomcat 스레드 풀)와 달리 동시 처리 요청 수 상한이 기본으로 없다 -
+    # 운영 파드 힙(약 160MB)에서 동접 5,000~6,000명에 3회 시행 전부 OOM으로 다운됨이 실측
+    # 확인됨(ConcurrencyLimitProperties 자바독 참고). ConcurrencyLimitFilter가 이 값을 넘는
+    # 요청을 처리 시작 전에 429로 거절해 MVC의 스레드 상한이 부수 효과로 주던 보호를
+    # 명시적으로 재현한다.
+    max-in-flight-requests: ${GATEWAY_CONCURRENCY_MAX_IN_FLIGHT:2000}
+
 # k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
 management:
   endpoints:

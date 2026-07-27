@@ -90,6 +90,13 @@ queue:
     # 지연 한 번이면 정상 연결도 스위퍼에 걸릴 수 있었음), 예전 폴링 주기(2000ms)와 비슷한
     # 여유를 두도록 낮췄다.
     keepalive-ms: ${QUEUE_SSE_KEEPALIVE_MS:3000}
+  concurrency:
+    # WebFlux/Netty에는 MVC(Tomcat 스레드 풀)와 달리 동시 처리 요청 수 상한이 기본으로 없다 -
+    # 운영 파드 힙(약 220MB)에서 동접 수천 명이 몰리면 OOM으로 이어짐이 실측 확인됨
+    # (three-stage-story.md §4-4 "정직하게 밝히는 한계" 참고). ConcurrencyLimitFilter가 이
+    # 값을 넘는 요청을 처리 시작 전에 429로 거절해 MVC의 스레드 상한이 부수 효과로 주던
+    # 보호를 명시적으로 재현한다.
+    max-in-flight-requests: ${QUEUE_CONCURRENCY_MAX_IN_FLIGHT:2000}
   entry:
     # 진입 요청 수량 전역 상한(서버 강제 안전망 - 프론트 1~5 제한은 API 직접 호출로 우회 가능).
     # 정책 변경 시 env만 바꾸면 됨. 드롭별 한도는 product의 limitPerUser(drop 해시)를 추가 적용.

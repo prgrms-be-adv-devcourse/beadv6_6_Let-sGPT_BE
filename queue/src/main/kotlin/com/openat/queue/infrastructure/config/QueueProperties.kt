@@ -24,6 +24,7 @@ data class QueueProperties(
     val entry: Entry = Entry(),
     val decision: Decision = Decision(),
     val sse: Sse = Sse(),
+    val concurrency: Concurrency = Concurrency(),
 ) {
     data class Entry(
         /**
@@ -87,5 +88,23 @@ data class QueueProperties(
         /** WebFlux+SSE 전환분: keep-alive 코멘트 이벤트 주기(ms) - idle 커넥션 타임아웃 방지 +
          * Pub/Sub 신호 유실 시의 최후 재확인 안전망을 겸한다. */
         @DefaultValue("8000") val keepaliveMs: Long = 8000,
+    )
+
+    data class Concurrency(
+        /**
+         * 동시 처리 중인 요청 수 상한(ConcurrencyLimitFilter가 강제). MVC/Tomcat은 스레드
+         * 풀(운영 기준 50개)이 그 이상 몰리는 요청을 처리 시작 전 단계(OS 커널의 가벼운 accept
+         * backlog)에 묶어둬서 "동시 처리 요청 수 제한"을 부수 효과로 갖는다 - 그래서 몰려도
+         * 힙을 거의 안 쓴다. WebFlux/Netty에는 이런 상한이 기본적으로 없어(들어오는 연결을
+         * 원칙적으로 전부 받아들여 처리를 시작) 아주 작은 힙(운영 파드 기준 약 220MB)에서
+         * 동시접속이 수천 단위로 몰리면 각 요청이 물고 있는 처리 상태가 쌓여 OutOfMemoryError로
+         * 이어질 수 있다(실측: t3.large 근사 환경, 동접 약 5,000~6,000명에서 3회 재현 -
+         * queue/loadtest/three-stage-story.md §4-4 "정직하게 밝히는 한계" 참고). 이 필터는
+         * MVC가 부수 효과로 얻던 그 보호를 명시적으로 재현한다 - 상한을 넘는 요청은 처리를
+         * 시작하지 않고 즉시 429로 거절해, 서비스 전체가 죽는 대신 초과분만 지연 없이 실패하는
+         * 쪽을 택한다. 기본값 2,000은 실측 붕괴 지점(약 5,000)보다 충분히 낮게 잡은 안전
+         * 마진이다 - 운영 트래픽 프로파일에 맞춰 조정 가능(`QUEUE_CONCURRENCY_MAX_IN_FLIGHT`).
+         */
+        @DefaultValue("2000") val maxInFlightRequests: Int = 2000,
     )
 }
