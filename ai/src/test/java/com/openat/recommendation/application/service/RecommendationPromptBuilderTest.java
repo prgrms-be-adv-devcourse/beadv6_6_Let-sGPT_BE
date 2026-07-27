@@ -68,7 +68,7 @@ class RecommendationPromptBuilderTest {
         .contains("items에는 위 후보 목록에 있는 인덱스 번호만 사용하세요")
         .contains("{\"sections\":[{\"title\":\"...\",\"items\":[1,2,3]}]}")
         .doesNotContain("productIds");
-    assertThat(prompt).contains("제목은 한국어 명사형, 30자 이내").contains("이미 구매한 상품은 제외");
-    assertThat(prompt).contains("브랜드명 나열보다 용도·테마 중심으로");
+    assertThat(prompt).contains("감성적이고 이커머스다운 문구로, 30자 이내").contains("이미 구매한 상품은 제외");
+    assertThat(prompt).contains("나만의 작은 힐링 홈카페");
   }
 }
