@@ -90,28 +90,33 @@ OpenAI 호환 SDK마다 Base URL과 엔드포인트 경로를 조합하는 방�
 
 ---
 
-### 3.1 검색 모듈 교체 방법
+### 3.1 검색 모듈 현재 연결
 
-검색 모듈에는 기존 OpenAI 구현을 유지한 채 다음 추론 서버 전용 구현이 추가되어 있다.
+검색 모듈은 이미 자체 추론 서버 구현을 사용한다.
 
-| 기능 | 기존 구현 | 추론 서버 구현 |
-|---|---|---|
-| 이미지 분석 | `OpenAiImageClient` | `InferenceServerImageClient` |
-| 상품 임베딩 | `AiProductEmbeddingGenerator` | `InferenceServerProductEmbeddingGenerator` |
+| 기능 | 현재 주입 구현 |
+|---|---|
+| 이미지 분석 | `InferenceServerImageClient` |
+| 상품 임베딩 | `InferenceServerProductEmbeddingGenerator` |
 
-두 구현은 검색 서비스가 사용하는 공개 메서드 계약이 같다. `AiImageService`와 `ProductEmbeddingService`에서 기존 타입과 import만 추론 서버 구현으로 교체하면 된다. 기존 클래스의 코드는 수정하거나 삭제할 필요가 없다.
-
+기존 `OpenAiImageClient`·`AiProductEmbeddingGenerator` 클래스는 남아 있지만 현재
+`AiImageService`·`ProductEmbeddingService`의 실행 경로에는 주입되지 않는다.
 추론 서버를 사용할 때는 다음 환경변수를 설정한다.
 
 ```text
-OPENAI_BASE_URL=https://api.inferway.xyz/v1
-OPENAI_API_KEY=<추론 서버에서 발급한 API 키>
-OPENAI_EMBEDDING_ENABLED=true
+OPENAI_INFERENCEAI_BASE_URL=https://api.inferway.xyz/v1
+OPENAI_INFERENCEAI_API_KEY=<추론 서버에서 발급한 API 키>
+OPENAI_INFERENCEAI_EMBEDDING_ENABLED=true
 ```
 
-`OPENAI_EMBEDDING_ENABLED`는 `ProductEmbeddingService`의 임베딩 사용 스위치(`openai.embedding.enabled`)다. local 프로필에는 `true`가 이미 설정돼 있지만, compose·k8s 배포에는 이 값이 없어 기본값 `false`가 적용되고 상품 적재 시 임베딩이 생략되며 검색어가 있는 벡터 검색이 실패한다. 임베딩을 사용하는 배포에서는 어떤 generator를 쓰든 반드시 `true`를 함께 설정한다.
+`OPENAI_INFERENCEAI_EMBEDDING_ENABLED`는 `ProductEmbeddingService`의
+`openai.inferenceai.embedding.enabled` 스위치다. local·compose 설정의 기본값과
+`k8s/bootstrap/create-secrets.sh`의 기본값은 모두 `true`이며, 배포에서는 같은 이름의
+GitHub Actions 변수로 명시적으로 덮어쓸 수 있다. `false`면 상품 적재 시 임베딩과 이미지 분석을
+건너뛰고 검색어가 있는 벡터 검색에 사용할 벡터가 만들어지지 않는다.
 
-기존 모델 설정인 `gpt-5.4-nano`와 `text-embedding-3-small`은 그대로 둔다. 추론 서버가 이 모델명을 호환 별칭으로 받아 로컬 모델에 연결한다.
+현재 모델 별칭은 이미지 분석 `gpt-5.4-nano`, 임베딩 `text-embedding-3-small`이다.
+추론 서버가 이 이름을 호환 별칭으로 받아 내부 모델에 연결한다.
 
 검색 API가 사용자에게서 이미지를 받는 경계는 기존과 같이 `MultipartFile`이다. 추론 서버 클라이언트는 파일 바이트를 OpenAI Responses 형식의 base64 data URL로 변환해 JSON으로 전송하므로, 서비스나 컨트롤러의 멀티파트 계약은 바뀌지 않는다.
 
@@ -661,11 +666,20 @@ base64 형식은 JSON 숫자 배열보다 전송량을 줄일 수 있지만, 클
 Elasticsearch 기반 색인과 검색에서는 다음 계약을 고정한다.
 
 - 검색 모듈은 `text-embedding-3-small` 별칭을 사용하며 `dense_vector` 매핑의 `dims`는 **1536**으로 설정한다.
-- 임베딩 실패는 재시도 가능한 작업 실패로 처리한다.
-- 실패한 임베딩을 다른 모델의 벡터로 대체하지 않는다.
-- 다건 색인은 여러 문장을 `input` 배열 한 번에 보내 왕복 횟수를 줄인다.
-- 응답의 `data[].index`를 기준으로 원문과 임베딩을 연결한다.
-- 배치 요청의 최종 JSON 본문이 32MiB를 넘지 않도록 배치 크기를 제한한다.
+- 현재 `InferenceServerProductEmbeddingGenerator`는 상품 한 건마다 문자열 `input` 하나를
+  전송하고 응답 첫 항목의 벡터가 1536차원인지 검사한다. 다건 `input` 배열 호출은 구현돼 있지 않다.
+- 전체 DB→ES 배치는 chunk 50건을 병렬 처리하지만 추론 요청은 상품별 단건이다. 임베딩 예외가
+  `CompletableFuture.join()`으로 전파돼 해당 Step을 실패시키며 별도 retry 설정은 없다.
+- Kafka 증분 색인과 `ReIndexTestService`는 임베딩·이미지 분석 예외를 잡고 원본 문서를
+  **벡터 없이 저장**한다. 다른 모델 벡터로 대체하지는 않지만 자동 재시도·보류 큐도 없으므로,
+  해당 상품은 후속 전체 재색인 전까지 키워드 벡터 검색 품질이 낮아질 수 있다.
+- `AiImageService.analyzeImageUrl`의 이미지 다운로드 host는 현재
+  `http://localhost:8000/api/v1/products/images/`로 하드코딩돼 있고 운영 URL은 주석 상태다.
+  search 파드 안의 localhost에 Gateway가 없으므로 k3s에서 저장소 key 기반 이미지 분석은
+  정상 연결되지 않는다. 설정값으로 분리하기 전까지 증분 경로는 위 무벡터 저장으로 저하되고,
+  전체 DB→ES 배치는 이미지 다운로드 예외로 실패할 수 있다.
+- `openai.inferenceai.embedding.enabled=false`면 `ProductEmbeddingService`를 거치는 상품 적재의
+  이미지 분석과 임베딩을 모두 건너뛴다. 독립 이미지 분석 API 자체를 비활성화하는 스위치는 아니다.
 
 ---
 
@@ -812,6 +826,9 @@ https://api.inferway.xyz/v1/chat/completions
 - [ ] 큰 이미지는 전송 전에 리사이즈하거나 압축한다.
 
 ### 검색·임베딩
+
+아래는 목표 계약 체크리스트다. 현재 search의 단건 요청·증분 색인 실패 시 무벡터 저장은
+§12.2에 기록한 구현 차이이며, 배치 호출과 자동 재처리는 아직 충족하지 못했다.
 
 - [ ] Elasticsearch `dense_vector.dims`가 사용하는 임베딩 별칭의 계약 차원과 같다.
 - [ ] 실제 응답 벡터 길이를 별칭의 계약 차원으로 검증한다.

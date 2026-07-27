@@ -2,7 +2,7 @@
 
 > 한정 수량 드롭(Drop)의 선착순 재고 차감을 담당하는 **상품(product) 도메인** 설계임.
 > 결정 근거는 [`DECISIONS.md`](DECISIONS.md), 전역 계약은 [`../../docs/PROJECT.md`](../../docs/PROJECT.md), 모듈 구조는 [`PRODUCT.md`](PRODUCT.md)를 따른다.
-> 세부 구현값(키 네이밍·TTL·Lua 인자 레이아웃 등)은 §13에 모았고 구현 시 확정한다.
+> 2026-07-27 `dev` 구현 기준. Redis 키·TTL·Lua 계약과 현재 남은 운영 위험은 §13에 모았다.
 
 ---
 
@@ -87,7 +87,7 @@
 - `POST /internal/drops/{dropId}/stock-rollbacks`, body `{orderId, buyerId, quantity}`.
 - **주문(order)이 트리거** — 결제 실패·타임아웃·환불(결제 완료 후 취소)에 공용으로 호출.
 - **오픈 중:** Lua 복원(`remaining+`, `buyers[buyerId]-`) + `stock_histories` INSERT(ROLLBACK).
-- **종료(CLOSE) 후:** close가 캐시를 `markClosed`만 하고 즉시 evict하지 않으므로, **drain 창(캐시 TTL) 동안 in-flight 롤백은 라이브 캐시로 정상 복원·기록**된다(신규만 차단, in-flight 취소 허용 — §8). 캐시 만료 뒤엔 `NOT_CACHED`로 떨어지고 DB `status = CLOSE`면 **no-op**(복원·기록 안 함 — 재판매 없어 무의미, 주문 측은 환불로 사후 처리). 장애(캐시만 유실)면 복구 재워밍이 이력 합산으로 자동 반영.
+- **종료(CLOSE) 후:** close가 캐시를 `markClosed`만 하고 즉시 evict하지 않으므로, **drain 창(캐시 TTL) 동안 in-flight 롤백은 라이브 캐시로 정상 복원·기록**된다(신규만 차단, in-flight 취소 허용 — §8). 캐시 만료 뒤엔 `NOT_CACHED`로 떨어지고 DB `status = CLOSE`면 **no-op**(복원·기록 안 함 — 재판매 없어 무의미, 주문 측은 환불로 사후 처리). 활성 드롭에서 캐시만 유실된 경우에는 ROLLBACK 이력을 DB에 기록하지만 즉시 재워밍하지는 않으며 다음 부팅 워밍 때 원장 합계로 복구한다.
 - **멱등:** L1(`order:{orderId}:rollback` — 차감 키와 분리) + L2(`UNIQUE(order_id, ROLLBACK)`). 한 주문당 롤백 1회.
 
 ---
@@ -96,7 +96,7 @@
 - **트리거 2가지:** ① 판매자 삭제(오픈 후 → `DELETE`가 `CLOSE`를 겸함, §11·DECISIONS 2026-06-26 #1) ② `closeAt` 종료 예약(TaskScheduler). 둘 다 **`status = CLOSE` + 캐시 `markClosed`** — 드롭 해시 `closeAt = now`로 신규 선점만 거절하고(Lua 시각판정), **이미 선점한 in-flight는 캐시 TTL(drain 창) 동안 유지**한다(`evict` 즉시 아님). evict는 **오픈 전 삭제**(soft delete) 정리에만 쓴다.
 - **선점 완료 주문은 close와 무관하게 결제까지 진행**됨 — close는 "신규 선점만 차단", in-flight 완료·취소는 drain 창 안에서 허용(상세한 취소 컷은 주문 사가 책임 — §7). product는 close 시점에 해당 드롭의 재고 책임을 종료함.
 - **매진은 종료가 아님**(가역) — closeAt 도래 또는 판매자 취소로만 종료.
-- (기간 한정 가치를 위해 `closeAt`(nullable)을 유지하되, 없으면 매진/취소까지 무기한. 수량 희소성이 기본, 기간은 선택 — `DECISIONS #7`)
+- **도메인 판매 기간:** `closeAt`이 없으면 종료 시각 없이 매진 또는 판매자 취소까지 판매하는 계약이다(수량 희소성이 기본, 기간은 선택 — `DECISIONS #7`). 다만 현재 Redis 캐시는 7일 뒤 만료되고 lazy 재적재가 없어, 7일을 넘기는 판매에는 운영 재적재나 구현 보강이 필요하다(§11·§13).
 
 ---
 
@@ -111,30 +111,47 @@
 - **오버셀 불가:** Lua 단일 스레드 원자 실행으로 `remaining < quantity`면 차감하지 않음.
 - **멱등 2계층:** L1 Redis 멱등키(핫패스 빠른 멱등, 재고 이중 차감·보상 회피) + L2 DB `UNIQUE`(권위·영속 안전망).
 - **안전 편향:** 모든 예외/모호는 거절(undercount)로 기울고 오버셀로는 절대 가지 않음.
-- **매진 가역:** 선점 → 롤백 → 복원이 정상 흐름. product의 이력은 "선점 추적"이고, 판매량·정산은 `order_completed_events`(결제 완료 기준)라는 별도 소스가 담당.
+- **매진 가역:** 선점 → 롤백 → 복원이 정상 흐름. product의 이력은 "선점 추적"이고,
+  확정 판매량 조정은 `order.stock.adjusted.events`, 정산 적재는
+  `payment.settlement.events`라는 별도 소스가 담당한다.
 
 ---
 
 ## 11. 장애·복구
-- **콜드부팅/캐시 장애:** OPEN 드롭을 `total + SUM(이력)`으로 재워밍, `buyers`는 GROUP BY로 재구성(트래픽 수용 전 완료).
+- **콜드부팅:** `DropBootstrapRunner`가 모든 `REGISTERED` 드롭을 다시 스케줄한다. 워밍 시점이 이미 지났으면 즉시 `total + SUM(이력)`으로 적재하고 `buyers`는 GROUP BY로 재구성한다.
+- **런타임 캐시 유실:** 현재 요청 경로에는 자동 lazy 재워밍이 없다. 열린 드롭도 `DROP_NOT_CACHED`로 거절되고, active 롤백은 DB 원장만 보정한다. 재기동 또는 별도 운영 재워밍이 필요하다.
 - **유령 차감**(Redis 차감 후 이력 INSERT 전 크래시): 보수적 거절 상태로 남고, 재워밍 시 이력 기준으로 사라져 자가 치유됨. 해당 주문은 order가 타임아웃 처리.
-- **`closeAt=null` 드롭:** 활동 기반 TTL + 만료 시 lazy 복구로 캐시 수명을 관리(종료 후 트래픽이 적어 thundering herd 없음). 구체 정책은 §13.
+- **`closeAt=null` 드롭:** 현재 캐시 TTL은 7일 고정이며 활동 기반 갱신이나 만료 시 lazy 복구가 없다. 7일을 넘겨 계속 판매할 드롭은 운영 재워밍 또는 구현 보강이 필요하다.
 
 ---
 
 ## 12. 부하 테스트 및 검증
-- **k6:** 대규모 동시성 하 TPS·p95/p99 측정. 선착순 경쟁에서 오버셀 완전 차단, 캐시 다운 시 RDB 원장 기반 재정합(재워밍)을 집중 검증.
-- **정합성 테스트:** 동시 차감·1인 한도·중복 차감 방지를 Testcontainers(Redis+PG) + `ExecutorService`로 단언(`TEST_CONVENTION` §8).
+- **k6:** 현재 `loadtest/k6/drop-flow.js`는 배포 Gateway에서
+  드롭→대기열→주문→WireMock PG 흐름의 TPS·p95/p99와 결과 분포를 측정하고 PG 결함을
+  주입한다. 실행 후 원장·잔여를 대조하는 오버셀 단언과 Redis 중단·재워밍 실험은
+  스크립트에 포함돼 있지 않다.
+- **정합성 테스트:** `DropCacheRedisAdaptorTest`가 Testcontainers Redis +
+  `ExecutorService`로 동시 차감·1인 한도·중복 차감을 검증한다. PostgreSQL 원장 제약은
+  별도 repository·애플리케이션 통합 테스트에서 검증하며, Redis와 DB를 한 테스트에서 함께
+  경합시키는 end-to-end 정합성 테스트는 아니다(`TEST_CONVENTION` §8).
 
 ---
 
-## 13. 구현 시 구체화 과제
-- Redis 키 네이밍·자료구조 세부, Lua 스크립트 내부 로직·인자(KEYS/ARGV) 레이아웃, 보상 시퀀스.
-- L1 멱등키 **TTL = 주문 saga 최대 수명**(차감→결제 완료/타임아웃) 기준 — `closeAt`이 아니라 주문 수명에 맞춘다(종료된 주문 키를 드롭 기간 내내 보관하지 않기 위함; saga 종료 후 재차감은 비정상이라 L2 `UNIQUE`가 최종 방어선). 1인 한도 카운터는 드롭 캐시와 동일 TTL.
-- `closeAt=null` 캐시 정리(활동 TTL/배치)·워밍 실패 재시도.
-- `DropErrorCode` 클라 노출 `code`는 도메인 접두사 `DROP_`를 **일관 적용**(`DROP_NOT_OPEN`/`DROP_SOLD_OUT`/`DROP_LIMIT_EXCEEDED`/`DROP_CLOSED`/`DROP_NOT_CACHED`). enum 상수명은 접두사 없이(`NOT_OPEN`·`CLOSED`·`NOT_CACHED` 등) 두고 `code`에만 접두사를 붙여 `ProductErrorCode` 패턴과 맞춘다.
-- 판매자 삭제 = **단일 `DELETE` 엔드포인트**로 구현(취소·삭제 통합): 오픈 전이면 soft delete(`PRODUCT §11`), 오픈 후면 `CLOSE` 전이(종료·데이터 유지, §8). 종료 캐시 정리는 evict가 아니라 `markClosed`(drain). (DECISIONS 2026-06-26 #1)
-- 드롭 등록 시 product 엔티티 반환 포트(`ProductQueryUseCase` 확장 vs 별도), 등록 검증(openAt 미래, closeAt > openAt).
-- 마감 드롭 판매 리포팅(이력 보존 의존, 데이터 증가 시 적재 검토).
-- 구매자 조회 API(목록 = `REGISTERED/CLOSE` + 캐시 `remaining` 파생 덧칠 / 상세 = 캐시 라이브; **범위 2순위**).
-- 복구 시 1인 한도 카운터 = `buyer_id` GROUP BY `SUM(-quantity_delta)`(순구매; `DEDUCT −q`·`ROLLBACK +q`라 부호 반전). 보상 롤백 역연산 = `remaining+`·`buyers[buyerId]-`·멱등키 DEL. 둘 다 Lua KEYS/ARGV 레이아웃과 함께 구현 시 확정.
+## 13. 현재 구현값과 남은 운영 과제
+
+### 확정 구현값
+
+- Redis key: `drop:{dropId}`, `drop:{dropId}:buyers`, `order:{orderId}`, `order:{orderId}:rollback`.
+- Lua: `redis/deduct.lua`, `rollback.lua`, `compensate.lua`, `close.lua`. 차감은 drop·buyers·order 키와 buyerId·quantity·현재 epoch ms·멱등 TTL을, 롤백은 같은 앞의 두 키와 rollback 키 및 buyerId·quantity·멱등 TTL을 사용한다.
+- 기본 설정: `warm-before=5m`, `close-margin=10m`, `null-close-ttl=7d`, `idempotency-ttl=1h`.
+- `TaskScheduler` pool size는 2다. 등록·삭제·종료 도메인 이벤트를 트랜잭션 커밋 후 받아 예약을 갱신한다.
+- 차감·롤백 이력은 `UNIQUE(order_id, change_type)`로 L2 멱등성을 보장한다. Redis 효과와 DB 기록이 충돌하면 Lua 역연산으로 캐시를 보상한다.
+- `DropErrorCode`는 `DROP_NOT_OPEN`, `DROP_SOLD_OUT`, `DROP_LIMIT_EXCEEDED`, `DROP_CLOSED`, `DROP_NOT_CACHED`를 실제 응답 코드로 사용한다.
+- 단일 `DELETE` 경로는 오픈 전 soft delete, 오픈 뒤 `CLOSE` 전이로 동작한다. 구매자 목록·상세 조회와 seller 소유 검증도 구현돼 있다.
+
+### 남은 운영 위험
+
+- 여러 product replica가 같은 드롭을 각각 스케줄·워밍하며 분산 멱등 가드는 없다.
+- 런타임 Redis 유실과 `closeAt=null` 7일 TTL 만료에 대한 자동 재워밍 경로가 없다.
+- 워밍 작업 실패에 대한 별도 재시도·알림이 없다.
+- 이력 증가에 따른 재워밍 집계 비용과 마감 드롭 판매 리포팅 적재 전략은 별도 검토가 필요하다.
