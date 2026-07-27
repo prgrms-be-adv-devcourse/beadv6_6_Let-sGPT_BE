@@ -15,9 +15,9 @@ import org.hibernate.annotations.UuidGenerator;
 
 /**
  * 아웃박스 이벤트(최소 버전) — payment 모듈의 outbox 패턴을 member에 이식.
- * 도메인 쓰기와 같은 트랜잭션으로 이 행을 적재하고, {@link OutboxPublisher}가 별도 스케줄러로
- * Kafka에 발행한 뒤 PUBLISHED로 표시한다. dual-write(DB 커밋은 됐는데 Kafka 발행만 실패)로 인한
- * 이벤트 유실을 방지하기 위함이다.
+ * 도메인 쓰기와 같은 트랜잭션으로 이 행을 적재하고, {@link OutboxPollingScheduler}가 별도 스케줄러로
+ * {@link OutboxEventPublisher}에 위임해 Kafka에 발행한 뒤 PUBLISHED로 표시한다. dual-write(DB 커밋은
+ * 됐는데 Kafka 발행만 실패)로 인한 이벤트 유실을 방지하기 위함이다.
  *
  * <p>{@code aggregateId}는 Kafka 발행 key로도 쓰인다(payment와 동일 컨벤션: key = aggregateId).
  * 찜 이벤트는 "같은 회원의 찜 변경은 항상 순서대로 처리돼야 한다"는 요건 때문에
