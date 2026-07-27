@@ -44,6 +44,10 @@ toleration이 없으므로 payment와 같은 `semi` 노드에 뜬다 — 의도�
 
 ## 0. 왜 매니페스트가 `k8s/base` 에 없는가
 
+> **정본 이동 안내:** 목 배선은 GitOps 오버레이 `k8s/overlay-loadtest/` 로 옮겼다. WireMock
+> 매니페스트와 매핑 JSON의 **정본은 그쪽**이고(켜기/끄기 절차는 `k8s/overlay-loadtest/README.md`),
+> 이 문서와 `loadtest/k8s/`·`loadtest/wiremock/`·`pg-mock-*.sh` 는 퇴역 예정인 구 수동 경로다.
+
 WireMock 매니페스트는 `loadtest/k8s/wiremock.yaml` 에 있고 **수동 apply만** 한다.
 
 - `k8s/base/` 나 `k8s/overlay/` 에 넣으면 `deploy/state` 의 desired-state가 되어 가짜 PG가
