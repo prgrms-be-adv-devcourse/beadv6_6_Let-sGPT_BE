@@ -32,7 +32,7 @@ public class InferenceConfigCheck {
     this.apiKey = apiKey;
   }
 
-  public boolean apiKeyMissing() {
+  private boolean apiKeyMissing() {
     return apiKey == null || apiKey.isBlank();
   }
 

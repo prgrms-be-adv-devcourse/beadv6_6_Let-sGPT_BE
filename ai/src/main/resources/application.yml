@@ -149,6 +149,12 @@ recommendation:
   # 최후 폴백: 드롭 무관 최신 상품(스케줄로 미리 채워 요청당 지연 0).
   last-resort:
     size: ${RECOMMENDATION_LAST_RESORT_SIZE:8}
+  # 열린 드롭 상품의 DETAIL 추천을 주기적으로 미리 계산해 rec:detail:{productId}를 데운다.
+  # LLM 비용이 있으므로 기본 비활성(opt-in). 새벽 고정이 아니라 설정 가능한 간격으로 돈다.
+  prebatch:
+    enabled: ${RECOMMENDATION_PREBATCH_ENABLED:false}
+    interval: ${RECOMMENDATION_PREBATCH_INTERVAL:6h}
+    initial-delay: ${RECOMMENDATION_PREBATCH_INITIAL_DELAY:1m}
   weights:
     partial-ttl: ${RECOMMENDATION_WEIGHTS_PARTIAL_TTL:10m}
     wishlist-score: ${RECOMMENDATION_WISHLIST_SCORE:0.3}
