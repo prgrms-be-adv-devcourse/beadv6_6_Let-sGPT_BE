@@ -76,6 +76,39 @@ receivers:
             - source_labels: [__name__, pod]
               regex: "machine_.*;|[^;]*;.+"
               action: keep
+        # 노드 PSI 전용 node-exporter(12-node-exporter.yaml). 사용률로는 안 보이는 "자원을 못
+        # 얻어 멈춰 있던 시간"을 잡는다(실측: 노드 CPU 32%일 때 cpu some avg10 96%).
+        #
+        # 공용 kubernetes-pods 잡에 어노테이션으로 태우지 않고 전용 잡을 판 이유 세 가지.
+        #  1) 카디널리티. 공용 잡의 metric_relabel_configs는 모든 앱 파드에 함께 걸려서
+        #     node_pressure_* 만 남기는 단순 keep을 쓸 수 없다. postgres-exporter처럼
+        #     "허용 표시 후 미표시분 드롭" 2단 우회를 또 만들어야 하는데, 전용 잡이면
+        #     keep 한 줄로 끝난다.
+        #  2) node 라벨. PSI는 노드 단위 값이라 node 라벨이 필수인데, 공용 잡에 node
+        #     relabel을 넣으면 전 앱 시리즈에 node 라벨이 붙어 시리즈가 통째로 늘어난다.
+        #  3) 선례. 같은 이유로 kubernetes-cadvisor도 이미 별도 잡으로 분리돼 있다.
+        - job_name: node-exporter
+          kubernetes_sd_configs:
+            - role: pod
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_pod_label_app]
+              action: keep
+              regex: observability;node-exporter
+            # PSI 값의 주인은 파드가 아니라 노드다. 대시보드 범례도 node 기준.
+            - source_labels: [__meta_kubernetes_pod_node_name]
+              target_label: node
+            - source_labels: [__meta_kubernetes_pod_name]
+              target_label: pod
+          metric_relabel_configs:
+            # 카디널리티 방어 — exporter를 최소 구성으로 띄웠어도 keep으로 한 번 더 거른다.
+            # node_pressure_* 는 {cpu,io,memory}×{waiting(some),stalled(full)} 6종 + 커널
+            # 버전에 따라 irq_stalled. 노드당 6~7시리즈, 두 노드 합쳐 12~14시리즈다.
+            # up은 스크레이프 루프가 metric_relabel 이후에 붙이는 합성 시리즈라 사실 이 필터를
+            # 타지 않지만, "PSI 0"과 "수집기 죽음"을 구분하려면 반드시 남아야 하는 시리즈라
+            # 의도를 명시해 둔다(나중에 이 정규식을 좁힐 때 실수로 죽이지 않도록).
+            - source_labels: [__name__]
+              regex: node_pressure_.*|up
+              action: keep
 processors:
   memory_limiter:
     check_interval: 1s
