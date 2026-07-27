@@ -14,3 +14,18 @@ spring:
     redis:
       host: ${REDIS_HOST}
       port: ${REDIS_PORT}
+
+
+services:
+  internal:
+    timeout: ${INTERNAL_API_TIMEOUT:2000ms}
+  order:
+    url: http://order:9120
+  member:
+    url: http://member:9100
+  product:
+    url: http://product:9110
+  search:
+    url: http://search:9240
+    timeout: ${SEARCH_SERVICE_TIMEOUT:2500ms}
+    recommendation-size: ${SEARCH_RECOMMENDATION_SIZE:20}
