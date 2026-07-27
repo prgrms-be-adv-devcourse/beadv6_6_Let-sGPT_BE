@@ -139,7 +139,7 @@ recommendation:
     topic:
       order-completed: order.completed.events
       wishlist-changed: wishlist.changed.events
-  fallback-limit: ${RECOMMENDATION_FALLBACK_LIMIT:3}
+  fallback-limit: ${RECOMMENDATION_FALLBACK_LIMIT:4}
   # 캐시 미스(검색+LLM) 동시 실행 상한. 가상 스레드로 워커 풀이 사라졌으므로,
   # OpenAI/검색으로의 무제한 팬아웃을 막는 명시적 admission valve. 초과분은 폴백으로 흘린다.
   max-concurrent-pipelines: ${RECOMMENDATION_MAX_CONCURRENT_PIPELINES:64}

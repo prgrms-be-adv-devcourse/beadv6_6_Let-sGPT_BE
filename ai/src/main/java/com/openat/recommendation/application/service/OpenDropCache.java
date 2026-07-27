@@ -82,7 +82,6 @@ public class OpenDropCache {
   public List<DropMeta> findGeneral(int limit) {
     return cache.get().values().stream()
         .filter(this::isStillOpen)
-        .sorted(CLOSE_AT_ORDER)
         .limit(limit)
         .toList();
   }
