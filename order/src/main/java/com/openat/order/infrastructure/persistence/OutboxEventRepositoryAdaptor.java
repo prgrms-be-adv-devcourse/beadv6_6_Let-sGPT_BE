@@ -4,7 +4,6 @@ import com.openat.order.domain.model.OutboxEvent;
 import com.openat.order.domain.model.OutboxEventStatus;
 import com.openat.order.domain.repository.OutboxEventRepository;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
@@ -24,15 +23,32 @@ public class OutboxEventRepositoryAdaptor implements OutboxEventRepository {
     }
 
     @Override
-    public Optional<OutboxEvent> findById(UUID id) {
-        return outboxEventJpaRepository.findById(id);
-    }
-
-    @Override
     public List<OutboxEvent> findPending(int limit) {
         return outboxEventJpaRepository.findByStatusOrderByCreatedAtAsc(
                 OutboxEventStatus.PENDING,
                 PageRequest.of(0, limit));
+    }
+
+    @Override
+    @Transactional
+    public int markPublishedAll(List<UUID> ids, Instant now) {
+        if (ids.isEmpty()) {
+            return 0;
+        }
+        return outboxEventJpaRepository.markPublishedAll(
+                ids,
+                now,
+                OutboxEventStatus.PUBLISHED,
+                OutboxEventStatus.PENDING);
+    }
+
+    @Override
+    @Transactional
+    public int markFailed(UUID id) {
+        return outboxEventJpaRepository.markFailed(
+                id,
+                OutboxEventStatus.FAILED,
+                OutboxEventStatus.PENDING);
     }
 
     @Override

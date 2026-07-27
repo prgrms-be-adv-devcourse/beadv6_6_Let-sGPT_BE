@@ -50,11 +50,6 @@ public class OutboxEvent {
         this.status = OutboxEventStatus.PENDING;
     }
 
-    public void markPublished(Instant publishedAt) {
-        this.status = OutboxEventStatus.PUBLISHED;
-        this.publishedAt = publishedAt;
-    }
-
     public void markFailed() {
         this.status = OutboxEventStatus.FAILED;
         this.publishedAt = null;
