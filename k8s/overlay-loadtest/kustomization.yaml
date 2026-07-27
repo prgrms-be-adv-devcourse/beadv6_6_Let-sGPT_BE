@@ -1,0 +1,31 @@
+# 부하테스트 전용 오버레이. 활성화 = k8s/argocd/app-openat.yaml의 path를 이 디렉토리로
+# 교체하는 main 커밋, 비활성화 = 그 revert(README 참고). 활성 동안 목·커넥션풀·유량제한이
+# desired-state가 되어 자동동기화(selfHeal)가 손 드리프트를 이 값으로 되돌린다.
+# CD는 이 디렉토리를 절대 수정하지 않는다 — 이미지 핀은 ../overlay가 전담하고 여기서
+# 상속한다(그래서 부하테스트 중에도 팀원 이미지 배포가 목 위로 정상 롤링된다).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../overlay          # base + 이미지 태그 핀 전부 상속
+  - wiremock.yaml       # 가짜 PG — 이 오버레이가 활성일 때만 desired-state에 존재
+
+patches:
+  - path: patch-payment-pg-mock.yaml
+  - path: patch-apigateway-ratelimit.yaml
+
+# mappings/*.json이 목 응답의 유일한 원본. 이름에 내용 해시가 붙으므로 매핑을 고치는
+# 커밋만으로 wiremock 파드가 자동 재생성된다(rollout restart 불필요, 지연값이 재시작에도
+# 살아남는다 — 관리 API 런타임 편집이 파드 재시작마다 증발하던 문제의 해소).
+configMapGenerator:
+  - name: wiremock-toss-mappings
+    namespace: openat   # 필수 — 생략하면 생성 ConfigMap이 namespace 없이 렌더되고,
+                        # namespace가 명시된 wiremock Deployment의 volume 참조와 불일치해
+                        # 해시 이름 치환이 안 걸린다(존재하지 않는 CM을 참조 → 기동 불가).
+                        # base의 namespace 트랜스포머는 base 서브트리에만 적용되므로
+                        # 오버레이 레벨 generator에는 이 명시가 필요하다.
+    files:
+      - mappings/toss-confirm-ok.json
+      - mappings/toss-confirm-faults.json
+      - mappings/toss-cancel.json
+      - mappings/toss-query-payment.json
