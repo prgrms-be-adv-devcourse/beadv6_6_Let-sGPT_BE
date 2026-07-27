@@ -69,6 +69,11 @@ dependencies {
 
     // QueueService 단위 테스트(Docker 불필요) - 코틀린 인터페이스 mock에 관용적인 DSL(whenever/mock<T>()).
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
+
+    // QueueStreamService 동시성 테스트(재연결 레이스, 재조회 순서 보장) - runTest/가상 시간으로
+    // delay()가 실제로 기다리지 않게 하고, 코루틴 스케줄링을 결정적으로 제어한다. 버전은 위
+    // kotlinx-coroutines-reactor(전이 의존성)로 실제 resolve되는 1.10.2에 맞춰 명시 고정.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }
 
 kotlin {
