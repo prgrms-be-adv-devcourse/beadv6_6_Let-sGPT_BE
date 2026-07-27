@@ -10,9 +10,18 @@ spring:
   application:
     name: payment-service
   jpa:
+    # OSIV off — 영속성 컨텍스트를 컨트롤러/뷰 구간까지 열어두지 않는다. payment 엔티티는 연관관계가
+    # 하나도 없어 지연 로딩이 깨질 경로가 구조적으로 없고, 켜져 있으면 요청이 끝날 때까지 세션이
+    # 물리 커넥션을 붙들어 결제사 HTTP 호출 시간만큼 풀이 잠긴다.
+    open-in-view: false
     properties:
       hibernate:
         default_schema: payment # 스키마 분리
+        connection:
+          # 커넥션을 트랜잭션 시작이 아닌 첫 JDBC 사용 시점에 얻고, 트랜잭션이 끝나면 즉시 반납한다.
+          # OSIV off와 짝이 되어야 커넥션 점유가 "트랜잭션 구간"으로 좁혀진다(그 전엔 첫 DB 접근부터
+          # 응답 완료까지 한 커넥션을 계속 잡고 있었다).
+          handling_mode: DELAYED_ACQUISITION_AND_RELEASE_AFTER_TRANSACTION
     hibernate:
       ddl-auto: validate
   flyway:
