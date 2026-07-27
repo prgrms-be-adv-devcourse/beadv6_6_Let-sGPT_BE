@@ -119,19 +119,6 @@ management:
       otlp:
         enabled: false
 
-services:
-  internal:
-    timeout: ${INTERNAL_API_TIMEOUT:2000ms}
-  order:
-    url: ${ORDER_SERVICE_URL:http://localhost:9120}
-  member:
-    url: ${MEMBER_SERVICE_URL:http://localhost:9100}
-  product:
-    url: ${PRODUCT_SERVICE_URL:http://localhost:9110}
-  search:
-    url: ${SEARCH_SERVICE_URL:http://localhost:9240}
-    timeout: ${SEARCH_SERVICE_TIMEOUT:2500ms}
-    recommendation-size: ${SEARCH_RECOMMENDATION_SIZE:20}
 
 inference:
   base-url: ${INFERENCE_BASE_URL:https://api.inferway.xyz/v1}

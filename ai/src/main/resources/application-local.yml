@@ -15,3 +15,17 @@ chat:
     bootstrap:
       enabled: ${CHAT_DATA_BOOTSTRAP_ENABLED:true}
       retry-delay: ${CHAT_DATA_BOOTSTRAP_RETRY_DELAY:15s}
+
+services:
+  internal:
+    timeout: ${INTERNAL_API_TIMEOUT:2000ms}
+  order:
+    url: http://localhost:9120
+  member:
+    url: http://localhost:9100
+  product:
+    url: http://localhost:9110
+  search:
+    url: http://localhost:9240
+    timeout: ${SEARCH_SERVICE_TIMEOUT:2500ms}
+    recommendation-size: ${SEARCH_RECOMMENDATION_SIZE:20}
