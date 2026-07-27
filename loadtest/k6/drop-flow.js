@@ -165,6 +165,12 @@ const CFG = {
   // paymentKey prefix, which WireMock matches on (see wiremock/mappings/toss-confirm-faults.json).
   faultRate4xx: parseFloat(__ENV.FAULT_RATE_4XX || '0'),
   faultRate5xx: parseFloat(__ENV.FAULT_RATE_5XX || '0'),
+  // LTTIMEOUT... -> WireMock 8s 지연 -> RestClient 5s read timeout 초과(모호상태 경로).
+  faultRateTimeout: parseFloat(__ENV.FAULT_RATE_TIMEOUT || '0'),
+  // 결함 시간창(테스트 시작 기준 초). 기본은 전 구간. 창을 주면 "클린 -> 결함 -> 회복"을
+  // 한 라운드의 연속 지표로 본다 — 서킷 개폐·회복 관찰은 라운드를 쪼개면 경계가 끊긴다.
+  faultFromS: parseFloat(__ENV.FAULT_FROM_S || '0'),
+  faultToS: parseFloat(__ENV.FAULT_TO_S || 'Infinity'),
 
   thinkTimeMs: parseInt(__ENV.THINK_TIME_MS || '1000', 10),
 };
@@ -410,9 +416,15 @@ function uuidish() {
  * stubs select faults purely by prefix — so this is how k6 drives the fault scenarios.
  */
 function makePaymentKey() {
-  const r = Math.random();
-  if (r < CFG.faultRate5xx) return `LTFAIL5XX_${uuidish()}`;
-  if (r < CFG.faultRate5xx + CFG.faultRate4xx) return `LTFAIL4XX_${uuidish()}`;
+  const elapsedS = (Date.now() - exec.scenario.startTime) / 1000;
+  if (elapsedS >= CFG.faultFromS && elapsedS < CFG.faultToS) {
+    const r = Math.random();
+    if (r < CFG.faultRate5xx) return `LTFAIL5XX_${uuidish()}`;
+    if (r < CFG.faultRate5xx + CFG.faultRate4xx) return `LTFAIL4XX_${uuidish()}`;
+    if (r < CFG.faultRate5xx + CFG.faultRate4xx + CFG.faultRateTimeout) {
+      return `LTTIMEOUT_${uuidish()}`;
+    }
+  }
   return `LT_${uuidish()}`;
 }
 
