@@ -35,7 +35,10 @@ public class PopularProductsCache {
     this.size = size;
   }
 
-  @Scheduled(initialDelay = 0, fixedDelayString = "${recommendation.drop-cache.refresh-interval}")
+  @Scheduled(
+      scheduler = "recommendationTaskScheduler",
+      initialDelay = 0,
+      fixedDelayString = "${recommendation.drop-cache.refresh-interval}")
   public void refresh() {
     try {
       List<Product> products =

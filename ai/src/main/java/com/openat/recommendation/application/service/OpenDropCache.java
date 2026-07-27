@@ -35,7 +35,10 @@ public class OpenDropCache {
     this.openDropClient = openDropClient;
   }
 
-  @Scheduled(initialDelay = 0, fixedDelayString = "${recommendation.drop-cache.refresh-interval}")
+  @Scheduled(
+      scheduler = "recommendationTaskScheduler",
+      initialDelay = 0,
+      fixedDelayString = "${recommendation.drop-cache.refresh-interval}")
   public void refresh() {
     try {
       Map<UUID, DropMeta> refreshed =

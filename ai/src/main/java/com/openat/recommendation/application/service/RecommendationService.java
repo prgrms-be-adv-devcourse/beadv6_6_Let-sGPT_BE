@@ -150,11 +150,19 @@ public class RecommendationService {
       RecommendationResponse result = computation.get();
       mine.complete(result);
       return result;
-    } catch (RuntimeException exception) {
-      mine.completeExceptionally(exception);
-      throw exception;
+    } catch (RuntimeException | Error throwable) {
+      // RuntimeException뿐 아니라 Error까지 잡아 대기자에게 그대로 전파한다. Error를 놓치면
+      // mine이 완료되지 않아 running.join()에 묶인 대기자가 영원히 풀리지 않는다.
+      mine.completeExceptionally(throwable);
+      throw throwable;
     } finally {
       inFlight.remove(key, mine);
+      // 어떤 Throwable 경로로 빠져나가도(체크 예외의 sneaky throw 등) 리더가 mine을 완료하지
+      // 못한 채 나가면 대기자가 무한 대기한다. 마지막 안전망으로 반드시 풀어 준다.
+      if (!mine.isDone()) {
+        mine.completeExceptionally(
+            new IllegalStateException("single-flight leader terminated without completing"));
+      }
     }
   }
 

@@ -715,6 +715,81 @@ class RecommendationServiceTest {
     assertThat(service.inFlightCount()).isZero();
   }
 
+  @Test
+  void recommend_whenLeaderPipelineThrowsError_releasesWaitersAndClearsInFlight()
+      throws Exception {
+    UUID memberId = UUID.randomUUID();
+    when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.empty());
+    // 리더가 파이프라인 안에서 RuntimeException이 아닌 Error로 죽는 상황.
+    // recommendHome은 Exception만 잡으므로 Error는 singleFlight까지 전파된다.
+    when(seedService.collect())
+        .thenAnswer(
+            invocation -> {
+              Thread.sleep(200);
+              throw new StackOverflowError("boom");
+            });
+
+    int threads = 6;
+    ExecutorService pool = Executors.newFixedThreadPool(threads);
+    CountDownLatch start = new CountDownLatch(1);
+    List<CompletableFuture<Void>> futures = new java.util.ArrayList<>();
+    for (int i = 0; i < threads; i++) {
+      futures.add(
+          CompletableFuture.runAsync(
+              () -> {
+                UserContextHolder.set(new UserContext(memberId.toString(), Set.of("USER")));
+                try {
+                  start.await();
+                  service.recommend(null);
+                } catch (InterruptedException exception) {
+                  throw new RuntimeException(exception);
+                } catch (Error ignored) {
+                  // 리더 스레드는 Error를 그대로 되던진다(정상). 대기자는 빈 응답으로 풀린다.
+                } finally {
+                  UserContextHolder.clear();
+                }
+              },
+              pool));
+    }
+    start.countDown();
+
+    // 회귀(mine 미완료)면 대기자가 join()에서 영원히 막혀 여기서 TimeoutException으로 실패한다.
+    for (CompletableFuture<Void> future : futures) {
+      future.get(3, TimeUnit.SECONDS);
+    }
+    pool.shutdownNow();
+
+    verify(seedService, times(1)).collect();
+    assertThat(service.inFlightCount()).isZero();
+  }
+
+  @Test
+  void recommend_whenPipelineOverloaded_shedsFallbackWithoutDownstreamCalls() {
+    // 세마포어 허가 0 = 상한을 이미 초과한 상태. 모든 요청이 다운스트림을 때리지 않고 폴백으로 흐른다.
+    RecommendationService saturated =
+        new RecommendationService(
+            seedService,
+            seedScorer,
+            searchClient,
+            openDropCache,
+            promptBuilder,
+            llmClient,
+            postProcessor,
+            productDetailClient,
+            resultCache,
+            popularProductsCache,
+            3,
+            0,
+            executor);
+
+    RecommendationResponse response = saturated.recommend(null);
+
+    assertThat(response.sections()).isEmpty();
+    verify(searchClient, never()).recommend(any());
+    verify(llmClient, never()).complete(any());
+    verify(seedService, never()).collect();
+  }
+
   private void stubHomeUntilPrompt(UUID id) {
     when(seedService.collect()).thenReturn(seeds());
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(id)));
