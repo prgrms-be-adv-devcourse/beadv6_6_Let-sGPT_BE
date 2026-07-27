@@ -40,7 +40,9 @@ public class KafkaStringConfig {
     props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5_000);
     props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5_000);
     props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 10_000);
-    return new DefaultKafkaProducerFactory<>(props);
+    DefaultKafkaProducerFactory<String, String> factory = new DefaultKafkaProducerFactory<>(props);
+    factory.addListener(new MicrometerProducerListener<>(meterRegistry));
+    return factory;
   }
 
   @Bean
