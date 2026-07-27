@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.openat.common.auth.UserContextFilter;
 import com.openat.recommendation.application.service.RecommendationResponse;
 import com.openat.recommendation.application.service.RecommendationResponse.Product;
 import com.openat.recommendation.application.service.RecommendationResponse.Section;
@@ -69,6 +70,18 @@ class RecommendationControllerTest {
 
     mvc()
         .perform(get("/api/v1/recommendations"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.sections", hasSize(0)));
+  }
+
+  @Test
+  void recommendations_whenUserIdHeaderIsMalformed_returnsOkNotError() throws Exception {
+    when(recommendationService.recommend(isNull())).thenReturn(RecommendationResponse.empty());
+
+    MockMvcBuilders.standaloneSetup(new RecommendationController(recommendationService))
+        .addFilters(new UserContextFilter())
+        .build()
+        .perform(get("/api/v1/recommendations").header("X-User-Id", "not-a-uuid"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.sections", hasSize(0)));
   }

@@ -20,7 +20,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Semaphore;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,8 +53,18 @@ public class RecommendationService {
   private final RecommendationPostProcessor postProcessor;
   private final ProductDetailClient productDetailClient;
   private final RecommendationResultCache resultCache;
+  private final PopularProductsCache popularProductsCache;
   private final int fallbackLimit;
   private final Executor executor;
+
+  // 캐시 키별 진행 중인 계산. 같은 키의 동시 미스가 하나의 계산을 공유한다(스탬피드 방지).
+  // 완료·예외 어느 쪽으로 끝나도 엔트리를 비워 누수를 막는다.
+  private final ConcurrentMap<String, CompletableFuture<RecommendationResponse>> inFlight =
+      new ConcurrentHashMap<>();
+
+  // 가상 스레드로 워커 풀이 사라졌으므로, 미스 파이프라인(검색+LLM) 동시 실행을 명시적으로
+  // 제한하는 admission valve. 초과분은 다운스트림을 더 때리지 않고 인메모리 폴백으로 흘린다.
+  private final Semaphore pipelineLimiter;
 
   public RecommendationService(
       RecommendationSeedService seedService,
@@ -62,7 +76,9 @@ public class RecommendationService {
       RecommendationPostProcessor postProcessor,
       ProductDetailClient productDetailClient,
       RecommendationResultCache resultCache,
+      PopularProductsCache popularProductsCache,
       @Value("${recommendation.fallback-limit:3}") int fallbackLimit,
+      @Value("${recommendation.max-concurrent-pipelines:64}") int maxConcurrentPipelines,
       @Qualifier("recommendationExecutor") Executor executor) {
     this.seedService = seedService;
     this.seedScorer = seedScorer;
@@ -73,23 +89,91 @@ public class RecommendationService {
     this.postProcessor = postProcessor;
     this.productDetailClient = productDetailClient;
     this.resultCache = resultCache;
+    this.popularProductsCache = popularProductsCache;
     this.fallbackLimit = fallbackLimit;
+    this.pipelineLimiter = new Semaphore(maxConcurrentPipelines);
     this.executor = executor;
   }
 
   public RecommendationResponse recommend(UUID productId) {
     boolean home = productId == null;
+    // 캐시 키 계산·조회는 추천 성공의 전제가 아니다. 키 계산이 실패해도(잘못된 id, 캐시 장애)
+    // 폴백까지 가지 못하고 빈 응답이 나가면 안 되므로, 실패 시 캐시만 건너뛴다.
     Optional<String> cacheKey = cacheKey(productId);
-    Optional<RecommendationResponse> cached = cacheKey.flatMap(resultCache::find);
+    Optional<RecommendationResponse> cached = lookup(home, cacheKey);
     if (cached.isPresent()) {
-      log.info("recommendation cache hit: home={}, key={}", home, cacheKey.orElseThrow());
       return cached.get();
     }
     try {
-      return home ? recommendHome(cacheKey) : recommendDetail(productId, cacheKey);
+      return singleFlight(cacheKey, () -> guardedPipeline(home, productId, cacheKey));
     } catch (Exception exception) {
       log.warn("recommendation failed, returning empty response: home={}", home, exception);
       return RecommendationResponse.empty();
+    }
+  }
+
+  /** 캐시 조회 실패는 미스와 동일하게 취급한다. */
+  private Optional<RecommendationResponse> lookup(boolean home, Optional<String> cacheKey) {
+    if (cacheKey.isEmpty()) {
+      return Optional.empty();
+    }
+    String key = cacheKey.get();
+    try {
+      Optional<RecommendationResponse> cached = resultCache.find(key);
+      cached.ifPresent(
+          ignored -> log.info("recommendation cache hit: home={}, key={}", home, key));
+      return cached;
+    } catch (RuntimeException exception) {
+      log.warn("recommendation cache lookup failed, treating as miss: key={}", key, exception);
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * 같은 캐시 키에 동시에 몰린 미스를 한 번의 계산으로 합친다. 먼저 도착한 요청이 계산하고, 그
+   * 사이 들어온 요청은 같은 결과를 나눠 받는다. 키가 없는(비로그인 홈) 요청은 합칠 대상이 없어
+   * 그냥 계산한다. 완료·예외 어느 쪽이든 {@code finally}에서 엔트리를 비운다.
+   */
+  private RecommendationResponse singleFlight(
+      Optional<String> cacheKey, Supplier<RecommendationResponse> computation) {
+    if (cacheKey.isEmpty()) {
+      return computation.get();
+    }
+    String key = cacheKey.get();
+    CompletableFuture<RecommendationResponse> mine = new CompletableFuture<>();
+    CompletableFuture<RecommendationResponse> running =
+        inFlight.computeIfAbsent(key, ignored -> mine);
+    if (running != mine) {
+      return running.join();
+    }
+    try {
+      RecommendationResponse result = computation.get();
+      mine.complete(result);
+      return result;
+    } catch (RuntimeException exception) {
+      mine.completeExceptionally(exception);
+      throw exception;
+    } finally {
+      inFlight.remove(key, mine);
+    }
+  }
+
+  /** 테스트에서 in-flight 엔트리 누수를 확인하기 위한 창구. */
+  int inFlightCount() {
+    return inFlight.size();
+  }
+
+  /** 미스 파이프라인 동시 실행을 제한한다. 허가를 못 얻으면 폴백만 준다(다운스트림 보호). */
+  private RecommendationResponse guardedPipeline(
+      boolean home, UUID productId, Optional<String> cacheKey) {
+    if (!pipelineLimiter.tryAcquire()) {
+      log.warn("recommendation pipeline overloaded, serving fallback: home={}", home);
+      return home ? homeFallback("overloaded") : RecommendationResponse.empty();
+    }
+    try {
+      return home ? recommendHome(cacheKey) : recommendDetail(productId, cacheKey);
+    } finally {
+      pipelineLimiter.release();
     }
   }
 
@@ -204,19 +288,50 @@ public class RecommendationService {
     return response;
   }
 
+  /** 키를 못 만들면 캐시만 건너뛰고 파이프라인은 그대로 태운다(잘못된 id → 정상 폴백). */
   private Optional<String> cacheKey(UUID productId) {
-    if (productId != null) {
-      return Optional.of(resultCache.cacheKey(productId, null));
+    try {
+      if (productId != null) {
+        return Optional.of(resultCache.cacheKey(productId, null));
+      }
+      return currentMemberId().map(memberId -> resultCache.cacheKey(null, memberId));
+    } catch (RuntimeException exception) {
+      log.warn(
+          "recommendation cache key unavailable, serving uncached: home={}",
+          productId == null,
+          exception);
+      return Optional.empty();
     }
+  }
+
+  private Optional<UUID> currentMemberId() {
     UserContext context = UserContextHolder.get();
     if (context == null) {
       return Optional.empty();
     }
-    return Optional.of(resultCache.cacheKey(null, UUID.fromString(context.userId())));
+    // X-User-Id가 UUID가 아니면 익명으로 강등한다(요청을 깨뜨리는 대신 폴백 경로로).
+    try {
+      return Optional.of(UUID.fromString(context.userId()));
+    } catch (IllegalArgumentException exception) {
+      log.warn("malformed X-User-Id, treating as anonymous");
+      return Optional.empty();
+    }
   }
 
   private RecommendationResponse homeFallback(String reason) {
-    return fallbackResponse(true, "이런 드롭은 어떠세요?", openDropCache.findGeneral(fallbackLimit), reason);
+    List<DropMeta> drops = openDropCache.findGeneral(fallbackLimit);
+    if (!drops.isEmpty()) {
+      return fallbackResponse(true, "이런 드롭은 어떠세요?", drops, reason);
+    }
+    // 최후 폴백: 열린 드롭이 하나도 없어도 최신 상품으로 홈을 절대 비우지 않는다.
+    List<Product> popular = popularProductsCache.get();
+    if (popular.isEmpty()) {
+      log.info("recommendation fallback empty: home=true, reason={}", reason);
+      return RecommendationResponse.empty();
+    }
+    log.info(
+        "recommendation last-resort served: home=true, reason={}, count={}", reason, popular.size());
+    return new RecommendationResponse(List.of(new Section("지금 인기 있는 상품", popular)));
   }
 
   private RecommendationResponse detailFallback(UUID categoryId, String reason) {

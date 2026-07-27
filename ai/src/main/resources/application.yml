@@ -3,8 +3,15 @@ server:
   tomcat:
     mbeanregistry:
       enabled: true   # tomcat_threads_* 메트릭(Micrometer TomcatMetrics) 노출에 필요
+    # 가상 스레드를 켜면 요청당 워커가 무한정 생겨 server.tomcat.threads.max가 무의미해진다.
+    # 소켓 수용 자체를 막는 최소한의 방벽으로 커넥션 수를 제한한다(수락 단계 과부하 차단).
+    max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:1024}
 
 spring:
+  threads:
+    virtual:
+      # 요청 처리를 가상 스레드로. WebFlux 대신 선택(벤치 결과 동등 효과, 비용은 훨씬 낮음).
+      enabled: true
   kafka:
     consumer:
       group-id: ai-service
@@ -121,10 +128,11 @@ management:
 
 
 inference:
-  base-url: ${INFERENCE_BASE_URL:https://api.inferway.xyz/v1}
+  base-url: ${INFERENCE_BASE_URL:https://api.openai.com/v1}
   api-key: ${INFERENCE_API_KEY:}
-  model: ${INFERENCE_MODEL:chat}
-  timeout: ${INFERENCE_LLM_TIMEOUT:120000ms}
+  model: ${INFERENCE_MODEL:gpt-4.1-nano}
+  # OpenAI는 sub-second 응답 — 옛 inferway 대비 5s면 충분(기존 120s는 느린 추론기 잔재).
+  timeout: ${INFERENCE_LLM_TIMEOUT:5000ms}
 
 recommendation:
   kafka:
@@ -132,9 +140,15 @@ recommendation:
       order-completed: order.completed.events
       wishlist-changed: wishlist.changed.events
   fallback-limit: ${RECOMMENDATION_FALLBACK_LIMIT:3}
+  # 캐시 미스(검색+LLM) 동시 실행 상한. 가상 스레드로 워커 풀이 사라졌으므로,
+  # OpenAI/검색으로의 무제한 팬아웃을 막는 명시적 admission valve. 초과분은 폴백으로 흘린다.
+  max-concurrent-pipelines: ${RECOMMENDATION_MAX_CONCURRENT_PIPELINES:64}
   drop-cache:
     page-size: ${RECOMMENDATION_DROP_CACHE_PAGE_SIZE:100}
     refresh-interval: ${RECOMMENDATION_DROP_CACHE_REFRESH_INTERVAL:5m}
+  # 최후 폴백: 드롭 무관 최신 상품(스케줄로 미리 채워 요청당 지연 0).
+  last-resort:
+    size: ${RECOMMENDATION_LAST_RESORT_SIZE:8}
   weights:
     partial-ttl: ${RECOMMENDATION_WEIGHTS_PARTIAL_TTL:10m}
     wishlist-score: ${RECOMMENDATION_WISHLIST_SCORE:0.3}

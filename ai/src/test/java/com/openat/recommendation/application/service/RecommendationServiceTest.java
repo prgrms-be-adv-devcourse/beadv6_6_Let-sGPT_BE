@@ -52,6 +52,7 @@ class RecommendationServiceTest {
   @Mock RecommendationPostProcessor postProcessor;
   @Mock ProductDetailClient productDetailClient;
   @Mock RecommendationResultCache resultCache;
+  @Mock PopularProductsCache popularProductsCache;
 
   private RecommendationService service;
   private ExecutorService executor;
@@ -79,7 +80,9 @@ class RecommendationServiceTest {
             postProcessor,
             productDetailClient,
             resultCache,
+            popularProductsCache,
             3,
+            64,
             executor);
   }
 
@@ -170,7 +173,9 @@ class RecommendationServiceTest {
             new RecommendationPostProcessor(new ObjectMapper()),
             productDetailClient,
             resultCache,
+            popularProductsCache,
             3,
+            64,
             executor);
     when(seedService.collect()).thenReturn(seeds());
     when(searchClient.recommend(any())).thenReturn(candidates);
@@ -622,6 +627,92 @@ class RecommendationServiceTest {
     for (int i = 6; i < 10; i++) {
       verify(productDetailClient, never()).getProduct(tenIds.get(i));
     }
+  }
+
+  @Test
+  void recommend_forHomeWhenMemberIdMalformed_degradesToAnonymousFallback() {
+    UserContextHolder.set(new UserContext("not-a-uuid", Set.of("USER")));
+    DropMeta fallback = drop(UUID.randomUUID(), UUID.randomUUID());
+    when(seedService.collect()).thenReturn(List.of());
+    when(openDropCache.findGeneral(3)).thenReturn(List.of(fallback));
+
+    assertFallback(service.recommend(null), "이런 드롭은 어떠세요?", fallback.productId());
+    verify(resultCache, never()).find(any());
+    verify(resultCache, never()).save(any(), any());
+  }
+
+  @Test
+  void recommend_forHomeWhenNoDropsForFallback_servesPopularProductsLastResort() {
+    UUID popularId = UUID.randomUUID();
+    when(seedService.collect()).thenReturn(List.of());
+    when(openDropCache.findGeneral(3)).thenReturn(List.of());
+    when(popularProductsCache.get())
+        .thenReturn(
+            List.of(
+                new RecommendationResponse.Product(popularId, "인기상품", "판매자", 1000L, "thumb")));
+
+    RecommendationResponse response = service.recommend(null);
+
+    assertThat(response.sections())
+        .singleElement()
+        .satisfies(
+            section -> {
+              assertThat(section.title()).isEqualTo("지금 인기 있는 상품");
+              assertThat(section.products())
+                  .singleElement()
+                  .extracting(RecommendationResponse.Product::productId)
+                  .isEqualTo(popularId);
+            });
+  }
+
+  @Test
+  void recommend_forHome_collapsesConcurrentMissesForSameKeyIntoOnePipeline() throws Exception {
+    UUID memberId = UUID.randomUUID();
+    UUID id = UUID.randomUUID();
+    when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.empty());
+    when(seedService.collect()).thenReturn(seeds());
+    when(searchClient.recommend(any()))
+        .thenAnswer(
+            invocation -> {
+              Thread.sleep(300);
+              return List.of(candidate(id));
+            });
+    when(openDropCache.filterOpenProductIds(List.of(id))).thenReturn(List.of(id));
+    when(promptBuilder.build(null, List.of(candidate(id)))).thenReturn("prompt");
+    when(llmClient.complete("prompt")).thenReturn("raw");
+    when(postProcessor.process("raw", List.of(id)))
+        .thenReturn(List.of(new SelectedSection("추천", List.of(id))));
+    when(openDropCache.findByProductId(id)).thenReturn(Optional.of(drop(id, UUID.randomUUID())));
+
+    int threads = 8;
+    ExecutorService pool = Executors.newFixedThreadPool(threads);
+    CountDownLatch start = new CountDownLatch(1);
+    List<CompletableFuture<RecommendationResponse>> futures = new java.util.ArrayList<>();
+    for (int i = 0; i < threads; i++) {
+      futures.add(
+          CompletableFuture.supplyAsync(
+              () -> {
+                UserContextHolder.set(new UserContext(memberId.toString(), Set.of("USER")));
+                try {
+                  start.await();
+                  return service.recommend(null);
+                } catch (InterruptedException exception) {
+                  throw new RuntimeException(exception);
+                } finally {
+                  UserContextHolder.clear();
+                }
+              },
+              pool));
+    }
+    start.countDown();
+    for (CompletableFuture<RecommendationResponse> future : futures) {
+      assertThat(future.get(5, TimeUnit.SECONDS).sections()).hasSize(1);
+    }
+    pool.shutdownNow();
+
+    verify(searchClient, times(1)).recommend(any());
+    verify(llmClient, times(1)).complete("prompt");
+    assertThat(service.inFlightCount()).isZero();
   }
 
   private void stubHomeUntilPrompt(UUID id) {
