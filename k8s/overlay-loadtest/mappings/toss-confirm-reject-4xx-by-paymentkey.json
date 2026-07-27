@@ -1,0 +1,35 @@
+{
+  "name": "toss-confirm-reject-4xx-by-paymentkey",
+  "priority": 1,
+  "metadata": {
+    "comment": [
+      "Opt-in fault. Priority 1 beats the priority-10 happy path, so the happy path is",
+      "untouched unless a request explicitly asks for a fault.",
+      "paymentKey prefix is the ONLY selector k6 can drive: the backend forwards the",
+      "client-supplied paymentKey verbatim to the PG, so k6 controls it end to end.",
+      "LTFAIL4XX... -> 400 -> TossConfirmResult.rejected (business failure, NOT retried).",
+      "median matches the happy path (800) so a rejected call costs the same wall time."
+    ]
+  },
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/payments/confirm",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": {
+          "expression": "$.paymentKey",
+          "matches": "^LTFAIL4XX.*"
+        }
+      }
+    ]
+  },
+  "response": {
+    "status": 400,
+    "headers": { "Content-Type": "application/json" },
+    "delayDistribution": { "type": "lognormal", "median": 800, "sigma": 0.35 },
+    "jsonBody": {
+      "code": "REJECT_CARD_COMPANY",
+      "message": "loadtest: 카드사에서 결제를 거절했습니다."
+    }
+  }
+}

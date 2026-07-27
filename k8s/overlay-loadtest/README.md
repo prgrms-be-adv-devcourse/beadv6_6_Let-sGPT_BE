@@ -8,9 +8,14 @@ sync가 목을 파괴하는 게 아니라 오히려 강제·복원한다.
 ## 이 오버레이가 얹는 것
 
 - `wiremock.yaml` — 가짜 토스페이먼츠(WireMock) Deployment·Service.
-- `mappings/*.json` — 목 응답 스텁 10개(confirm 정상 1·confirm 결함 5·cancel 3·조회 1).
-  confirm 정상 경로의 lognormal median 800ms가 캠페인 표준 지연이다. 이 파일들이 유일한
-  원본이고, kustomization의 configMapGenerator가 내용 해시 이름의 ConfigMap으로 운반한다.
+- `networkpolicy.yaml` — WireMock 8080 ingress를 payment 파드로만 좁힌다. 이 포트는 목
+  응답과 인증 없는 관리 API(`/__admin`)를 함께 노출하므로 무정책이면 아무 파드나 스텁을
+  변조·삭제할 수 있다.
+- `mappings/*.json` — 목 응답 스텁 10개(confirm 정상 1·confirm 결함 5·cancel 3·조회 1),
+  **파일 하나당 스텁 하나**. confirm 정상 경로의 lognormal median 800ms가 캠페인 표준
+  지연이다. 이 파일들이 유일한 원본이고, kustomization의 configMapGenerator가 내용 해시
+  이름의 ConfigMap으로 운반한다. 스텁을 추가할 때는 파일을 만들고 kustomization의 파일
+  목록에도 반드시 한 줄 더한다(목록에 없으면 ConfigMap에 안 실려 조용히 누락된다).
 - `patch-payment-pg-mock.yaml` — payment의 `PG_BASE_URL`을 WireMock으로, 커넥션풀 4,
   PG 호출 유량제한 50/1000ms(램프 라운드 측정 조건).
 - `patch-apigateway-ratelimit.yaml` — confirm 라우트 유량제한 100/200(부하 생성이
@@ -76,10 +81,36 @@ kustomize build k8s/overlay-loadtest > /dev/null       # CI의 dry-run과 동일
 diff <(kustomize build k8s/overlay) <(kustomize build k8s/overlay-loadtest)
 ```
 
-diff에는 wiremock 리소스 3종 추가, payment·apigateway env 변경만 나와야 하고, 이미지
-태그는 양쪽이 같아야 한다(핀 상속 확인). 매핑 ConfigMap의 해시 이름이 wiremock의 volume
-참조와 일치하는지도 함께 본다 — generator의 `namespace: openat`이 빠지면 이 치환이 깨져
-파드가 기동하지 못한다.
+diff에는 wiremock 리소스 4종(Deployment·Service·NetworkPolicy·매핑 ConfigMap) 추가와
+payment·apigateway env 변경만 나와야 하고, 이미지 태그는 양쪽이 같아야 한다(핀 상속 확인).
+매핑 ConfigMap의 해시 이름이 wiremock의 volume 참조와 일치하는지도 함께 본다 —
+generator의 `namespace: openat`이 빠지면 이 치환이 깨져 파드가 기동하지 못한다.
+
+### 렌더 검증이 보장하지 않는 것 — 매핑 바꿨으면 실기동 스모크
+
+CI(그리고 위 로컬 명령)의 `kustomize build`는 **YAML 층만** 본다. 매핑 JSON은 ConfigMap
+데이터로 복사될 뿐이라, 스텁 스키마 오류·잘못된 matcher·깨진 handlebars 템플릿·묶음 형식
+혼입이 있어도 렌더는 성공한다. 그런 결함은 WireMock 기동 실패나 "스텁이 하나도 안 맞는
+목"으로 캠페인 중에야 드러난다.
+
+그래서 **매핑을 건드린 변경은 켜기 전에 실기동으로 확인한다** — 스텁 수가 파일 수와 같은지,
+정상 경로가 200을 주는지:
+
+```bash
+kubectl -n openat get pod -l app=wiremock-toss          # Running/Ready 인지 먼저
+kubectl -n openat port-forward deploy/wiremock-toss 8080:8080 &
+curl -s localhost:8080/__admin/mappings | grep -o '"total" *: *[0-9]*'   # 기대 10
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/v1/payments/confirm \
+  -H 'Content-Type: application/json' \
+  -d '{"paymentKey":"SMOKE","orderId":"smoke","amount":10000}'          # 기대 200
+```
+
+로컬 도커가 있으면 켜기 전에 같은 확인을 할 수 있다(`docker run --rm -p 8080:8080 -v
+$PWD/k8s/overlay-loadtest/mappings:/home/wiremock/mappings:ro wiremock/wiremock:3.9.2
+--global-response-templating`).
+
+후속 과제: 이 실기동 스모크를 CI 잡으로 자동화(컨테이너 기동 → 스텁 수 확인 → confirm·
+cancel·조회 대표 호출)해 매핑 결함을 머지 전에 잡는다. 현재는 사람 절차다.
 
 ## 매핑 원본 위치
 

@@ -1,0 +1,32 @@
+{
+  "name": "toss-cancel-happy",
+  "priority": 10,
+  "metadata": {
+    "comment": "POST /v1/payments/{paymentKey}/cancel — req {cancelReason, cancelAmount} + Idempotency-Key header. Backend reads only lastTransactionKey. median stays 300: the campaign's 800ms standard applies to the confirm path only."
+  },
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "/v1/payments/[^/]+/cancel"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "transformers": ["response-template"],
+    "delayDistribution": { "type": "lognormal", "median": 300, "sigma": 0.35 },
+    "jsonBody": {
+      "mId": "loadtest_mid",
+      "paymentKey": "{{request.pathSegments.[2]}}",
+      "status": "CANCELED",
+      "lastTransactionKey": "wiremock_cancel_{{request.pathSegments.[2]}}",
+      "cancels": [
+        {
+          "transactionKey": "wiremock_cancel_{{request.pathSegments.[2]}}",
+          "cancelStatus": "DONE",
+          "cancelReason": "{{jsonPath request.body '$.cancelReason'}}",
+          "cancelAmount": "{{jsonPath request.body '$.cancelAmount'}}",
+          "canceledAt": "{{now}}"
+        }
+      ]
+    }
+  }
+}

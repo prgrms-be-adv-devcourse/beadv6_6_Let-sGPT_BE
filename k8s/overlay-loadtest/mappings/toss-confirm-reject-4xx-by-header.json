@@ -1,0 +1,24 @@
+{
+  "name": "toss-confirm-reject-4xx-by-header",
+  "priority": 1,
+  "metadata": {
+    "comment": [
+      "Header selector, for manual curl against WireMock only.",
+      "RealTossPaymentClient sends just Authorization + Idempotency-Key, so k6 can",
+      "NOT make this header reach WireMock through the backend."
+    ]
+  },
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/payments/confirm",
+    "headers": { "X-Loadtest-Fault": { "equalTo": "reject" } }
+  },
+  "response": {
+    "status": 400,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "code": "REJECT_CARD_COMPANY",
+      "message": "loadtest: 카드사에서 결제를 거절했습니다."
+    }
+  }
+}

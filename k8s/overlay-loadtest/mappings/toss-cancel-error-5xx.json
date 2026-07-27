@@ -1,0 +1,19 @@
+{
+  "name": "toss-cancel-error-5xx",
+  "priority": 1,
+  "metadata": {
+    "comment": "Opt-in fault: pgPaymentKey starting with LTFAIL5XX -> 5xx, backend maps to TossRefundResult.unknown (stays PENDING for the webhook)."
+  },
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "/v1/payments/LTFAIL5XX[^/]*/cancel"
+  },
+  "response": {
+    "status": 500,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "code": "INTERNAL_SERVER_ERROR",
+      "message": "loadtest: 내부 서버 오류"
+    }
+  }
+}

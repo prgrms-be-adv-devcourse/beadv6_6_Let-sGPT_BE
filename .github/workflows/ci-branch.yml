@@ -136,8 +136,11 @@ jobs:
 
       # 렌더 깨짐/누락파일/키불일치를 머지 전에 차단. observability 는 필수,
       # overlay 는 로컬 렌더가 깨끗해 함께 검증한다. overlay-loadtest 는 평시 어떤
-      # Application 도 읽지 않아 렌더가 깨져도 조용하므로(매핑 JSON 오타·패치 대상 불일치가
+      # Application 도 읽지 않아 렌더가 깨져도 조용하므로(참조 파일 누락·패치 대상 불일치가
       # 부하테스트 켜는 순간의 sync 실패로 드러남) 여기서 미리 빌드해 시끄럽게 잡는다.
+      # 다만 이 검증의 사정거리는 YAML 층까지다 — 매핑 JSON 은 ConfigMap 데이터로 복사될
+      # 뿐이라 스텁 스키마·matcher·템플릿 오류는 여기서 안 걸린다. 그건 WireMock 실기동
+      # 스모크의 몫이다(k8s/overlay-loadtest/README.md 의 해당 절차, 자동화는 후속 과제).
       - name: kustomize build dry-run (observability + overlay + loadtest overlay)
         if: steps.obsfilter.outputs.observability == 'true'
         run: |
