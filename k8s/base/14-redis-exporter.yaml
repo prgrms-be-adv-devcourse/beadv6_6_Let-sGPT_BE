@@ -1,0 +1,79 @@
+# Redis 서버 관측. exporter는 openat 네임스페이스에 그대로 두되(postgres-exporter는
+# observability에 있어 배치는 어긋나지만 이유가 있다), 노드만 semi(tier: hotpath)로 고정한다.
+# 네임스페이스와 노드는 직교하는 축이라 둘을 따로 고를 수 있다. openat에 두는 이유는
+# k8s/base/50-networkpolicy.yaml의 redis-ingress가 from에 podSelector:{}만 두어 openat 내부
+# 접속만 6379로 열기 때문이다 — exporter를 openat에 두면 이 정책 그대로 redis에 붙을 수 있어
+# 크로스 네임스페이스 redis 구멍을 뚫지 않아도 된다.
+# 노드를 semi로 고정하는 이유는 observability 전용 노드인 final이 memory-pressure 상태라
+# tempo가 스케줄되지 못하고 있어, 가벼운 exporter를 semi로 offload해 final의 스케줄 여유를
+# 확보하기 위해서다. exporter는 TCP로 집계 통계만 pull하므로 redis와 같은 노드에 있을 로컬리티
+# 이득이 미미해 노드를 옮겨도 무방하다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter
+  namespace: openat
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: redis-exporter }
+  template:
+    metadata:
+      labels: { app: redis-exporter }
+      annotations:
+        # ServiceMonitor/PodMonitor CRD는 이 클러스터에 없다. otel-collector의
+        # kubernetes-pods 잡이 이 세 어노테이션만 보고 수집한다. role: pod에 네임스페이스
+        # 제한이 없어 openat 파드도 발견 대상이다.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+        prometheus.io/path: "/metrics"
+    spec:
+      nodeSelector: { tier: hotpath }
+      # 파드 하드닝 — 비루트 고정. redis_exporter 이미지는 UID/GID 59000(비루트)으로 도는
+      # 정적 바이너리(FROM scratch)라 runAsUser 59000이 이미지 기본과 일치한다.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 59000
+        runAsGroup: 59000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.87.0
+          # 컨테이너 하드닝 — 권한 상승 차단, 전 capability 제거, 루트 FS 읽기전용.
+          # redis_exporter는 상태 없이 메모리에서만 동작하고 디스크에 쓰지 않아 ro rootfs로 충분하다
+          # (임시 파일 미사용이라 /tmp emptyDir도 불필요).
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: REDIS_ADDR, value: "redis://redis:6379" }
+            # 커맨드별 로그스케일 버킷 히스토그램(redis_commands_latencies_usec)을 끈다.
+            # 커맨드 30종이면 이것만 400~500 시리즈인데, 같은 정보는
+            # redis_latency_percentiles_usec가 p50/p99/p99.9로 이미 준다.
+            - { name: REDIS_EXPORTER_EXCLUDE_LATENCY_HISTOGRAM_METRICS, value: "true" }
+            # 도메인별 키 분해(--check-key-groups)는 기본 비활성. 매 스크레이프마다 전 키스페이스를
+            # SCAN하며 키당 MEMORY USAGE를 호출하는데, admission:{dropId}:{userId}가 대기자 1인당
+            # 키 1개라 드롭 피크에 키 수가 폭증한다 = 부하 최고점에 스캔 비용도 최대. 배포 후
+            # 실측(redis_last_key_groups_scrape_duration_milliseconds)으로 안전 확인 뒤 켠다.
+          ports: [{ containerPort: 9121 }]
+          readinessProbe:
+            httpGet: { path: /metrics, port: 9121 }
+            periodSeconds: 10
+          resources:
+            # postgres-exporter(48Mi/32Mi) 실측을 기준선으로 삼되, 키 그룹 집계를 켜면
+            # 집계표를 잠시 들고 있으므로 limit만 조금 더 준다.
+            limits: { memory: "64Mi" }
+            requests: { cpu: "10m", memory: "24Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-exporter
+  namespace: openat
+spec:
+  selector: { app: redis-exporter }
+  ports: [{ port: 9121, targetPort: 9121 }]

@@ -1,0 +1,9 @@
+openai:
+  inferenceai:
+    base-url: ${OPENAI_INFERENCEAI_BASE_URL}
+    api-key: ${OPENAI_INFERENCEAI_API_KEY}
+    embedding:
+      enabled: ${OPENAI_INFERENCEAI_EMBEDDING_ENABLED:true}
+      model: text-embedding-3-small
+    image-analysis:
+      model: gpt-5.4-nano

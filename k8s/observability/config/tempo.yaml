@@ -1,0 +1,25 @@
+server:
+  http_listen_port: 3200
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: "0.0.0.0:4318"
+        grpc:
+          endpoint: "0.0.0.0:4317"
+ingester:
+  max_block_duration: ${TEMPO_ING_MAX_BLOCK_DURATION}
+  max_block_bytes: ${TEMPO_ING_MAX_BLOCK_BYTES}
+  complete_block_timeout: ${TEMPO_ING_COMPLETE_BLOCK_TIMEOUT}
+storage:
+  trace:
+    backend: local
+    blocklist_poll: ${TEMPO_BLOCKLIST_POLL}
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+compactor:
+  compaction:
+    block_retention: ${TEMPO_COMPACTOR_BLOCK_RETENTION}

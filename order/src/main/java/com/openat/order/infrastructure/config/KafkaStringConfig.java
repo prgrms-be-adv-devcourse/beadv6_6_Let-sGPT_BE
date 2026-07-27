@@ -1,6 +1,7 @@
 package com.openat.order.infrastructure.config;
 
 import com.openat.common.exception.BusinessException;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -16,6 +17,8 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.MicrometerConsumerListener;
+import org.springframework.kafka.core.MicrometerProducerListener;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
@@ -26,7 +29,8 @@ public class KafkaStringConfig {
 
   @Bean
   public ProducerFactory<String, String> producerFactory(
-      @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers) {
+      @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
+      MeterRegistry meterRegistry) {
     Map<String, Object> props = new HashMap<>();
     props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
     props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
@@ -41,22 +45,32 @@ public class KafkaStringConfig {
 
   @Bean
   public KafkaTemplate<String, String> kafkaTemplate(
-      ProducerFactory<String, String> producerFactory) {
-    return new KafkaTemplate<>(producerFactory);
+      ProducerFactory<String, String> producerFactory,
+      @Value("${spring.kafka.template.observation-enabled:false}") boolean observationEnabled) {
+    KafkaTemplate<String, String> template = new KafkaTemplate<>(producerFactory);
+    // spring.kafka.template.observation-enabled는 Boot가 자동설정한 KafkaTemplate에만 먹는다.
+    // 이 템플릿은 직접 등록한 빈이라 같은 프로퍼티를 읽어 수동으로 적용해야 producer 스팬이 생긴다.
+    template.setObservationEnabled(observationEnabled);
+    return template;
   }
 
   @Bean
   public ConsumerFactory<String, String> consumerFactory(
       @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
       @Value("${spring.kafka.consumer.group-id}") String groupId,
-      @Value("${spring.kafka.consumer.auto-offset-reset:earliest}") String autoOffsetReset) {
+      @Value("${spring.kafka.consumer.auto-offset-reset:earliest}") String autoOffsetReset,
+      MeterRegistry meterRegistry) {
     Map<String, Object> props = new HashMap<>();
     props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
     props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
     props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset);
     props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
     props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-    return new DefaultKafkaConsumerFactory<>(props);
+    DefaultKafkaConsumerFactory<String, String> factory = new DefaultKafkaConsumerFactory<>(props);
+    // producer와 대칭. 컨슈머 랙·페치 지표(kafka_consumer_fetch_manager_records_lag 등)를
+    // 같은 이유(직접 등록한 팩토리)로 수동 부착한다.
+    factory.addListener(new MicrometerConsumerListener<>(meterRegistry));
+    return factory;
   }
 
   @Bean

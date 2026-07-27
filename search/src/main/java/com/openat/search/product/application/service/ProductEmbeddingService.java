@@ -27,7 +27,7 @@ public class ProductEmbeddingService {
   private final NoOpProductEmbeddingGenerator noOpProductEmbeddingGenerator;
   private final AiImageService aiImageService;
 
-  @Value("${openai.embedding.enabled:false}")
+  @Value("${openai.inferenceai.embedding.enabled:false}")
   private boolean embeddingEnabled;
 
   public Optional<float[]> embed(String text) {

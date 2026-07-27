@@ -16,7 +16,11 @@ metadata:
   name: otel-collector
 rules:
   - apiGroups: [""]
-    resources: [nodes, services, endpoints, pods]
+    resources: [nodes, services, endpoints, pods, namespaces]
+    verbs: [get, list, watch]
+  # k8sattributes: deployment.name 유도용 ReplicaSet 조회
+  - apiGroups: ["apps"]
+    resources: [replicasets]
     verbs: [get, list, watch]
   # kubelet 내장 cAdvisor(/metrics/cadvisor) 프록시 스크레이프용
   - apiGroups: [""]
@@ -35,110 +39,6 @@ subjects:
   - kind: ServiceAccount
     name: otel-collector
     namespace: observability
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: otel-collector-config
-  namespace: observability
-data:
-  otel-collector.yaml: |
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: "0.0.0.0:4317"
-          http:
-            endpoint: "0.0.0.0:4318"
-      prometheus:
-        config:
-          global:
-            scrape_interval: 30s        # gate2 A-1: 수신량·staleness 메모리 절반 (인프라 대시보드 30s 해상도 충분)
-          scrape_configs:
-            - job_name: kubernetes-pods
-              kubernetes_sd_configs:
-                - role: pod
-              relabel_configs:
-                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
-                  action: keep
-                  regex: "true"
-                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
-                  action: replace
-                  target_label: __metrics_path__
-                  regex: (.+)
-                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
-                  action: replace
-                  regex: ([^:]+)(?::\d+)?;(\d+)
-                  replacement: $1:$2
-                  target_label: __address__
-                - source_labels: [__meta_kubernetes_namespace]
-                  target_label: namespace
-                - source_labels: [__meta_kubernetes_pod_label_app]
-                  target_label: app
-                # 대시보드 JSON이 {application="..."}로 필터하는데 실제 라벨은 app뿐이라 전 패널
-                # No data였음(7/20 확진). 같은 값을 application으로도 복제 — 시리즈 수 불변.
-                # 대시보드를 app 기준으로 정리하면 이 줄은 제거 가능.
-                - source_labels: [__meta_kubernetes_pod_label_app]
-                  target_label: application
-            # k3s kubelet 내장 cAdvisor — 별도 파드 없이 컨테이너별 메모리/CPU 확보.
-            # Prometheus 288Mi 보호를 위해 keep 필터로 시리즈 최소화.
-            - job_name: kubernetes-cadvisor
-              scheme: https
-              tls_config:
-                insecure_skip_verify: true
-              authorization:
-                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-              kubernetes_sd_configs:
-                - role: node
-              relabel_configs:
-                - source_labels: [__meta_kubernetes_node_name]
-                  target_label: node
-                - target_label: __metrics_path__
-                  replacement: /metrics/cadvisor
-              metric_relabel_configs:
-                # 카디널리티 방어 — 필요한 시리즈만 keep
-                - source_labels: [__name__]
-                  regex: container_memory_working_set_bytes|container_cpu_usage_seconds_total|container_spec_memory_limit_bytes|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total|machine_memory_bytes
-                  action: keep
-                # 파드 아닌 cgroup 중간노드(빈 pod 라벨) 제거. 단 machine_*는 pod 라벨이 없으므로 예외 통과.
-                - source_labels: [__name__, pod]
-                  regex: "machine_.*;|[^;]*;.+"
-                  action: keep
-    processors:
-      memory_limiter:
-        check_interval: 1s
-        limit_mib: 256        # gate2 A-1: resources.limits.memory(320Mi)−64Mi(Go 비힙 쿠션). OOMKill 전 스스로 드롭
-        spike_limit_mib: 48   # soft=208, hard=256
-      batch:
-        timeout: 5s
-        send_batch_size: 1024
-      resource:
-        attributes:
-          - { key: k8s.cluster.name, value: "openat-k3s", action: upsert }
-          - { key: deployment.environment, value: "production", action: upsert }
-    exporters:
-      otlp/tempo:
-        endpoint: "tempo.observability.svc.cluster.local:4317"
-        tls:
-          insecure: true
-      prometheusremotewrite:
-        endpoint: "http://prometheus.observability.svc.cluster.local:9090/api/v1/write"
-        tls:
-          insecure: true
-    extensions:
-      health_check:
-        endpoint: "0.0.0.0:13133"
-    service:
-      extensions: [health_check]
-      pipelines:
-        traces:
-          receivers: [otlp]
-          processors: [memory_limiter, batch, resource]
-          exporters: [otlp/tempo]
-        metrics:
-          receivers: [prometheus]
-          processors: [memory_limiter, batch, resource]
-          exporters: [prometheusremotewrite]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -165,6 +65,14 @@ spec:
         - name: otel-collector
           image: otel/opentelemetry-collector-contrib:0.156.0
           args: ["--config=/etc/otel/otel-collector.yaml"]
+          env:
+            # tail_sampling 확률 폴백 단일 노브 — 값 변경 = 이 한 줄 → 머지 → collector 파드 1개만 롤링.
+            - { name: OTEL_TAIL_SAMPLING_PERCENT, value: "5" }
+            # k8sattributes용 downward-API 노드명. (게이트웨이는 전 노드 파드를 봐야 하므로 node 필터링엔 미사용)
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           ports:
             - { containerPort: 4317 }
             - { containerPort: 4318 }
@@ -178,8 +86,8 @@ spec:
             # 근거: limit 224Mi에서 memory_limiter GC 쓰래싱 → healthcheck(:13133) 1s 타임아웃 → 0/1 NotReady,
             # prometheusremotewrite context deadline로 1207 items drop. scrape 15→30s로 수신량 절반 + limit/limiter 상향정렬.
             # 상세: personal_workplan/plan/gate2_resource_rightsizing_plan.md §A-1(옵션 A). final 여유 1600m/실사용69%로 흡수.
-            limits: { memory: "320Mi", cpu: "300m" }
-            requests: { cpu: "75m", memory: "192Mi" }
+            limits: { memory: "512Mi", cpu: "300m" }
+            requests: { cpu: "75m", memory: "512Mi" }
           volumeMounts:
             - { name: otel-config, mountPath: /etc/otel }
       volumes:

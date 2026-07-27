@@ -1,8 +1,8 @@
 server:
   port: 9150   # 9200은 Elasticsearch 기본 포트와 겹쳐(local-elasticsearch, docker-compose.yml) 회피
-  tomcat:
-    mbeanregistry:
-      enabled: true   # tomcat_threads_* 메트릭(Micrometer TomcatMetrics) 노출에 필요
+  # WebFlux+SSE 전환분: 관측 스택이 Tomcat(MVC) 사용 서비스 전반에 server.tomcat.mbeanregistry
+  # 활성화를 일괄 적용했었으나(fix(observability): Tomcat 스레드 메트릭 노출), 이 모듈은 더 이상
+  # Tomcat을 띄우지 않아(Netty) 그 설정이 아무 효과가 없다 - 죽은 설정이라 제거한다.
 
 springdotenv:
   directory: ..
@@ -12,6 +12,12 @@ spring:
     active: local
   application:
     name: queue-service
+  # WebFlux+SSE 전환분: 루트 build.gradle.kts의 subprojects 블록이 queue를 포함한 전 모듈에
+  # spring-boot-starter-web(Tomcat/MVC)을 전역 적용하고 있어(그 파일은 안 건드림), 이 모듈은
+  # webflux 스타터도 같이 갖게 됐다(build.gradle.kts). 둘 다 클래스패스에 있으면 Boot 기본값은
+  # MVC를 우선하므로, 이 프로퍼티로 명시적으로 WebFlux/Netty를 강제한다.
+  main:
+    web-application-type: reactive
   kafka:
     consumer:
       group-id: queue-service
@@ -21,12 +27,15 @@ spring:
       properties:
         spring.json.trusted.packages: "*"
 
+# WebFlux+SSE 전환분: springdoc-openapi-starter-webmvc-ui(루트 build.gradle.kts 전역 적용)는
+# 서블릿 DispatcherServlet 전제라 reactive 모드에서 기동 실패 위험이 있어 그냥 끈다.
+# 스터디 프로젝트 범위에서 감내 가능한 트레이드오프(Swagger UI 포기) - webflux 전용 springdoc으로
+# 갈아타는 건 별도 작업으로 남겨둔다.
 springdoc:
   api-docs:
-    path: /api-docs
+    enabled: false
   swagger-ui:
-    path: /swagger-ui.html
-    operations-sorter: method
+    enabled: false
 
 # k8s readiness/liveness probe + Prometheus 메트릭 노출 (전 프로필 공통)
 management:
@@ -38,6 +47,16 @@ management:
     health:
       probes:
         enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화
+  metrics:
+    distribution:
+      # 지연 퍼센타일·SLO 준수율 계산용 누적 버킷. 대상은 HTTP 서버 타이머 하나로 한정.
+      percentiles-histogram:
+        "[http.server.requests]": true
+      # 버킷 51개로 클램프(무클램프 69개). 하한은 큐 폴링 해상도, 상한은 슬로우 경로 여유.
+      minimum-expected-value:
+        "[http.server.requests]": 5ms
+      maximum-expected-value:
+        "[http.server.requests]": 10s
 
 # 대기열 튜닝 파라미터 - 전부 외부 설정으로 노출(하드코딩 금지), 재배포 없이 env로 조정 가능.
 # 정적 hot-drops 목록 없음 - 모든 드롭에 균일 적용(WaitingQueueRepository.activeDropIds()로 동적 발견).
@@ -48,10 +67,28 @@ queue:
     ttl-seconds: 180            # 입장권 세션 창(초)
     sweep-interval-ms: 5000     # 미소진 입장권(TTL 경과) 회수 스위퍼 주기(ms)
   waiting:
-    heartbeat-ttl-ms: 10000     # 마지막 폴링 이후 이 시간 지나면 자리 회수
+    heartbeat-ttl-ms: 10000     # 마지막 폴링/SSE 재조회 이후 이 시간 지나면 자리 회수
     sweep-interval-ms: 5000
+    # SSE 연결이 전부 끊긴 뒤 실제 회수까지 기다리는 유예(ms) - 재연결/다중 탭 구분용.
+    # heartbeat-ttl-ms보다 충분히 짧게 유지(자세한 이유는 QueueProperties.Waiting 참고).
+    reconnect-grace-ms: ${QUEUE_RECONNECT_GRACE_MS:5000}
   polling:
-    interval-ms: 2000           # 클라이언트에 안내할 권장 폴링 주기(ms)
+    interval-ms: 2000           # 클라이언트에 안내할 권장 폴링 주기(ms) - 기존 GET /status(유지)용
+  sse:
+    # WebFlux+SSE 전환분. keep-alive 코멘트 이벤트 주기 - 프록시/브라우저의 idle 커넥션 타임아웃을
+    # 막는 것과 동시에, Pub/Sub 신호를 놓쳤을 때의 최후 안전망(이 주기 안에는 반드시 재확인)
+    # 역할도 겸한다. 기존 8000은 heartbeat-ttl-ms(10000)와 여유가 2초뿐이라(GC 멈춤·Redis
+    # 지연 한 번이면 정상 연결도 스위퍼에 걸릴 수 있었음), 예전 폴링 주기(2000ms)와 비슷한
+    # 여유를 두도록 낮췄다.
+    keepalive-ms: ${QUEUE_SSE_KEEPALIVE_MS:3000}
+  entry:
+    # 진입 요청 수량 전역 상한(서버 강제 안전망 - 프론트 1~5 제한은 API 직접 호출로 우회 가능).
+    # 정책 변경 시 env만 바꾸면 됨. 드롭별 한도는 product의 limitPerUser(drop 해시)를 추가 적용.
+    max-quantity: ${QUEUE_ENTRY_MAX_QUANTITY:5}
+  decision:
+    # DECISION_REQUIRED 노출 후 이 시간 안에 무응답이면 이탈 처리(대기열 제거) - 엄격한 FIFO에서
+    # rank 0의 미결정은 큐 전체 정지이므로 필수. WAIT을 명시 선택한 사람은 제거하지 않는다.
+    timeout-ms: ${QUEUE_DECISION_TIMEOUT_MS:30000}
   kafka:
     topic:
       # StockAdjustment(결제 확정/환불) 이벤트 구독 - order 팀과 확정된 실제 토픽명.

@@ -6,6 +6,7 @@ import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import org.springframework.data.redis.core.RedisCallback
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.testcontainers.containers.GenericContainer
@@ -20,13 +22,21 @@ import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 
 /**
- * `enqueue-or-admit.lua`(즉시 입장 fast path)를 실제 Redis로 검증한다. product의
- * `DropCacheRedisAdaptorTest`와 동일한 관례(Testcontainers `redis:7-alpine`, Spring 컨텍스트
- * 없이 어댑터를 직접 구성) - queue 모듈에 생기는 첫 테스트.
+ * `enqueue-or-admit.lua`(즉시 입장 fast path) 등 8개 Lua 스크립트를 실제 Redis로 검증한다.
+ * product의 `DropCacheRedisAdaptorTest`와 동일한 관례(Testcontainers `redis:7-alpine`, Spring
+ * 컨텍스트 없이 어댑터를 직접 구성).
  *
  * `remaining`은 이제 product의 `drop:{dropId}` 해시가 아니라 `total(dropId) - reserved(dropId)`로
  * 계산된다(queue-remaining-sync 재설계 작업 참고) - `seedRemaining()`은 `reserved`를 건드리지
  * 않고(기본 0) `total`만 세팅해 "그만큼 자유 재고가 있다"를 흉내낸다.
+ *
+ * feature/queue-remaining-sync(코루틴 전환): [WaitingQueueRedisRepository]가 `suspend fun`을
+ * 돌려주므로 각 테스트를 `runBlocking { }`으로 감싼다(구독해야 실제로 실행되는 리액티브 스트림
+ * 규약과 달리, suspend 함수는 그냥 호출하면 그 자리에서 실행된다 - `.block()` 자체가 필요 없다).
+ * 동시성 테스트([enqueueOrFastAdmit_concurrentRequests_neverOversells])는 여러 스레드에서
+ * 각자 `runBlocking { }`으로 진입한다(스레드 하나당 코루틴 하나, 예전 `.block()`과 동등).
+ * 시딩/직접 검증용 헬퍼는 여전히 블로킹 `StringRedisTemplate`을 그대로 쓴다(같은 커넥션
+ * 팩토리에서 두 템플릿을 다 만든다) - 테스트 코드 자체를 리액티브로 바꿀 이유가 없다.
  */
 @Testcontainers
 @DisplayName("대기열(Redis) 저장소 - 즉시 입장 fast path")
@@ -34,7 +44,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("대기열이 비어 있고 재고가 충분하면 즉시 입장권을 발급하고 대기열에는 등록하지 않는다")
-    fun enqueueOrFastAdmit_emptyQueueWithStock_admitsImmediately() {
+    fun enqueueOrFastAdmit_emptyQueueWithStock_admitsImmediately() = runBlocking<Unit> {
         val dropId = newDropId()
         val userId = "user-1"
         seedRemaining(dropId, 10)
@@ -51,7 +61,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("대기열이 비어 있어도 재고가 부족하면 대기열에 등록하고 입장권을 발급하지 않는다")
-    fun enqueueOrFastAdmit_emptyQueueInsufficientStock_fallsBackToEnqueue() {
+    fun enqueueOrFastAdmit_emptyQueueInsufficientStock_fallsBackToEnqueue() = runBlocking<Unit> {
         val dropId = newDropId()
         val userId = "user-1"
         seedRemaining(dropId, 2)
@@ -70,7 +80,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("재고 캐시가 아직 워밍되지 않았으면 안전하게 대기열에 등록한다")
-    fun enqueueOrFastAdmit_stockNotWarmedYet_fallsBackToEnqueue() {
+    fun enqueueOrFastAdmit_stockNotWarmedYet_fallsBackToEnqueue() = runBlocking<Unit> {
         val dropId = newDropId() // total:{dropId}를 seed하지 않음 - 부트스트랩 캐시 미존재 상태
         val userId = "user-1"
 
@@ -82,7 +92,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("이미 대기 중인 사람이 있으면 재고가 충분해도 새치기 없이 대기열에 등록한다")
-    fun enqueueOrFastAdmit_nonEmptyQueue_neverCutsInLine() {
+    fun enqueueOrFastAdmit_nonEmptyQueue_neverCutsInLine() = runBlocking<Unit> {
         val dropId = newDropId()
         seedRemaining(dropId, 10)
         // "이미 대기 중"을 직접 흉내낸다(실제로는 재고 부족으로 대기하게 된 사람일 것).
@@ -109,7 +119,7 @@ class WaitingQueueRedisRepositoryTest {
         repeat(requests) { i ->
             executor.submit {
                 try {
-                    val result = repository.enqueueOrFastAdmit(dropId, "user-$i", 1, TTL_SECONDS)
+                    val result = runBlocking { repository.enqueueOrFastAdmit(dropId, "user-$i", 1, TTL_SECONDS) }
                     if (result != null) {
                         admittedCount.incrementAndGet()
                     }
@@ -122,14 +132,16 @@ class WaitingQueueRedisRepositoryTest {
         executor.shutdown()
 
         assertThat(admittedCount.get()).isEqualTo(stock)
-        assertThat(repository.outstandingOf(dropId)).isEqualTo(stock.toLong())
-        // 재고를 넘는 나머지는 전부 대기열로 떨어졌어야 한다(발급도 안 되고 유실도 안 됨).
-        assertThat(repository.sizeOf(dropId)).isEqualTo((requests - stock).toLong())
+        runBlocking {
+            assertThat(repository.outstandingOf(dropId)).isEqualTo(stock.toLong())
+            // 재고를 넘는 나머지는 전부 대기열로 떨어졌어야 한다(발급도 안 되고 유실도 안 됨).
+            assertThat(repository.sizeOf(dropId)).isEqualTo((requests - stock).toLong())
+        }
     }
 
     @Test
     @DisplayName("맨 앞사람 몫이 재고로 안 되면, 뒷사람 몫이 재고로 충분해도 새치기 입장시키지 않는다(엄격한 FIFO)")
-    fun admitBatch_frontCandidateBlocked_neverAdmitsSmallerCandidateBehind() {
+    fun admitBatch_frontCandidateBlocked_neverAdmitsSmallerCandidateBehind() = runBlocking<Unit> {
         val dropId = newDropId()
         val front = "front-user"
         val back = "back-user"
@@ -152,7 +164,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("맨 앞사람이 대기열을 떠나면(포기) 다음 admitBatch에서 뒷사람이 정상 입장한다")
-    fun admitBatch_afterFrontLeaves_backGetsAdmittedOnNextTick() {
+    fun admitBatch_afterFrontLeaves_backGetsAdmittedOnNextTick() = runBlocking<Unit> {
         val dropId = newDropId()
         val front = "front-user"
         val back = "back-user"
@@ -172,7 +184,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("맨 앞(rank 0)이 아닌 사용자는 PARTIAL(admitSingle)이 거부되고, 맨 앞 사용자만 허용된다")
-    fun admitSingle_onlyFrontRankCanPartial() {
+    fun admitSingle_onlyFrontRankCanPartial() = runBlocking<Unit> {
         val dropId = newDropId()
         val front = "front-user"
         val back = "back-user"
@@ -193,7 +205,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("마감(closeAt 경과)된 드롭은 대기열이 비고 재고가 있어도 fast path로 입장시키지 않는다")
-    fun enqueueOrFastAdmit_closedDrop_neverFastAdmits() {
+    fun enqueueOrFastAdmit_closedDrop_neverFastAdmits() = runBlocking<Unit> {
         val dropId = newDropId()
         seedRemaining(dropId, 10)
         redisTemplate.opsForHash<String, String>()
@@ -210,7 +222,7 @@ class WaitingQueueRedisRepositoryTest {
         "사전순으로 뒤집히는 userId를 써도 먼저 등록된 쪽이 항상 낮은 순번을 받는다" +
             "(TIME() 기반 순번 - 밀리초 타이 시 사전순으로 순위가 뒤집히던 버그의 회귀 테스트)",
     )
-    fun enqueueOrFastAdmit_rankReflectsInsertionOrder_notUserIdLexicalOrder() {
+    fun enqueueOrFastAdmit_rankReflectsInsertionOrder_notUserIdLexicalOrder() = runBlocking<Unit> {
         val dropId = newDropId()
         seedRemaining(dropId, 0) // 즉시입장 막아서 둘 다 대기열로 떨어지게 한다
 
@@ -228,7 +240,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("statusSnapshotOf는 대기자의 순번/수량/재고/결정상태를 원자 스냅샷 하나로 반환하고 하트비트도 갱신한다")
-    fun statusSnapshotOf_waitingUser_returnsConsistentSnapshotAndTouchesHeartbeat() {
+    fun statusSnapshotOf_waitingUser_returnsConsistentSnapshotAndTouchesHeartbeat() = runBlocking<Unit> {
         val dropId = newDropId()
         val userId = "user-1"
         seedRemaining(dropId, 0)
@@ -257,7 +269,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("statusSnapshotOf는 미소진 입장권 보유자(READY)를 입장 수량과 함께 조기 판별한다")
-    fun statusSnapshotOf_admittedUser_returnsReadyQuantity() {
+    fun statusSnapshotOf_admittedUser_returnsReadyQuantity() = runBlocking<Unit> {
         val dropId = newDropId()
         val userId = "user-1"
         seedRemaining(dropId, 10)
@@ -271,7 +283,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("markAskedIfAbsent는 최초 시각을 보존하고(마감이 밀리지 않음), WAIT 확정자에겐 -1을 반환한다")
-    fun markAskedIfAbsent_preservesFirstAskedAtAndSkipsWaitConfirmed() {
+    fun markAskedIfAbsent_preservesFirstAskedAtAndSkipsWaitConfirmed() = runBlocking<Unit> {
         val dropId = newDropId()
         val userId = "user-1"
         seedRemaining(dropId, 0)
@@ -290,7 +302,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("무응답 결정자(ASKED + 타임아웃 경과 + 여전히 재고 부족)는 sweepDecisionTimeout이 대기열에서 제거한다")
-    fun sweepDecisionTimeout_removesUnresponsiveFront() {
+    fun sweepDecisionTimeout_removesUnresponsiveFront() = runBlocking<Unit> {
         val dropId = newDropId()
         val front = "front-user"
         val back = "back-user"
@@ -316,7 +328,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("타임아웃이 지났어도 그 사이 재고가 도착해 몫이 채워졌으면 제거하지 않는다(억울한 제거 방지)")
-    fun sweepDecisionTimeout_sparesFrontWhoseShareArrived() {
+    fun sweepDecisionTimeout_sparesFrontWhoseShareArrived() = runBlocking<Unit> {
         val dropId = newDropId()
         val front = "front-user"
         seedRemaining(dropId, 0)
@@ -337,7 +349,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("WAIT을 명시적으로 선택한 사람은 시간이 얼마나 지나도 제거하지 않는다(정책)")
-    fun sweepDecisionTimeout_neverRemovesWaitConfirmed() {
+    fun sweepDecisionTimeout_neverRemovesWaitConfirmed() = runBlocking<Unit> {
         val dropId = newDropId()
         val front = "front-user"
         seedRemaining(dropId, 0)
@@ -354,7 +366,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("markWaitConfirmed가 기록한 (grantableNow, maxAtConfirm)이 statusSnapshotOf로 그대로 왕복된다(null도 포함)")
-    fun markWaitConfirmed_roundTripsGrantableNowAndMaxAtConfirmThroughSnapshot() {
+    fun markWaitConfirmed_roundTripsGrantableNowAndMaxAtConfirmThroughSnapshot() = runBlocking<Unit> {
         val dropId = newDropId()
         val withMax = "user-with-max"
         val withoutMax = "user-without-max"
@@ -369,7 +381,8 @@ class WaitingQueueRedisRepositoryTest {
         repository.markWaitConfirmed(dropId, withoutMax, grantableNowAtConfirm = 0L, maxAtConfirm = null)
 
         val snapWithMax = repository.statusSnapshotOf(dropId, withMax, Instant.now(), touchHeartbeat = false)
-        val snapWithoutMax = repository.statusSnapshotOf(dropId, withoutMax, Instant.now(), touchHeartbeat = false)
+        val snapWithoutMax =
+            repository.statusSnapshotOf(dropId, withoutMax, Instant.now(), touchHeartbeat = false)
 
         assertThat(snapWithMax.decision).isEqualTo(DecisionState.WaitConfirmed(2L, 4L))
         assertThat(snapWithoutMax.decision).isEqualTo(DecisionState.WaitConfirmed(0L, null))
@@ -377,7 +390,7 @@ class WaitingQueueRedisRepositoryTest {
 
     @Test
     @DisplayName("완전히 유휴 상태가 되면 pruneIfIdle이 active-drops에서 제거한다")
-    fun pruneIfIdle_removesOnlyWhenFullyIdle() {
+    fun pruneIfIdle_removesOnlyWhenFullyIdle() = runBlocking<Unit> {
         val dropId = newDropId()
         seedRemaining(dropId, 10)
         val userId = "user-1"
@@ -416,6 +429,7 @@ class WaitingQueueRedisRepositoryTest {
 
         private lateinit var connectionFactory: LettuceConnectionFactory
         private lateinit var redisTemplate: StringRedisTemplate
+        private lateinit var reactiveRedisTemplate: ReactiveStringRedisTemplate
         private lateinit var repository: WaitingQueueRedisRepository
 
         @BeforeAll
@@ -425,7 +439,8 @@ class WaitingQueueRedisRepositoryTest {
             connectionFactory.afterPropertiesSet()
             redisTemplate = StringRedisTemplate(connectionFactory)
             redisTemplate.afterPropertiesSet()
-            repository = WaitingQueueRedisRepository(redisTemplate)
+            reactiveRedisTemplate = ReactiveStringRedisTemplate(connectionFactory)
+            repository = WaitingQueueRedisRepository(reactiveRedisTemplate)
         }
 
         @AfterAll

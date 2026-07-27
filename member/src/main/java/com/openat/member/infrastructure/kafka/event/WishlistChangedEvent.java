@@ -9,7 +9,7 @@ import java.util.UUID;
  * <p>create/delete를 별도 토픽으로 나누지 않고 단일 토픽({@code wishlist.changed.events})에
  * 이 필드로 실어 보낸다 — 별도 토픽은 다른 파티션에 배치되어 같은 회원의 "삭제→생성" 순서가
  * 깨질 수 있기 때문. Kafka 발행 key는 {@code userId}로 고정해 같은 회원의 이벤트는 항상 같은
- * 파티션에서 순서대로 처리된다({@link com.openat.member.infrastructure.outbox.OutboxPublisher} 참고).
+ * 파티션에서 순서대로 처리된다({@link com.openat.member.infrastructure.outbox.OutboxEventPublisher} 참고).
  *
  * <p>{@code occurredAt}은 at-least-once 재전송/재정렬 상황에서 consumer가 stale 이벤트를
  * 판별할 수 있도록 포함한다.

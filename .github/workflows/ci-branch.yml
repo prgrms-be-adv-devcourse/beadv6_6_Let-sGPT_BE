@@ -102,3 +102,55 @@ jobs:
       - name: kustomize build dry-run
         if: steps.argofilter.outputs.argocd == 'true'
         run: kustomize build k8s/argocd/ > /dev/null
+
+  # 관측 스택(k8s/observability)은 설정 CM(tempo/prometheus/otel-collector/grafana
+  # datasources·providers)을 configMapGenerator 로 묶어, 내용 해시가 붙은 ConfigMap
+  # 이름이 각 파드 볼륨 참조로 자동 전파된다(대시보드 JSON CM 은 라이브 리로드 위해 제외).
+  # 이 전파는 kustomize 렌더 불변식이라 렌더가 깨지지 않으면 참조 정합이 보장된다. 따라서
+  # 별도 전용 테스트 없이 (1) kustomize 렌더 성공, (2) 대시보드 JSON/uid/4중 정합만 검증한다.
+  validate-observability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 관측 매니페스트·오버레이·검증 스크립트가 바뀐 push 에서만 검증(그 외엔 스킵).
+      - uses: dorny/paths-filter@v3
+        id: obsfilter
+        with:
+          filters: |
+            observability:
+              - 'k8s/observability/**'
+              - 'k8s/base/**'
+              - 'k8s/overlay/**'
+              - 'scripts/validate-observability.sh'
+
+      - name: Ensure kustomize CLI
+        if: steps.obsfilter.outputs.observability == 'true'
+        run: |
+          if ! command -v kustomize >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/bin"
+            ( cd "$RUNNER_TEMP/bin" && curl -sfL https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash )
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          fi
+
+      # 렌더 깨짐/누락파일/키불일치를 머지 전에 차단. observability 는 필수,
+      # overlay 는 로컬 렌더가 깨끗해 함께 검증한다.
+      - name: kustomize build dry-run (observability + overlay)
+        if: steps.obsfilter.outputs.observability == 'true'
+        run: |
+          kustomize build k8s/observability > /dev/null
+          kustomize build k8s/overlay > /dev/null
+
+      - uses: actions/setup-python@v5
+        if: steps.obsfilter.outputs.observability == 'true'
+        with:
+          python-version: '3.11'
+
+      - name: Install PyYAML
+        if: steps.obsfilter.outputs.observability == 'true'
+        run: pip install pyyaml
+
+      # 대시보드 JSON 파싱 + uid 중복 없음 + provider/volumeMount/volume.configMap/CM 4중 정합.
+      - name: Validate observability manifests
+        if: steps.obsfilter.outputs.observability == 'true'
+        run: scripts/validate-observability.sh

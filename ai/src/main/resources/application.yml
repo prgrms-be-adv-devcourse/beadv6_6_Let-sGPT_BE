@@ -3,8 +3,15 @@ server:
   tomcat:
     mbeanregistry:
       enabled: true   # tomcat_threads_* 메트릭(Micrometer TomcatMetrics) 노출에 필요
+    # 가상 스레드를 켜면 요청당 워커가 무한정 생겨 server.tomcat.threads.max가 무의미해진다.
+    # 소켓 수용 자체를 막는 최소한의 방벽으로 커넥션 수를 제한한다(수락 단계 과부하 차단).
+    max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:1024}
 
 spring:
+  threads:
+    virtual:
+      # 요청 처리를 가상 스레드로. WebFlux 대신 선택(벤치 결과 동등 효과, 비용은 훨씬 낮음).
+      enabled: true
   kafka:
     consumer:
       group-id: ai-service
@@ -13,6 +20,36 @@ spring:
     active: local
   application:
     name: ai-service
+  ai:
+    model:
+      chat: openai
+    openai:
+      base-url: ${CHAT_ADMIN_INFERENCE_BASE_URL:${CHAT_INFERENCE_BASE_URL:http://127.0.0.1:11434/v1}}
+      api-key: ${CHAT_INFERENCE_API_KEY:${OPENAI_API_KEY:local-inference}}
+      timeout: ${CHAT_INFERENCE_STAGE_TIMEOUT:55s}
+      max-retries: 0
+      chat:
+        model: ${CHAT_ADMIN_INFERENCE_MODEL:${CHAT_INFERENCE_MODEL:gemma4:12b-it-qat}}
+        max-retries: 0
+        max-tokens: ${CHAT_INFERENCE_MAX_TOKENS:1500}
+        temperature: 0
+        parallel-tool-calls: true
+        store: false
+    retry:
+      max-attempts: 0
+    chat:
+      client:
+        enabled: true
+        tool-calling:
+          enabled: true
+        observations:
+          log-prompt: false
+          log-completion: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${MEMBER_JWKS_URI:http://localhost:9100/auth/jwks}
   jpa:
     hibernate:
       ddl-auto: update
@@ -31,7 +68,51 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: method
 
+chat:
+  data:
+    enabled: ${CHAT_DATA_ENABLED:false}
+    url: ${AI_QUERY_DB_URL:}
+    username: ${AI_QUERY_DB_USERNAME:ai_query_app}
+    password: ${AI_QUERY_DB_PASSWORD:}
+  stream:
+    deadline: ${CHAT_STREAM_DEADLINE:170s}
+    emitter-timeout: ${CHAT_STREAM_EMITTER_TIMEOUT:180s}
+    heartbeat-interval: ${CHAT_STREAM_HEARTBEAT_INTERVAL:15s}
+  inference:
+    enabled: ${CHAT_INFERENCE_ENABLED:true}
+    base-url: ${CHAT_ADMIN_INFERENCE_BASE_URL:${CHAT_INFERENCE_BASE_URL:http://127.0.0.1:11434/v1}}
+    model: ${CHAT_ADMIN_INFERENCE_MODEL:${CHAT_INFERENCE_MODEL:gemma4:12b-it-qat}}
+    local-only-route: ${CHAT_INFERENCE_LOCAL_ONLY_ROUTE:false}
+    reasoning-effort: ${CHAT_INFERENCE_REASONING_EFFORT:none}
+    stage-timeout: ${CHAT_INFERENCE_STAGE_TIMEOUT:55s}
+    routing-max-tokens: ${CHAT_INFERENCE_ROUTING_MAX_TOKENS:700}
+    binding-max-tokens: ${CHAT_INFERENCE_BINDING_MAX_TOKENS:1400}
+    answer-max-tokens: ${CHAT_INFERENCE_ANSWER_MAX_TOKENS:1500}
+    context:
+      input-token-limit: ${CHAT_INFERENCE_INPUT_TOKEN_LIMIT:6000}
+      answer-token-reserve: ${CHAT_INFERENCE_ANSWER_TOKEN_RESERVE:1500}
+      safety-token-reserve: ${CHAT_INFERENCE_SAFETY_TOKEN_RESERVE:692}
+      max-schema-shards: ${CHAT_INFERENCE_MAX_SCHEMA_SHARDS:6}
+      previous-question-max-characters: 300
+      previous-answer-max-characters: 800
+  weather:
+    enabled: ${CHAT_WEATHER_ENABLED:true}
+    connect-timeout: ${CHAT_WEATHER_CONNECT_TIMEOUT:2s}
+    read-timeout: ${CHAT_WEATHER_READ_TIMEOUT:5s}
+  crypto-price:
+    enabled: ${CHAT_CRYPTO_PRICE_ENABLED:true}
+    connect-timeout: ${CHAT_CRYPTO_PRICE_CONNECT_TIMEOUT:2s}
+    read-timeout: ${CHAT_CRYPTO_PRICE_READ_TIMEOUT:5s}
+  web-search:
+    enabled: ${CHAT_WEB_SEARCH_ENABLED:true}
+    api-key: ${TAVILY_API_KEY:}
+    connect-timeout: ${CHAT_WEB_SEARCH_CONNECT_TIMEOUT:2s}
+    read-timeout: ${CHAT_WEB_SEARCH_READ_TIMEOUT:5s}
+
+# k8s probe + Prometheus 메트릭
 management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9161}
   endpoints:
     web:
       exposure:
@@ -45,35 +126,35 @@ management:
       otlp:
         enabled: false
 
-services:
-  internal:
-    timeout: ${INTERNAL_API_TIMEOUT:2000ms}
-  order:
-    url: ${ORDER_SERVICE_URL:http://localhost:9120}
-  member:
-    url: ${MEMBER_SERVICE_URL:http://localhost:9100}
-  product:
-    url: ${PRODUCT_SERVICE_URL:http://localhost:9110}
-  search:
-    url: ${SEARCH_SERVICE_URL:http://localhost:9240}
-    timeout: ${SEARCH_SERVICE_TIMEOUT:2500ms}
-    recommendation-size: ${SEARCH_RECOMMENDATION_SIZE:20}
 
 inference:
-  base-url: ${INFERENCE_BASE_URL:https://api.inferway.xyz/v1}
+  base-url: ${INFERENCE_BASE_URL:https://api.openai.com/v1}
   api-key: ${INFERENCE_API_KEY:}
-  model: ${INFERENCE_MODEL:chat}
-  timeout: ${INFERENCE_LLM_TIMEOUT:120000ms}
+  model: ${INFERENCE_MODEL:gpt-4.1-nano}
+  # OpenAI는 sub-second 응답 — 옛 inferway 대비 5s면 충분(기존 120s는 느린 추론기 잔재).
+  timeout: ${INFERENCE_LLM_TIMEOUT:5000ms}
 
 recommendation:
   kafka:
     topic:
       order-completed: order.completed.events
       wishlist-changed: wishlist.changed.events
-  fallback-limit: ${RECOMMENDATION_FALLBACK_LIMIT:3}
+  fallback-limit: ${RECOMMENDATION_FALLBACK_LIMIT:4}
+  # 캐시 미스(검색+LLM) 동시 실행 상한. 가상 스레드로 워커 풀이 사라졌으므로,
+  # OpenAI/검색으로의 무제한 팬아웃을 막는 명시적 admission valve. 초과분은 폴백으로 흘린다.
+  max-concurrent-pipelines: ${RECOMMENDATION_MAX_CONCURRENT_PIPELINES:64}
   drop-cache:
     page-size: ${RECOMMENDATION_DROP_CACHE_PAGE_SIZE:100}
     refresh-interval: ${RECOMMENDATION_DROP_CACHE_REFRESH_INTERVAL:5m}
+  # 최후 폴백: 드롭 무관 최신 상품(스케줄로 미리 채워 요청당 지연 0).
+  last-resort:
+    size: ${RECOMMENDATION_LAST_RESORT_SIZE:8}
+  # 열린 드롭 상품의 DETAIL 추천을 주기적으로 미리 계산해 rec:detail:{productId}를 데운다.
+  # LLM 비용이 있으므로 기본 비활성(opt-in). 새벽 고정이 아니라 설정 가능한 간격으로 돈다.
+  prebatch:
+    enabled: ${RECOMMENDATION_PREBATCH_ENABLED:false}
+    interval: ${RECOMMENDATION_PREBATCH_INTERVAL:6h}
+    initial-delay: ${RECOMMENDATION_PREBATCH_INITIAL_DELAY:1m}
   weights:
     partial-ttl: ${RECOMMENDATION_WEIGHTS_PARTIAL_TTL:10m}
     wishlist-score: ${RECOMMENDATION_WISHLIST_SCORE:0.3}

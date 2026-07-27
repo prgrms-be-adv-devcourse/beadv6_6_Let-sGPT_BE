@@ -10,9 +10,18 @@ spring:
   application:
     name: payment-service
   jpa:
+    # OSIV off — 영속성 컨텍스트를 컨트롤러/뷰 구간까지 열어두지 않는다. payment 엔티티는 연관관계가
+    # 하나도 없어 지연 로딩이 깨질 경로가 구조적으로 없고, 켜져 있으면 요청이 끝날 때까지 세션이
+    # 물리 커넥션을 붙들어 결제사 HTTP 호출 시간만큼 풀이 잠긴다.
+    open-in-view: false
     properties:
       hibernate:
         default_schema: payment # 스키마 분리
+        connection:
+          # 커넥션을 트랜잭션 시작이 아닌 첫 JDBC 사용 시점에 얻고, 트랜잭션이 끝나면 즉시 반납한다.
+          # OSIV off와 짝이 되어야 커넥션 점유가 "트랜잭션 구간"으로 좁혀진다(그 전엔 첫 DB 접근부터
+          # 응답 완료까지 한 커넥션을 계속 잡고 있었다).
+          handling_mode: DELAYED_ACQUISITION_AND_RELEASE_AFTER_TRANSACTION
     hibernate:
       ddl-auto: validate
   flyway:
@@ -22,6 +31,24 @@ spring:
     consumer:
       group-id: payment-service
       auto-offset-reset: earliest
+    template:
+      # KafkaTemplate.send를 Observation으로 감싸 producer 스팬을 만들고 트레이스 헤더를 전파한다.
+      # KafkaProducerConfig가 KafkaTemplate을 직접 등록하므로 이 값을 그 빈에서 읽어 적용한다.
+      observation-enabled: true
+
+# JDBC 계측(datasource-micrometer). 커넥션 획득/쿼리/페치가 각각 자식 스팬으로 떨어져
+# "요청 시간이 커넥션 대기인지 쿼리인지"를 트레이스에서 가를 수 있게 된다.
+jdbc:
+  datasource-proxy:
+    # 바인딩 파라미터 값은 스팬 태그·로그 어디에도 넣지 않는다(카드정보·개인정보 유출 방지).
+    # 기본값도 false지만 무심코 켜지지 않도록 명시 고정한다.
+    include-parameter-values: false
+    # SQL 로깅은 계측 목적이 아니고 로그량만 늘리므로 끈 채로 둔다(기본값 명시).
+    query:
+      enable-logging: false
+    slow-query:
+      enable-logging: false
+
 payment:
   encryption:
     key: ${PAYMENT_FIELD_ENCRYPTION_KEY} # pgPaymentKey/pgRefundKey AES-GCM 키(Base64, 32바이트) — .env/docker-compose 쪽 값 추가 필요(dev-infra)
@@ -69,6 +96,29 @@ management:
     health:
       probes:
         enabled: true   # k8s 밖(local/compose)에서도 /actuator/health/readiness·liveness 활성화
+  metrics:
+    distribution:
+      # 지연 퍼센타일·SLO 준수율 계산용 누적 버킷. HTTP 서버 타이머와 PG 호출 타이머로 한정.
+      percentiles-histogram:
+        "[http.server.requests]": true
+        "[payment.pg.call]": true
+        # 커넥션 풀 대기(acquire)·점유(usage)는 지금 sum/count/max뿐이라 평균밖에 못 본다.
+        # 히스토그램을 켜야 p50/p99가 갈려 "일부 요청만 오래 대기"를 잡아낼 수 있다.
+        "[hikaricp.connections.acquire]": true
+        "[hikaricp.connections.usage]": true
+      # 버킷 51개로 클램프(무클램프 69개). 하한은 해상도, 상한은 PG 슬로우콜 3s 여유.
+      minimum-expected-value:
+        "[http.server.requests]": 5ms
+        "[payment.pg.call]": 5ms
+        # 커넥션 대기는 정상일 때 1ms 미만이라 하한을 더 낮게 잡는다.
+        "[hikaricp.connections.acquire]": 1ms
+        "[hikaricp.connections.usage]": 1ms
+      maximum-expected-value:
+        "[http.server.requests]": 10s
+        "[payment.pg.call]": 10s
+        # 상한 10s로 클램프해 버킷 수가 무한정 늘지 않게 한다(카디널리티 억제).
+        "[hikaricp.connections.acquire]": 10s
+        "[hikaricp.connections.usage]": 10s
   tracing:
     export:
       otlp:

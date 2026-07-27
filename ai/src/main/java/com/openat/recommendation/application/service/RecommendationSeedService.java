@@ -1,7 +1,5 @@
 package com.openat.recommendation.application.service;
 
-import com.openat.common.auth.UserContext;
-import com.openat.common.auth.UserContextHolder;
 import com.openat.recommendation.application.port.out.OrderSignalClient;
 import com.openat.recommendation.application.port.out.WishlistSignalClient;
 import com.openat.recommendation.domain.model.PurchaseSignal;
@@ -48,15 +46,9 @@ public class RecommendationSeedService {
   }
 
   public List<Seed> collect() {
-    UserContext context = UserContextHolder.get();
-    if (context == null) {
-      return List.of();
-    }
-
-    UUID memberId = UUID.fromString(context.userId());
-    List<Seed> baseSeeds =
-        seedWeightsCache.find(memberId).orElseGet(() -> refreshWeightsCache(memberId));
-    return baseSeeds;
+    return CurrentMember.id()
+        .map(memberId -> seedWeightsCache.find(memberId).orElseGet(() -> refreshWeightsCache(memberId)))
+        .orElseGet(List::of);
   }
 
   public List<Seed> refreshWeightsCache(UUID memberId) {

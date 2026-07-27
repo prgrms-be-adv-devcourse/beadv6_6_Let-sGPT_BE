@@ -69,4 +69,12 @@ object RedisKeys {
      * "어떤 dropId를 살펴봐야 하는지" 이 SET 하나로 알아낸다 - dropId마다 물리적으로 분리된
      * 키가 아니라 전역 키 하나뿐이다. */
     fun activeDrops(): String = "queue:active-drops"
+
+    /** SSE 푸시용 Redis Pub/Sub 채널(WebFlux+SSE 전환분). 이 dropId의 대기열 상태가 바뀔 수
+     * 있는 지점(입장 배치 admit, decision, sweep)에서 [QueueEventPublisher]가 "변경됨" 신호만
+     * 싣는다 - payload에 누구의 무엇이 바뀌었는지는 안 담는다. 구독 중인 각 SSE 커넥션이 신호를
+     * 받으면 자기 자신의 상태를 다시 조회해(status-snapshot.lua) 직전 값과 다를 때만 클라이언트로
+     * 내려보낸다(QueueStreamService 참고) - 폴링처럼 "누가 요청했으니 계산한다"가 아니라
+     * "바뀌었으니 계산한다"로 뒤집힌 것이 이 전환의 핵심이다. */
+    fun eventsChannel(dropId: String): String = "queue-events:$dropId"
 }
