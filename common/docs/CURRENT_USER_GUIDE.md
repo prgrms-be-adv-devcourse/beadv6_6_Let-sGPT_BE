@@ -7,8 +7,9 @@
     │
     ▼
 [apigateway]
-  JWT 검증 → X-User-Id, X-User-Roles 헤더를 세팅해 다운스트림으로 전달
-    │         (클라이언트가 직접 보낸 두 헤더는 항상 먼저 제거 — 위조 불가)
+  access JWT → X-User-Id, X-User-Roles
+  seller scoped JWT → X-Seller-Id
+    │         (클라이언트가 직접 보낸 세 헤더는 항상 먼저 제거 — 위조 불가)
     ▼
 [각 서비스]
   UserContextFilter (Ordered.HIGHEST_PRECEDENCE)
@@ -24,6 +25,11 @@
 `common` 모듈이 클래스패스에 있으면 **자동으로 설정됩니다.** `@ComponentScan`이나
 `@EnableWebMvc`를 별도로 선언할 필요 없습니다 (`CommonWebAutoConfiguration`이 Spring Boot
 자동설정으로 등록됨).
+
+`X-Seller-Id`는 일반 회원 `UserContext`에 섞지 않는다. 판매자 scoped JWT는
+`sub=sellerInfoId`이므로 Gateway가 `X-Seller-Id`만 전달하고, product의 전용
+`@CurrentUser UUID` argument resolver가 이를 읽는다. 이 요청에는
+`X-User-Id`·`X-User-Roles`가 없다.
 
 ---
 
@@ -132,7 +138,7 @@ public class OrderService {
         return OrderResponse.from(orderRepository.save(order));
     }
 
-    public void cancelOrder(Long orderId) {
+    public void cancelOrder(UUID orderId) {
         String userId = UserContextHolder.currentUserId();
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new BusinessException(CommonErrorCode.NOT_FOUND));
@@ -150,7 +156,7 @@ public class OrderService {
 ```java
 @GetMapping("/products/{id}")
 public ProductResponse getProduct(
-        @PathVariable Long id
+        @PathVariable UUID id
 ) {
     // 로그인 안 해도 조회는 되지만, 로그인했으면 개인화된 정보를 추가
     UserContext ctx = UserContextHolder.get(); // null-safe
@@ -183,11 +189,13 @@ public ProductResponse getProduct(
 **우회 방법**: HTTP 클라이언트(Postman/curl/Swagger)에서 헤더를 직접 세팅합니다.
 
 ```
-X-User-Id: 1
+X-User-Id: 0198f1b0-7b3f-7a40-9f4f-5133fbad32e1
 X-User-Roles: ROLE_USER,ROLE_SELLER
 ```
 
 `UserContextFilter`가 헤더를 파싱해 컨텍스트를 채워주기 때문에, 게이트웨이와 동일하게 동작합니다.
+product 쓰기 API를 직접 테스트할 때는 일반 회원 헤더 대신
+`X-Seller-Id: <sellerInfoId UUID>`를 사용합니다.
 
 > **보안 주의**: 이 우회 방법은 로컬 개발 전용입니다. 운영 환경에서는 반드시 게이트웨이를 통해서만
 > 서비스에 접근해야 합니다 (게이트웨이가 헤더 위조를 사전에 차단함).

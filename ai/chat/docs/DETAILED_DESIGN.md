@@ -292,8 +292,8 @@ failureReason: FAILED일 때만 존재
   검증하고, 누락되었을 때만 동일 DDL을 한 트랜잭션으로 적용한다. 원본 도메인 테이블이 아직
   생성되지 않았으면 서버 기동을 막지 않고 고정 간격으로 재시도한다.
 - 배포에서는 애플리케이션이 관리자 DDL을 실행하지 않는다. DDL·적용·검증 산출물과 조회 Secret
-  revision을 결합한 identity가 달라질 때만 새 Kubernetes Job을 wave 9에서 실행한다. 동일
-  identity의 완료 Job은 다음 전체 배포에서 재실행하지 않고, AI Deployment는 wave 10에서 진행한다.
+  revision을 결합한 identity가 달라질 때만 새 Kubernetes Job을 wave 1에서 실행한다. 동일
+  identity의 완료 Job은 다음 전체 배포에서 재실행하지 않고, AI Deployment는 wave 2에서 진행한다.
 - 배포 Job도 현재 비밀번호와 정확한 계약이 이미 유효하면 관리자 DDL을 건너뛰고 검증 결과만 남긴다.
 
 서비스별 DB가 물리적으로 분리되면 API 조합, 이벤트 기반 읽기 모델 또는 CDC 투영으로 어댑터를 바꾼다. LLM에 공개하는 조회 계약과 보안 경계는 유지한다.

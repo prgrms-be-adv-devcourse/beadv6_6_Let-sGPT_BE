@@ -26,6 +26,10 @@ dependencies {
     implementation("io.github.resilience4j:resilience4j-retry:2.3.0")
     // 서킷/리미터 상태를 기존 프로메테우스 노출로 바인딩(TaggedCircuitBreakerMetrics·TaggedRateLimiterMetrics)
     implementation("io.github.resilience4j:resilience4j-micrometer:2.3.0")
+    // JDBC 커넥션 획득·쿼리·트랜잭션 구간을 Micrometer Observation으로 계측(트레이스에 자식 스팬 생성).
+    // 2.x가 Spring Boot 4 라인(자동설정이 boot 4의 org.springframework.boot.jdbc.autoconfigure 패키지를
+    // 참조) — 1.x는 Boot 3용이라 Boot 4.1에서 자동설정이 붙지 않는다. Boot BOM이 관리하지 않아 버전 명시.
+    implementation("net.ttddyy.observation:datasource-micrometer-spring-boot:2.2.1")
 }
 
 tasks.withType<Test> {

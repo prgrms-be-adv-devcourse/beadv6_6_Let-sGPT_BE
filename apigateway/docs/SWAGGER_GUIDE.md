@@ -6,13 +6,18 @@
 
 ## 구조 한눈에 보기
 
-```
+```text
 브라우저 → localhost:8000/swagger-ui.html
               │
-              ├─ all-services   → GET /v3/api-docs/all          (apigateway가 직접 집계)
-              ├─ member-service → GET /member/api-docs           (게이트웨이 → member 프록시)
-              └─ settlement-service → GET /settlement/api-docs   (게이트웨이 → settlement 프록시)
+              ├─ all-services → GET /v3/api-docs/all
+              │                 Gateway가 member/product/search/order/payment/
+              │                 settlement/queue/ai 문서를 병렬 조회해 집계
+              └─ 개별 문서     → /member, /product, /search, /order,
+                                /payment, /settlement, /ai 접두사로 프록시
 ```
+
+`queue`는 `openapi.aggregate.services`에는 포함돼 통합 문서에 합쳐지지만,
+현재 `springdoc.swagger-ui.urls`와 외부 docs 라우트에는 별도 항목이 없다.
 
 ---
 
@@ -28,8 +33,18 @@ springdoc:
         url: /v3/api-docs/all     # OpenApiAggregateController가 처리
       - name: member-service
         url: /member/api-docs
+      - name: product-service
+        url: /product/api-docs
+      - name: search-service
+        url: /search/api-docs
+      - name: order-service
+        url: /order/api-docs
+      - name: payment-service
+        url: /payment/api-docs
       - name: settlement-service
         url: /settlement/api-docs
+      - name: ai-service
+        url: /ai/api-docs
 ```
 
 ### 2. `application-local.yaml` — 게이트웨이 라우트 + 집계 서비스 목록
@@ -53,10 +68,18 @@ openapi:
       # OpenApiAggregateController가 이 목록을 순회해 /v3/api-docs/all 을 만든다
       # 서비스가 꺼져 있으면 해당 서비스는 건너뛰고 나머지만 집계된다
       member-service: http://localhost:9100/api-docs
+      product-service: http://localhost:9110/api-docs
+      order-service: http://localhost:9120/api-docs
+      payment-service: http://localhost:9130/api-docs
       settlement-service: http://localhost:9140/api-docs
+      queue-service: http://localhost:9150/api-docs
+      ai-service: http://localhost:9160/api-docs
+      search-service: http://localhost:9240/api-docs
 ```
 
-> `application-compose.yaml`에도 동일한 구조로 컨테이너명 URL을 작성한다.
+> `application-compose.yaml`에도 같은 서비스 목록을 두고 호스트만 컨테이너명으로 바꾼다.
+> payment처럼 서비스의 OpenAPI `servers` 경로 보정이 필요한 경우
+> `openapi.aggregate.prefixes`도 함께 설정한다.
 
 ### 3. 각 서비스 모듈 — api-docs 경로 설정
 

@@ -42,7 +42,7 @@
 클린 아키텍처라 계층 경계가 또렷하다. **계층 성격에 맞는 도구를 쓴다.**
 
 - **비즈니스 규칙·분기**는 컨텍스트를 띄우지 않고 **Mockito 단위**로 빠르게 — 피드백 루프를 짧게.
-- **영속 정합성·동시성**은 우리 도메인의 본질(정합성·성능)이므로 **실제 PostgreSQL·Redis(Testcontainers)** 로 검증 — H2로는 UUIDv7·`@SoftDelete`·FK 동작이 달라 거짓 통과/실패가 난다.
+- **영속 정합성·동시성**은 우리 도메인의 본질(정합성·성능)이므로 **실제 PostgreSQL·Redis(Testcontainers)** 로 검증 — H2로는 PostgreSQL UUID·`@SoftDelete`·FK 동작이 달라 거짓 통과/실패가 난다.
 - **우선순위**: PROJECT §7대로 **재고·정합성·핵심 비즈니스 규칙을 우선**한다.
 
 ---
@@ -53,7 +53,7 @@
 | :-- | :-- | :-- |
 | 도메인 모델 | 의미론적 빌더·불변식 (예: `StockHistory` delta 부호, `Drop` 초기 `REGISTERED`) | JUnit5 + AssertJ |
 | 서비스 | 비즈니스 분기·포트 상호작용 (중복검증·동일이름 early return·category null 분기) | JUnit5 + Mockito + AssertJ |
-| 영속 | 복합 unique 멱등·FK SET NULL·UUIDv7·`@SoftDelete`(미구현, 도입 시) | `@DataJpaTest` + Testcontainers(PostgreSQL) |
+| 영속 | 복합 unique 멱등·FK SET NULL·time-based UUID 생성·`@SoftDelete` | `@DataJpaTest` + Testcontainers(PostgreSQL) |
 | 웹 | `@Valid` 검증·상태코드(201+Location/204)·에러 매핑 | `@WebMvcTest` + MockMvc |
 
 ### 슬라이스 테스트 설정 (Spring Boot 4 / Testcontainers 2.x — 실빌드 검증)
@@ -143,7 +143,7 @@ class XxxRepositoryAdaptorTest {
 
 ### given-when-then 3단
 `// given` · `// when` · `// then` 주석 마커로 단계를 나눈다.
-> **주석 예외**: CLAUDE.md는 설명 주석을 금하지만, GWT 마커는 설명이 아니라 **채택된 테스트 구조 마커**(PROJECT §7)다. 테스트 코드에 한해 허용한다.
+> **주석 예외**: 로컬 `AGENTS.md`의 주석 최소화 원칙과 별개로, GWT 마커는 설명이 아니라 **채택된 테스트 구조 마커**(PROJECT §7)다. 테스트 코드에 한해 허용한다.
 
 ### 메서드 내부도 "사고 흐름 단계대로" (PRODUCT §6)
 중첩 호출로 압축하지 말고, 단계를 지역 변수로 풀어 **한 문장당 하나의 일**로 읽히게 한다. 매직값 반복은 변수 한 단계로 제거해 의도를 드러낸다.
@@ -237,7 +237,7 @@ public final class ProductFixture {
 | :-- | :-- |
 | 비즈니스 규칙·분기 (중복검증·early return·null 분기) | Lombok getter/builder 자체 |
 | 도메인 불변식 (delta 부호·초기 상태) | 단순 위임 라인 (컨트롤러→usecase 호출 자체) |
-| 영속 정합성 (멱등 unique·FK SET NULL·soft delete·UUIDv7) | 자명한 DTO 필드 복사 (`toCommand`) |
+| 영속 정합성 (멱등 unique·FK SET NULL·soft delete·time-based UUID) | 자명한 DTO 필드 복사 (`toCommand`) |
 | 웹 계약 (`@Valid`·상태코드·에러 매핑) | 설정 클래스(Security/OpenApi)·프레임워크 기본 동작 |
 | 동시성·멱등 (오버셀 차단·중복 차감 방지) | `data.sql` 시드 등 |
 
@@ -254,13 +254,16 @@ public final class ProductFixture {
 
 ## 8. 재고·동시성·멱등 가이드
 
-재고 게이트키퍼의 **정합성 축은 구현·검증됐다**(실제: `DropCacheRedisAdaptorTest` — Testcontainers+Redis+`ExecutorService`). 성능 수치(k6)·장애 회복은 예정. 검증은 성격이 다른 세 축이고 **도구·위치가 다르다.**
+Redis Lua 게이트키퍼의 **동시 차감 정합성 축은 구현·검증됐다**(실제:
+`DropCacheRedisAdaptorTest` — Testcontainers Redis + `ExecutorService`). Redis 차감과
+PostgreSQL 원장 기록을 함께 경합시키는 end-to-end 검증, 성능 수치(k6)와 장애 회복 실험은
+별도다. 검증은 성격이 다른 세 축이고 **도구·위치가 다르다.**
 
 > **두 "수치"를 혼동하지 말 것.** §0~§7의 "수치"는 **커버리지 %**(채우려 들면 안 되는 양적 지표)이고, 아래 성능 "수치"는 **TPS·latency**(반드시 측정해야 하는 검증 대상)다.
 
 | 검증 축 | 무엇을 | 도구·위치 |
 | :-- | :-- | :-- |
-| **정합성** | 오버셀 차단·재고 음수 불가·멱등(중복 주문 1회만 차감/롤백)·보수적 거절 | JUnit 동시성 테스트 + Testcontainers(Redis+PG), `@Tag("concurrency")`로 분리 |
+| **정합성** | 오버셀 차단·재고 음수 불가·멱등(중복 주문 1회만 차감/롤백)·보수적 거절 | 현재 `DropCacheRedisAdaptorTest`의 JUnit 동시성 테스트 + Testcontainers Redis. PostgreSQL 원장 제약은 별도 repository 테스트이며 `@Tag("concurrency")`는 아직 적용하지 않음 |
 | **성능 수치** | TPS·p95/p99 latency·동시성 한계 | **k6** (`loadtest/`, test 밖·빌드와 분리) |
 | **장애 회복** | 캐시 다운 → RDB 원장 재워밍, 캐시·RDB 불일치 치유 | 통합 테스트(컨테이너 중단 시뮬레이션) — 여력 되면 |
 
@@ -298,7 +301,10 @@ void deduct_concurrentRequests_neverOversells() throws InterruptedException {
 }
 ```
 
-**성능 수치(TPS·latency)는 k6로** — 단일 JVM·제한된 스레드의 JUnit으로는 실제 부하를 재현할 수 없어 빌드와 분리한다. 부하 중 오버셀 정합성도 함께 본다(STOCK_GATEKEEPER §6).
+**성능 수치(TPS·latency)는 k6로** — 단일 JVM·제한된 스레드의 JUnit으로는 실제 부하를
+재현할 수 없어 빌드와 분리한다. 현재 k6 흐름은 성능·결과 분포를 측정할 뿐 실행 후
+원장·잔여를 대조해 오버셀을 단언하지 않는다. 배포 환경의 정합성까지 함께 보려면 별도
+사후 검증을 추가해야 한다(`STOCK_GATEKEEPER` §12).
 
 ---
 
