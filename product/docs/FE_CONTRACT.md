@@ -3,7 +3,8 @@
 > openAt FE(React 19, MSW provisional)의 디자인·구현이 어느 정도 완료된 시점 기준으로,
 > **BE가 응답에서 맞춰줘야 할 계약(필드 shape)**을 정리한 참고 문서.
 > source of truth는 FE 레포의 `docs/be-api-contract.md` + 각 feature의 zod 스키마(`*/model/*.schema.ts`)다.
-> 미구현 API 목록은 [`FE_API_REQUESTS.md`](./FE_API_REQUESTS.md)에 별도 정리(이 문서는 "어떤 모양으로 줄지", 그쪽은 "무엇이 없는지").
+> BE 구현 현황은 2026-07-27 `dev` 기준이다. 현재 확인된 미구현 API는
+> [`FE_API_REQUESTS.md`](./FE_API_REQUESTS.md)에 없다.
 > 담당 도메인(**product/drop/category**)은 필드 단위 상세, 그 외 도메인은 §4 참고용 요약.
 
 ---
@@ -14,12 +15,12 @@
 |---|---|
 | 게이트웨이 / prefix | `http://localhost:8000`, 경로는 `/api/v1/{도메인복수}` |
 | 페이지 응답 | `PageResponse { content[], page, size, totalElements, totalPages }` — FE `pageResponseSchema`와 1:1 일치 (BE `PageResponse.of`와 동일) |
-| 페이지/정렬 파라미터 | `page`, `size`, `sort` 쿼리 (Spring `Pageable`). FE가 `sort`도 전달 |
+| 페이지/정렬 파라미터 | `page`, `size`, `sort` 쿼리를 Spring `Pageable`이 파싱한다. 다만 현재 product/drop 조회 어댑터는 요청 정렬을 적용하지 않고 각각 고정 순서를 사용한다 |
 | 날짜·시각 | ISO-8601 문자열 ↔ `Instant` (예: `2026-06-27T03:00:00Z`) |
 | 인증 헤더 | 보호 엔드포인트에 `Authorization: Bearer <accessToken>` (FE가 자동 주입) |
-| 멱등 헤더 | 쓰기(주문·결제·환불·충전)에 `Idempotency-Key` |
+| 멱등 계약 | 주문 생성은 body `idempotencyKey`; 지갑 결제·환불·충전은 `Idempotency-Key` 헤더. PG 결제 confirm은 `orderId` 유니크 예약으로 멱등 처리 |
 | 판매자 토큰 | 상품/드롭 **쓰기**는 **스토어(`sellerInfoId`) 범위 판매자 토큰**(회원 토큰과 별도) — 발급: member 도메인 `POST /api/v1/seller/token { sellerInfoId } → { tokenType, accessToken, expiresIn }`, 활성 스토어 전환 시 재발급. 상세 FE `docs/auth.md` |
-| 에러 | FE는 `ApiError { status, code, message }`로 파싱 — BE `ErrorResponse { code, message }` + HTTP status와 매핑 |
+| 에러 | BE는 `ErrorResponse { error, message }`를 반환. FE `ApiError.code`는 BE의 `error` 필드, `status`는 HTTP 상태와 매핑 |
 
 ---
 
@@ -31,25 +32,29 @@
 |---|---|---|---|---|
 | `id` | UUID | N | ✅ | |
 | `sellerId` | UUID | N | ✅ | 판매자 인증 변경 후 **스토어 `sellerInfoId`** 의미(§5·5) → `sellerName` 출처와 정합 |
-| `sellerName` | string | Y | ❌ **없음** | 카탈로그/상세 벤더 표기. FE는 `nullish`로 두고 MSW로 임시 채움 → BE 추가 시 N+1 회피(조인/배치) |
+| `sellerName` | string | Y | ✅ | member 스토어 이벤트를 소비한 로컬 `SellerStore` 투영에서 조회 |
 | `name` | string | N | ✅ | |
-| `description` | string | N | ✅ | 카드엔 미표시, 상세·폼에서 사용 |
+| `description` | string | Y | ✅ | 등록·수정 body에서 선택값. 카드엔 미표시, 상세·폼에서 사용 |
 | `categoryId` | UUID | Y | ✅ | null = 미분류 |
 | `categoryName` | string | Y | ✅ | 카드 표기는 이름만 사용 |
 | `price` | long | Y | ✅ | null = "가격 미정" |
-| `thumbnailKey` | string | Y | ✅ | ⚠ FE는 **이미지 URL로 직접 사용**(mock = picsum URL). key→URL 노출 전략 합의 필요 |
+| `thumbnailKey` | string | Y | ✅ | final key. FE `resolveImageSrc`가 이미지 조회 API URL로 변환 |
+| `imageKeys` | string[] | N | ✅ | 추가 이미지 final key 목록. 없으면 빈 목록 |
 | `createdAt` | Instant | N | ✅ | 기본 정렬(최신순) 근거 |
 
-**Divergence 2건**: ① `sellerName` 부재, ② `thumbnailKey`를 FE가 URL로 직접 렌더 → 둘 다 §5 액션.
+현재 BE 응답은 판매자 표시명과 이미지 갤러리를 포함한다. seed/mock의 풀 URL은 FE에서
+그대로 쓰고, 저장소 key는 §1.5 조회 경로로 해석한다.
 
 ### 1.2 목록/검색 — `GET /api/v1/products?categoryId&keyword&sort&page&size`
 
-- BE `ProductSearchRequest` = `categoryId`, `keyword` (+ `Pageable`). FE 쿼리와 정합. `sort`는 `Pageable`로 흡수.
+- BE `ProductSearchRequest` = `categoryId`, `keyword` (+ `Pageable`). `page`·`size`는 적용되지만
+  `ProductRepositoryAdaptor`가 `createdAt desc`를 고정하므로 현재 `sort` 값은 결과 순서에
+  반영되지 않는다.
 
 ### 1.3 쓰기 바디 (FE → BE)
 
 ```
-ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
+ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey?, imageKeys? }
 ```
 
 ### 1.4 mock 응답 예시 (FE 기준)
@@ -65,6 +70,9 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
   "categoryName": "의류",
   "price": 39000,
   "thumbnailKey": "https://picsum.photos/seed/openat-1/640/800",
+  "imageKeys": [
+    "https://picsum.photos/seed/openat-1-detail-1/960/960"
+  ],
   "createdAt": "2026-06-20T09:00:00Z"
 }
 ```
@@ -104,18 +112,20 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 | `id` | UUID | N | ⚠ FE는 **`id`** (`dropId` 아님) |
 | `productId` | UUID | N | |
 | `productName` | string | N | product에서 끌어옴 |
-| `sellerName` | string | Y | ❌ BE 없음 (§5) |
+| `sellerName` | string | Y | member 스토어 이벤트의 로컬 투영에서 조회 |
 | `categoryId` | UUID | Y | product 기준 |
 | `categoryName` | string | Y | product 기준 |
-| `thumbnailKey` | string | Y | product 기준, URL 직접 사용 |
+| `thumbnailKey` | string | Y | product 기준, final key는 이미지 조회 API로 해석 |
 | `dropPrice` | long | N | |
 | `totalQuantity` | int | N | |
 | `remainingQuantity` | int | N | ⚠ FE는 **`remainingQuantity`** (`remaining` 아님). Redis 게이트키퍼 파생 |
 | `status` | enum | N | `REGISTERED \| OPEN \| CLOSE \| SOLD_OUT` — **OPEN/SOLD_OUT은 런타임 파생** |
 | `openAt` | Instant | N | |
 | `closeAt` | Instant | Y | |
+| `limitPerUser` | int | Y | 1인 구매 한도, null = 무제한 |
 
-> `limitPerUser`는 **FE 응답 스키마에 없음**(생성 바디에만 존재). 상세에서도 미사용 → 응답에 넣으려면 별도 합의.
+`sellerName`과 `limitPerUser`는 현재 `DropResponse`에 포함된다. FE zod 스키마도 두 필드를
+허용해야 생성 바디와 상세 화면의 구매 한도를 같은 값으로 유지할 수 있다.
 
 ### 2.2 status 표시 매핑 (FE UI)
 
@@ -135,6 +145,9 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 - `GET /api/v1/drops/me?status&categoryId&keyword&sort&page&size` → `PageResponse<DropResponse>` (**구현 완료** — `DropController.searchMyDrops`, 판매자 콘솔)
 - 쓰기 바디: `DropCreateBody { productId, dropPrice, totalQuantity, limitPerUser?, openAt, closeAt? }`
 
+목록의 `page`·`size`는 적용되지만 `DropRepositoryAdaptor`가 `openAt desc`를 고정하므로
+현재 `sort` 값은 결과 순서에 반영되지 않는다.
+
 ### 2.4 mock 응답 예시
 
 ```json
@@ -151,7 +164,8 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
   "remainingQuantity": 37,
   "status": "OPEN",
   "openAt": "2026-06-27T03:00:00Z",
-  "closeAt": null
+  "closeAt": null,
+  "limitPerUser": 2
 }
 ```
 
@@ -160,7 +174,9 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 ## 3. CATEGORY (담당)
 
 - `GET /api/v1/categories` → `List<CategoryResponse> { id, name }` (**구현 완료** — `CategoryController.getCategories`, 이름순)
-- 쓰기는 ADMIN: `POST`(201+Location), `PATCH /{id}`(204), `DELETE /{id}`(204).
+- 쓰기: `POST`(201+Location), `PATCH /{id}`(204), `DELETE /{id}`(204). 현재 Gateway에서는
+  일반 access JWT 인증만 요구하고 역할 제한은 두지 않는다. ADMIN 전용이 제품 의도라면
+  문서가 아니라 Gateway 인가 구현을 보강해야 한다.
 - FE seed 예시: `의류·액세서리·문구·전자기기·피규어·기타` (`id` = `c-apparel` 등 slug, 단 BE는 UUID 발급 — FE는 id를 불투명 문자열로만 사용하므로 무방).
 
 ```json
@@ -175,7 +191,7 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 > 해당 도메인 담당이 직접 검증해야 한다. (필드 타입·nullable 디테일은 원문 참조)
 
 **Order** (`/api/v1/orders`)
-- 생성 응답: `{ orderId, orderNumber, status(PAYMENT_PENDING), amount, orderName, paymentExpiresAt }`
+- 생성 응답: `{ orderId, orderNumber, status(PAYMENT_PENDING), amount, orderName, paymentExpiresAt, created }`
 - 상세: `{ orderId, orderNumber, dropId, productId, productName, quantity, totalPrice, status, paymentId?, paymentExpiresAt, failCode?, createdAt }`
 - 목록: `PageResponse<OrderSummary>` (상세에서 `paymentId/paymentExpiresAt/failCode` 제외)
 - 생성 바디에 `idempotencyKey` 포함, `status` 8종 / `failCode` 다수
@@ -183,13 +199,17 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 **Payment / Refund / Wallet** (`/api/v1/payments`, `/refunds`, `/wallet`)
 - `PaymentResponse { paymentId, status, paymentKey? }`
 - `RefundResponse { refundId, paymentId, amount, status }`
-- `WalletChargeResponse { chargeId, status }`, `GET /wallet → { balance }` (**미구현**)
-- 모든 쓰기에 `Idempotency-Key` 헤더
+- `WalletChargeResponse { chargeId, status }`, `GET /wallet → { balance }` (**구현 완료**)
+- `POST /payments`는 WALLET 전용, PG는 토스 SDK 승인 뒤 `POST /payments/confirm` 단일 진입점
+- WALLET 결제·환불·충전은 `Idempotency-Key` 헤더를 사용하고 PG 결제 confirm은 헤더를 받지 않는다.
 
 **Settlement** (`/api/v1/settlements/{seller|admin}/...`)
 - `GET .../orders` → `PageResponse<SettlementOrderSummary>` (paymentId, orderId, sellerId, buyerId, productId, settlementMonth(yyyyMM), 금액 필드들, status)
 - `GET .../sellers` → `PageResponse<SellerSettlementSummary>` (월·판매자 집계)
-- `POST admin/retry-failed → { retriedCount }`
+- `POST admin/retry-failed?settlementMonth=yyyyMM → { batchId, settlementMonth, retriedSellerCount, status, failReason }`
+- 현재 Gateway는 관리자 GET에만 ADMIN을 강제하고 관리자 POST는 일반 access JWT만 요구한다.
+  판매자 GET도 SELLER 역할만 확인하며 controller가 로그인 판매자의 sellerInfoId로 결과를
+  제한하지 않는다. 통합 테스트에서는 정상 응답뿐 아니라 이 현행 인가 범위를 결함으로 기록한다.
 
 **Member / Seller** (`/api/v1/members`, `/api/v1/seller/me`)
 - `Member { id, email, nickname, role, platformType }`, 로그인 `TokenResponse { tokenType, accessToken, refreshToken, expiresIn }`
@@ -197,10 +217,12 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey? }
 
 ---
 
-## 5. BE 액션 (담당 도메인 정리)
+## 5. 현재 구현과 연동 확인
 
-1. **`DropResponse` 신설 시 FE 필드명 그대로** — `id`(not `dropId`), `remainingQuantity`(not `remaining`). 안 맞추면 codegen 후 FE rename 발생.
-2. **`sellerName` 노출 여부 결정** — product/drop 응답에 추가할지. 추가 시 member `SellerInfo.storeName`을 어떻게 끌어올지(도메인 경계·N+1) 합의.
+1. **`DropResponse` 필드명 정합** — `id`(not `dropId`), `remainingQuantity`(not `remaining`)로 구현됐다.
+2. **`sellerName` 구현 완료** — member의 스토어 이벤트를 product가 `SellerStore`로 투영하고 product/drop 응답에 노출한다.
 3. **`thumbnailKey` URL 전략** — 결정: 신규 이미지는 presigned PUT으로 staging에 직접 업로드하고, 상품 등록·수정 시 BE가 final로 승격한다. 상품 응답은 **final key**를 주며 FE `resolveImageSrc`가 `GET /api/v1/products/images/{key}`로 해석한다(seed/목의 풀 URL은 패스스루). staging 이미지는 blob URL로 즉시 미리보기한다. 조회는 §1.5대로 presigned GET 리다이렉트로 전환했고, CDN은 별도 과제로 둔다.
-4. **조회 API 현황** — `/drops`·`/drops/{id}`·`/drops/me`·`/products/me`·`/categories` **구현 완료**. 남은 미구현은 `/wallet`(결제 도메인)뿐 → [`FE_API_REQUESTS.md`](./FE_API_REQUESTS.md).
-5. **`sellerId` = 스토어 `sellerInfoId`** — 판매자 인증이 스토어 단위로 변경(회원 1:N 스토어). 상품/드롭 write·`/me`의 소유·필터와 `ProductResponse.sellerId`를 활성 스토어 `sellerInfoId` 기준으로(게이트웨이가 판매자 토큰 스코프 주입). [`FE_API_REQUESTS.md` 인증 모델 변경 절]
+4. **조회 API 현황** — `/drops`·`/drops/{id}`·`/drops/me`·`/products/me`·`/categories`·`/wallet` 모두 구현 완료다.
+5. **`sellerId` = 스토어 `sellerInfoId`** — 상품/드롭 write·`/me` 소유 필터와 `ProductResponse.sellerId`는 게이트웨이가 판매자 scoped JWT에서 주입한 `sellerInfoId` 기준이다.
+6. **FE 스키마 확인** — `ProductResponse.imageKeys`, `DropResponse.limitPerUser`, 주문 생성 응답 `created`를 FE zod 스키마가 허용하는지 실제 연동에서 확인한다.
+7. **정렬 파라미터** — FE가 보내는 `sort`는 현재 product/drop 결과 순서에 반영되지 않는다. 통합 테스트에서는 상품 `createdAt desc`, 드롭 `openAt desc` 고정 순서를 기준으로 확인한다.

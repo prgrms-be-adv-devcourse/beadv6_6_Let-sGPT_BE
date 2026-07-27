@@ -15,13 +15,20 @@
 파이프라인 (traces):
 `memory_limiter → filter/noise → transform/scrub → k8sattributes → tail_sampling → batch → resource → otlp/tempo`
 
+파이프라인 (metrics):
+`prometheus(kubernetes-pods · kubernetes-cadvisor · node-exporter) → memory_limiter → batch → resource → prometheusremotewrite → Prometheus`
+
 적용:
 - **Tail sampling**: ERROR 100% / HTTP 5xx 100% / latency>2s 100% / 정상 5%(`OTEL_TAIL_SAMPLING_PERCENT`). 기존 head `probabilistic_sampler`(10%)는 제거 — head가 먼저 버리면 tail이 에러·느린 트레이스를 못 보기 때문.
 - **K8s 메타데이터**: pod/namespace/node/deployment/uid + `app` 라벨 주입. k8sattributes는 ServiceAccount RBAC(pods·namespaces·replicasets get/list/watch) 필요 → 반영됨. 라벨은 `app`만 화이트리스트 — k8s가 자동으로 붙이는 `pod-template-hash`가 catch-all(`.*`)에 걸리면 롤아웃마다 값이 바뀌어 카디널리티 폭증하므로 제외.
 - **노이즈 제거**: actuator/health/readiness/liveness 스팬을 tail 이전에 드랍(메모리 절약).
 - **최소 마스킹**: `db.statement` 삭제 + `http.url`/`url.full` 쿼리스트링 제거. payment/settlement 등 금융 경로 PII가 Tempo에 평문 저장되는 것 방지. (범용 redaction은 비용 대비 스킵)
-- **Offloading**: 앱 7종(apigateway/member/product/order/payment/settlement/search)이 collector:4318로만 OTLP push. `batch` 사용. 압축·`retry_on_failure`·`sending_queue`는 의도적 스킵 — 클러스터 내부라 대역폭 저렴, 트레이스는 유실 허용 가능한 관측 데이터, OOM은 `memory_limiter`가 방어. `sending_queue`는 exporter 기본값 유지.
-- **Decoupling**: 앱 7종 → collector 단일 엔드포인트. Tempo 주소 변경 시 collector 한 곳만 수정.
+- **Offloading**: 앱 9종(apigateway/member/product/order/payment/settlement/search/queue/ai)이 collector:4318로만 OTLP push. `batch` 사용. 압축·`retry_on_failure`·`sending_queue`는 의도적 스킵 — 클러스터 내부라 대역폭 저렴, 트레이스는 유실 허용 가능한 관측 데이터, OOM은 `memory_limiter`가 방어. `sending_queue`는 exporter 기본값 유지.
+- **Decoupling**: 앱 9종 → collector 단일 엔드포인트. Tempo 주소 변경 시 collector 한 곳만 수정.
+- **메트릭 수집**: 앱·exporter 파드, kubelet cAdvisor의 선별 컨테이너 지표와
+  PSI 전용 node-exporter의 `node_pressure_*`만 Collector가 스크레이프해 Prometheus remote
+  write로 전달한다. node-exporter 배포 후 검증은
+  [`README-node-exporter.md`](../../k8s/observability/README-node-exporter.md)를 따른다.
 - **메모리**: tail_sampling이 decision_wait 동안 트레이스를 버퍼링 → 256Mi에서 512Mi로 상향(memory_limiter 400/100).
 
 ## ⚠️ 단일 Gateway = tail_sampling SPOF (반드시 인지)
