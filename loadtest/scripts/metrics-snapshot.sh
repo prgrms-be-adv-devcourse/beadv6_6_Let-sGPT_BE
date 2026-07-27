@@ -30,6 +30,21 @@
 #                 (스크레이프 실효 30초 — otel-collector.yaml scrape_interval.
 #                  2 스크레이프 미만 윈도는 빈 결과가 되므로 2m 미만으로 줄이지 말 것)
 #
+# 트레이스 요약(Tempo) — 수집이 끝날 때 딱 1회만 질의해 traces.txt를 남긴다:
+#   TRACES        0이면 트레이스 질의를 통째로 건너뛴다. 기본 1
+#   TEMPO_URL     Tempo 베이스 URL 직접 지정(자동 탐색·port-forward 건너뜀)
+#   TEMPO_NS      기본 observability
+#   TEMPO_SVC     기본 tempo
+#   TEMPO_PORT    생략 시 Service의 http 포트에서 실측(10-tempo.yaml 기준 3200)
+#   TEMPO_LOCAL_PORT  Tempo용 port-forward 로컬 포트, 기본 13200
+#                 (Prometheus용 LOCAL_PORT와 반드시 달라야 한다 — 둘이 동시에 뜬다)
+#   TRACE_TOPN    느린 트레이스 상위 몇 개를 적을지, 기본 20
+#   TRACE_LIMIT   질의 1건이 Tempo에서 받아올 트레이스 상한, 기본 100
+#   TRACE_ERR_LIMIT  에러 질의 전용 상한, 기본 200
+#   TRACE_TIMEOUT 트레이스 질의 1건 타임아웃(초), 기본 60
+#   TRACE_SLOW_MIN 느린 트레이스 1순위 기준(TraceQL duration 표기), 기본 1s
+#   TRACE_SERVICES 서비스별 분포를 뽑을 service.name 목록(공백 구분)
+#
 # 이 스크립트는 조회만 한다. kubectl 변경 명령(apply/patch/scale/delete/exec)은 없다.
 # ============================================================================
 set -euo pipefail
@@ -43,6 +58,8 @@ usage() {
   duration_sec  총 수집 기간. 생략하면 Ctrl+C까지 무한
 
 환경변수: PROM_URL PROM_NS PROM_SVC PROM_PORT LOCAL_PORT RESULTS_DIR RATE_WINDOW
+          TRACES TEMPO_URL TEMPO_NS TEMPO_SVC TEMPO_PORT TEMPO_LOCAL_PORT
+          TRACE_TOPN TRACE_LIMIT TRACE_ERR_LIMIT TRACE_TIMEOUT TRACE_SLOW_MIN TRACE_SERVICES
           (자세한 설명은 스크립트 상단 주석)
 
 semi 노드 안에서 실행한다. 로컬 kubectl로는 클러스터에 닿지 않는다.
@@ -110,12 +127,48 @@ PF_PID=""
 PF_LOG="$OUT_DIR/.port-forward.log"
 USE_PF=0
 
+# --------------------------------------------------------- 트레이스 설정값
+TRACES="${TRACES:-1}"
+TEMPO_NS="${TEMPO_NS:-observability}"
+TEMPO_SVC="${TEMPO_SVC:-tempo}"
+TEMPO_PORT="${TEMPO_PORT:-}"
+TEMPO_LOCAL_PORT="${TEMPO_LOCAL_PORT:-13200}"
+TEMPO_URL="${TEMPO_URL:-}"
+TRACE_TOPN="${TRACE_TOPN:-20}"
+TRACE_LIMIT="${TRACE_LIMIT:-100}"
+TRACE_ERR_LIMIT="${TRACE_ERR_LIMIT:-200}"
+TRACE_TIMEOUT="${TRACE_TIMEOUT:-60}"
+TRACE_SLOW_MIN="${TRACE_SLOW_MIN:-1s}"
+TRACE_SERVICES="${TRACE_SERVICES:-apigateway member-service product-service order-service payment-service settlement-service search-service queue-service ai-service}"
+
+for v in TRACE_TOPN TRACE_LIMIT TRACE_ERR_LIMIT TRACE_TIMEOUT TEMPO_LOCAL_PORT; do
+  eval "vv=\${$v}"
+  case "$vv" in ''|*[!0-9]*) die "$v 은 정수여야 한다: '$vv'";; esac
+  [ "$vv" -ge 1 ] || die "$v 은 1 이상이어야 한다: '$vv'"
+done
+[ "$TEMPO_LOCAL_PORT" != "$LOCAL_PORT" ] \
+  || die "TEMPO_LOCAL_PORT($TEMPO_LOCAL_PORT)가 LOCAL_PORT와 같다. 두 port-forward가 동시에 뜨므로 달라야 한다."
+
+TRACES_TXT="$OUT_DIR/traces.txt"
+TRACE_TMP="$OUT_DIR/.tempo-response.json"
+TEMPO_PF_LOG="$OUT_DIR/.tempo-port-forward.log"
+TEMPO_PF_PID=""
+TEMPO_LINK=""
+TEMPO_ERR=""
+TRACE_START=""
+TRACE_END=""
+
 # ---------------------------------------------------------------- 정리·요약
 FINISHED=0
 cleanup() {
   local rc=$?
   if [ -n "$PF_PID" ]; then kill "$PF_PID" 2>/dev/null || true; wait "$PF_PID" 2>/dev/null || true; fi
-  if [ "$FINISHED" = "1" ]; then write_summary || warn "요약 생성 실패"; fi
+  if [ "$FINISHED" = "1" ]; then
+    # 트레이스 질의는 여기서만 돈다 — 수집 창이 닫힌 뒤라 측정에 섞이지 않는다.
+    collect_traces || warn "트레이스 요약 생성 실패"
+    write_summary || warn "요약 생성 실패"
+  fi
+  if [ -n "$TEMPO_PF_PID" ]; then kill "$TEMPO_PF_PID" 2>/dev/null || true; wait "$TEMPO_PF_PID" 2>/dev/null || true; fi
   exit "$rc"
 }
 STOP=0
@@ -222,6 +275,31 @@ QUERIES=(
   "hikari_timeout_rate|sum by (app) (rate(hikaricp_connections_timeout_total[__W__]))"
   "hikari_timeout_cum|sum by (app) (hikaricp_connections_timeout_total)"
 
+  # --- Hikari 커넥션 점유·획득 시간 (Micrometer HikariCP 바인더의 Timer 3종)
+  # 풀 포화의 원인이 "요청이 느려서"인지 "배경 작업이 커넥션을 오래 쥐어서"인지는
+  # active 게이지만으로는 못 가른다. 점유 시간(usage)을 직접 재서 리틀의 법칙 역산이 아닌
+  # 실측으로 판단한다. usage=반납까지 쥐고 있던 시간, acquire=풀에서 받기까지 기다린 시간,
+  # creation=신규 물리 커넥션 생성 시간. 단위는 전부 초.
+  # 평균은 구간 증가분의 비율(sum/count)로 뽑는다. 전 구간 평균은 아래 *_cum 두 행의
+  # summary DELTA로 다시 계산할 수 있다(윈도 선택과 무관한 값이 필요할 때).
+  "hikari_usage_avg|sum by (app) (rate(hikaricp_connections_usage_seconds_sum[__W__])) / sum by (app) (rate(hikaricp_connections_usage_seconds_count[__W__]))"
+  "hikari_usage_max_recent|max by (app) (hikaricp_connections_usage_seconds_max)"
+  # 반납 횟수 rate × 평균 점유 시간 = 평균 동시 점유 커넥션 수(리틀의 법칙).
+  # 이 곱이 hikari_active보다 뚜렷이 작으면 나머지는 요청 경로가 아닌 상주 점유자(스케줄러) 몫이다.
+  "hikari_usage_rate|sum by (app) (rate(hikaricp_connections_usage_seconds_count[__W__]))"
+  "hikari_usage_sum_cum|sum by (app) (hikaricp_connections_usage_seconds_sum)"
+  "hikari_usage_count_cum|sum by (app) (hikaricp_connections_usage_seconds_count)"
+  "hikari_acquire_avg|sum by (app) (rate(hikaricp_connections_acquire_seconds_sum[__W__])) / sum by (app) (rate(hikaricp_connections_acquire_seconds_count[__W__]))"
+  "hikari_acquire_max_recent|max by (app) (hikaricp_connections_acquire_seconds_max)"
+  "hikari_acquire_sum_cum|sum by (app) (hikaricp_connections_acquire_seconds_sum)"
+  "hikari_acquire_count_cum|sum by (app) (hikaricp_connections_acquire_seconds_count)"
+  "hikari_creation_avg|sum by (app) (rate(hikaricp_connections_creation_seconds_sum[__W__])) / sum by (app) (rate(hikaricp_connections_creation_seconds_count[__W__]))"
+  "hikari_creation_max_recent|max by (app) (hikaricp_connections_creation_seconds_max)"
+  # 진단 — 위 이름들이 실제로 노출되는지 확인용. 바인더 구성에 따라 Timer 3종이 없을 수 있어
+  # 이름 자체를 metric_name 라벨로 꺼내 CSV에 남긴다(값은 그 이름의 시리즈 수).
+  # 전부 부재면 이 행도 empty-result로 떨어지므로 스크립트는 죽지 않는다.
+  'hikari_meter_names|count by (metric_name) (label_replace({__name__=~"hikaricp_connections_.*"}, "metric_name", "$1", "__name__", "(.*)"))'
+
   # --- 톰캣 스레드 (queue 포함)
   "tomcat_busy_threads|sum by (app) (tomcat_threads_busy_threads)"
   "tomcat_max_threads|sum by (app) (tomcat_threads_config_max_threads)"
@@ -271,6 +349,31 @@ QUERIES=(
   # --- postgres
   "pg_active_conn|sum(pg_stat_activity_count{state=\"active\"})"
   "pg_conn_by_state|sum by (state) (pg_stat_activity_count)"
+
+  # --- 아웃박스 적체
+  # payment만 PENDING 게이지를 등록한다(payment/.../outbox/OutboxPublisher.java 생성자의
+  # Gauge.builder("payment.outbox.pending", ...)). order는 발행 카운터
+  # order.outbox.published 하나뿐이라 PENDING 시계열이 없다
+  # (order/.../kafka/publisher/OutboxEventPublisher.java) — 이름 패턴으로 함께 걸어 두어
+  # order에 게이지가 추가되면 수정 없이 잡히게 한다. member는 계측이 아예 없다.
+  # 적체가 늘면서 hikari_usage_avg가 같이 늘면 스케줄러가 커넥션을 문 채 기다린다는 뜻이다.
+  "outbox_pending|sum by (app) ({__name__=~\"(order|payment)_outbox_pending\"})"
+  # 게이지 기울기(건/초). 양수면 발행이 유입을 못 따라가고 적체가 쌓이는 중.
+  "outbox_pending_slope|sum by (app) (deriv({__name__=~\"(order|payment)_outbox_pending\"}[__W__]))"
+  "outbox_published_rate|sum by (app) (rate({__name__=~\"(order|payment)_outbox_published_total\"}[__W__]))"
+  "outbox_published_cum|sum by (app) ({__name__=~\"(order|payment)_outbox_published_total\"})"
+
+  # --- Kafka 프로듀서 (spring-boot의 Kafka 클라이언트 계측이 붙어 있을 때만 존재)
+  # 아웃박스 발행이 kafkaTemplate.send(...).get() 동기 대기라, 여기 지연이 그대로
+  # 트랜잭션 점유 시간이 된다. request_latency는 Kafka 클라이언트가 내는 값이라 단위가 ms다
+  # (초인 hikari_* 와 섞어 읽지 말 것). 계측이 없으면 이 행들은 empty-result로 남는다.
+  "kafka_req_latency_avg|avg by (app) (kafka_producer_request_latency_avg)"
+  "kafka_req_latency_max|max by (app) (kafka_producer_request_latency_max)"
+  "kafka_in_flight|sum by (app) (kafka_producer_requests_in_flight)"
+  "kafka_send_rate|sum by (app) (rate(kafka_producer_record_send_total[__W__]))"
+  # 진단 — 위 이름을 코드가 아니라 클라이언트 계측 규약에서 추정했으므로, 실제 노출 이름을
+  # 남겨 다음 라운드에서 쿼리를 고칠 수 있게 한다. 관심 계열만 걸어 행 폭증을 막는다.
+  'kafka_meter_names|count by (metric_name) (label_replace({__name__=~"kafka_producer_.*(latency|in_flight|record_send|record_error|io_wait).*"}, "metric_name", "$1", "__name__", "(.*)"))'
 
   # --- 대기열 / 재고
   # queue_admission_*는 AdmissionScheduler가 처음 입장을 처리할 때 lazily 등록된다
@@ -391,6 +494,332 @@ sample_node() {
   done
 }
 
+# =========================================================== 트레이스 (Tempo)
+# 라운드가 끝난 뒤 **1회만** 질의한다. Tempo 검색은 블록 스캔이라 비싸서, 폴링에 섞으면
+# 측정 대상 노드를 흔들어 지표 자체를 오염시킨다.
+#
+# 아래는 전부 실측 확인분이다(2026-07-27, 돌고 있는 클러스터에 직접 질의). 추측 아님:
+#   * 이미지 grafana/tempo:2.10.7 (k8s/observability/10-tempo.yaml). 매니페스트만이 아니라
+#     /api/status/buildinfo 가 {"version":"v2.10.7","revision":"8100f5a7b"} 를 돌려주는 것까지
+#     확인해 실행 중인 바이너리와 일치함을 봤다.
+#   * GET /api/search?q=<TraceQL>&start=<unix초>&end=<unix초>&limit=N → 200.
+#     응답의 trace 원소에 traceID · rootServiceName · rootTraceName · durationMs 와
+#     serviceStats{"<svc>":{spanCount,errorCount}} 가 들어 있다. 이 serviceStats 덕에
+#     "에러 스팬을 낸 서비스"를 서비스마다 따로 질의하지 않고 한 번에 집계할 수 있다.
+#     주의: durationMs·errorCount 는 0일 때 응답에서 아예 빠진다(omitempty) — jq에서 // 0 필수.
+#   * TraceQL 메트릭(/api/metrics/query_range)은 **못 쓴다**. 실측 500 +
+#     "error finding generators: empty ring" — config/tempo.yaml 에 metrics_generator
+#     (local-blocks)가 없기 때문이다. 그래서 정확한 개수 집계는 불가능하고, 아래 표의 수치는
+#     전부 limit까지 받아온 **표본**이다(N == limit 이면 상한에 걸린 것 = 실제는 더 많다).
+#   * 스팬 속성은 OTel 자동계측 규약이 아니라 Micrometer 계열이다. 실측 키:
+#     http.uri · uri · method · http.method · http.status_code · outcome · peer.service.
+#     **http.route / url.path / http.target 은 존재하지 않는다**(셋 다 질의해 0건 확인).
+#     반면 스팬 이름은 "http post /api/v1/payments/confirm" 형태로 남는다. 그래서 결제 확인
+#     경로는 이름 매칭을 1순위로 두고, 속성 기반 필터는 폴백으로만 붙였다(계측이 OTel 규약으로
+#     바뀌어도 스크립트를 안 고치게).
+#
+# 따옴표 처리: TraceQL에는 { } = " 와 공백이 들어간다. 셸에서는 작은따옴표로 감싸 큰따옴표를
+# 그대로 넘기고(변수 끼우는 곳만 printf로 조립), URL 인코딩은 Prometheus 쪽과 같은 방식으로
+# curl -G --data-urlencode 에 맡긴다(-G 없이 --data-urlencode 를 쓰면 POST가 된다).
+
+fmt_ts() { date -d "@$1" +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || printf '%s' "$1"; }
+
+tempo_ready() { curl -sf --max-time 8 -o /dev/null "$1/ready" 2>/dev/null; }
+
+start_tempo_port_forward() {
+  kubectl -n "$TEMPO_NS" port-forward "svc/$TEMPO_SVC" "$TEMPO_LOCAL_PORT:$TEMPO_PORT" \
+    >"$TEMPO_PF_LOG" 2>&1 &
+  TEMPO_PF_PID=$!
+  local i
+  for i in $(seq 1 20); do
+    sleep 1
+    if ! kill -0 "$TEMPO_PF_PID" 2>/dev/null; then
+      TEMPO_PF_PID=""
+      return 1
+    fi
+    if tempo_ready "http://127.0.0.1:$TEMPO_LOCAL_PORT"; then return 0; fi
+  done
+  kill "$TEMPO_PF_PID" 2>/dev/null || true
+  TEMPO_PF_PID=""
+  return 1
+}
+
+# Prometheus와 같은 순서 — ClusterIP 직결 먼저, 막히면(observability default-deny)
+# port-forward. 여기서 실패해도 die 하지 않는다. 이 함수는 종료 경로에서 불리므로
+# 죽으면 summary.txt까지 날아간다.
+discover_tempo() {
+  TEMPO_ERR=""
+  if [ -n "$TEMPO_URL" ]; then
+    if tempo_ready "$TEMPO_URL"; then TEMPO_LINK="TEMPO_URL 지정"; return 0; fi
+    TEMPO_ERR="TEMPO_URL='$TEMPO_URL' 이 /ready 에 응답하지 않는다."
+    return 1
+  fi
+
+  local cip port
+  cip="$(kubectl -n "$TEMPO_NS" get svc "$TEMPO_SVC" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)"
+  port="$TEMPO_PORT"
+  # 포트가 3개(3200/4318/4317)라 [0] 대신 name=http 로 집는다. 이름이 없으면 첫 포트로 폴백.
+  [ -n "$port" ] || port="$(kubectl -n "$TEMPO_NS" get svc "$TEMPO_SVC" -o jsonpath='{.spec.ports[?(@.name=="http")].port}' 2>/dev/null || true)"
+  [ -n "$port" ] || port="$(kubectl -n "$TEMPO_NS" get svc "$TEMPO_SVC" -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || true)"
+  if [ -z "$cip" ] || [ -z "$port" ]; then
+    TEMPO_ERR="Tempo Service를 못 읽었다 (ns=$TEMPO_NS svc=$TEMPO_SVC, clusterIP='$cip' port='$port')."
+    return 1
+  fi
+  TEMPO_PORT="$port"
+
+  if tempo_ready "http://$cip:$TEMPO_PORT"; then
+    TEMPO_URL="http://$cip:$TEMPO_PORT"
+    TEMPO_LINK="ClusterIP 직결"
+    return 0
+  fi
+  if start_tempo_port_forward; then
+    TEMPO_URL="http://127.0.0.1:$TEMPO_LOCAL_PORT"
+    TEMPO_LINK="port-forward -> $TEMPO_SVC:$TEMPO_PORT"
+    return 0
+  fi
+  TEMPO_ERR="Tempo에 닿을 수 없다. ClusterIP($cip:$TEMPO_PORT) 직결도 port-forward도 실패했다. port-forward 로그: $(tr '\n' ' ' < "$TEMPO_PF_LOG" 2>/dev/null | cut -c1-200)"
+  return 1
+}
+
+# 검색 1건. 성공하면 응답 본문이 $TRACE_TMP 에 남고 0을 돌려준다.
+# 실패는 $TEMPO_ERR 에 사유를 담고 1. 명령치환($(...)) 안에서 부르면 TEMPO_ERR가
+# 서브셸에 갇히므로, 본문은 변수가 아니라 파일로 넘긴다.
+tempo_search() {
+  local label="$1" traceql="$2" limit="$3" http
+  TEMPO_ERR=""
+  : > "$TRACE_TMP"
+  http="$(curl -sS -G --max-time "$TRACE_TIMEOUT" \
+            --data-urlencode "q=$traceql" \
+            --data-urlencode "start=$TRACE_START" \
+            --data-urlencode "end=$TRACE_END" \
+            --data-urlencode "limit=$limit" \
+            -o "$TRACE_TMP" -w '%{http_code}' \
+            "$TEMPO_URL/api/search")" || {
+    TEMPO_ERR="curl 실패 [$label] TraceQL=$traceql"; return 1; }
+  if [ "$http" != "200" ]; then
+    TEMPO_ERR="HTTP $http [$label] TraceQL=$traceql 응답=$(tr -d '\n' < "$TRACE_TMP" 2>/dev/null | cut -c1-200)"
+    return 1
+  fi
+  # jq에는 파일 인자 대신 리다이렉트로 먹인다 — 파일 접근이 제한된 jq 빌드(snap 등)에서도
+  # 셸이 연 fd라 항상 읽힌다. 이 스크립트의 Prometheus 쪽도 전부 파이프로 먹인다.
+  if ! jq -e 'type == "object"' < "$TRACE_TMP" >/dev/null 2>&1; then
+    TEMPO_ERR="응답 JSON 파싱 실패 [$label] TraceQL=$traceql 응답=$(tr -d '\n' < "$TRACE_TMP" 2>/dev/null | cut -c1-200)"
+    return 1
+  fi
+  return 0
+}
+
+trace_count() { jq -r '(.traces // []) | length' < "$TRACE_TMP" 2>/dev/null || echo 0; }
+
+# 검색이 상한에 걸려 조기 종료됐는지 드러낸다(completedJobs < totalJobs = 부분 결과).
+JQ_TSTATS='"검사 " + ((.metrics.inspectedBytes // "0")|tostring) + "B, 잡 "
+           + ((.metrics.completedJobs // 0)|tostring) + "/" + ((.metrics.totalJobs // 0)|tostring)'
+
+# 에러 스팬을 낸 서비스별 집계 — serviceStats에서 바로 뽑는다.
+JQ_ERR_BY_SVC='
+  [ .traces[]? | (.serviceStats // {}) | to_entries[]
+    | select((.value.errorCount // 0) > 0)
+    | { svc: .key, err: (.value.errorCount // 0) } ]
+  | group_by(.svc)
+  | map({ svc: .[0].svc, traces: length, errs: (map(.err) | add) })
+  | sort_by(-.errs)[]
+  | [ .svc, (.errs|tostring), (.traces|tostring) ] | @tsv
+'
+
+# 느린 순 상위 $n. traceID를 먼저 놓는다 — 사람이 Grafana에 그대로 붙여넣게.
+JQ_TOP_SLOW='
+  [ .traces[]? | { id: .traceID,
+                   svc: (.rootServiceName // "-"),
+                   name: (.rootTraceName // "-"),
+                   ms: (.durationMs // 0) } ]
+  | sort_by(-.ms) | .[0:$n] | .[]
+  | [ .id, .svc, (.ms|tostring), .name ] | @tsv
+'
+
+# 소요시간 분포(ms) — N/min/p50/p90/max. Tempo가 백분위를 안 주므로 표본에서 직접 센다.
+JQ_DUR_DIST='
+  [ .traces[]? | (.durationMs // 0) ] | sort as $s
+  | ($s | length) as $n
+  | if $n == 0 then [ 0, "-", "-", "-", "-" ]
+    else [ $n,
+           $s[0],
+           $s[(($n * 0.5) | floor)],
+           $s[ (if ((($n * 0.9) | floor) >= $n) then ($n - 1) else (($n * 0.9) | floor) end) ],
+           $s[$n - 1] ]
+    end
+  | @tsv
+'
+
+collect_traces() {
+  if [ "$TRACES" = "0" ]; then
+    echo "TRACES=0 — 트레이스 질의를 건너뛴다." >&2
+    return 0
+  fi
+
+  # 수집 창 전체. 앞뒤 60초 여유는 창 경계에 걸친 트레이스를 놓치지 않으려는 것.
+  TRACE_START=$(( ${START:-$(date +%s)} - 60 ))
+  TRACE_END=$(( $(date +%s) + 60 ))
+
+  local header
+  header="$(printf '%s\n' \
+    "================================================================" \
+    " 트레이스 요약 — 라운드: $ROUND" \
+    " 구간: $(fmt_ts "$TRACE_START") ~ $(fmt_ts "$TRACE_END")  (unix $TRACE_START..$TRACE_END)" \
+    " Tempo: ${TEMPO_URL:-미확정}${TEMPO_LINK:+ ($TEMPO_LINK)}" \
+    " 생성: $(now_iso)" \
+    "================================================================")"
+
+  echo "트레이스 질의 시작 — Tempo 탐색 중..." >&2
+  if ! discover_tempo; then
+    { printf '%s\n' "$header"; echo ""; echo "질의 실패: $TEMPO_ERR"; } > "$TRACES_TXT"
+    warn "트레이스: Tempo 접속 실패 — $TEMPO_ERR"
+    echo "트레이스: $TRACES_TXT (접속 실패 기록)" >&2
+    return 0
+  fi
+  # 접속 경로가 확정된 뒤라야 헤더에 URL이 찍힌다.
+  header="$(printf '%s\n' \
+    "================================================================" \
+    " 트레이스 요약 — 라운드: $ROUND" \
+    " 구간: $(fmt_ts "$TRACE_START") ~ $(fmt_ts "$TRACE_END")  (unix $TRACE_START..$TRACE_END)" \
+    " Tempo: $TEMPO_URL ($TEMPO_LINK)" \
+    " 표본 상한: 일반 ${TRACE_LIMIT}트레이스 / 에러 ${TRACE_ERR_LIMIT}트레이스" \
+    " 생성: $(now_iso)" \
+    "================================================================")"
+  printf '%s\n' "$header" > "$TRACES_TXT"
+
+  # ---- 1. 에러 스팬을 낸 서비스 ------------------------------------------
+  local err_rows="" err_slow="" err_stats="-"
+  if tempo_search "errors" '{ status = error }' "$TRACE_ERR_LIMIT"; then
+    err_stats="$(jq -r "$JQ_TSTATS" < "$TRACE_TMP" 2>/dev/null | tr -d '\n' || echo '-')"
+    err_rows="$(jq -r "$JQ_ERR_BY_SVC" < "$TRACE_TMP" 2>/dev/null || true)"
+    err_slow="$(jq -r --argjson n "$TRACE_TOPN" "$JQ_TOP_SLOW" < "$TRACE_TMP" 2>/dev/null || true)"
+    {
+      echo ""
+      echo "[1] 에러 스팬을 낸 서비스    TraceQL: { status = error }    ($err_stats)"
+      printf '%-24s %12s %12s\n' SERVICE ERROR_SPANS TRACES
+      if [ -n "$err_rows" ]; then
+        printf '%s\n' "$err_rows" | awk -F'\t' '{ printf "%-24s %12s %12s\n", $1, $2, $3 }'
+      else
+        echo "(이 구간에 status=error 트레이스가 잡히지 않았다)"
+      fi
+      if [ -n "$err_slow" ]; then
+        echo ""
+        echo "  에러 트레이스 (느린 순 상위 $TRACE_TOPN)"
+        printf '  %-34s %-20s %10s  %s\n' TRACE_ID ROOT_SERVICE DUR_MS ROOT_SPAN
+        printf '%s\n' "$err_slow" | awk -F'\t' '{ printf "  %-34s %-20s %10s  %s\n", $1, $2, $3, $4 }'
+      fi
+    } >> "$TRACES_TXT"
+  else
+    { echo ""; echo "[1] 에러 스팬을 낸 서비스"; echo "질의 실패: $TEMPO_ERR"; } >> "$TRACES_TXT"
+    warn "트레이스[에러]: $TEMPO_ERR"
+  fi
+
+  # ---- 2. 느린 트레이스 상위 N -------------------------------------------
+  # 1순위 기준에서 한 건도 안 잡히면 기준을 낮춰 재시도한다. 전부 실패하면 사유를 남긴다.
+  local q slow_rows="" slow_used="" slow_stats="-" slow_err=""
+  for q in "{ duration > $TRACE_SLOW_MIN }" '{ duration > 200ms }' '{}'; do
+    if tempo_search "slow" "$q" "$TRACE_LIMIT"; then
+      slow_used="$q"
+      slow_stats="$(jq -r "$JQ_TSTATS" < "$TRACE_TMP" 2>/dev/null | tr -d '\n' || echo '-')"
+      slow_rows="$(jq -r --argjson n "$TRACE_TOPN" "$JQ_TOP_SLOW" < "$TRACE_TMP" 2>/dev/null || true)"
+      if [ -n "$slow_rows" ]; then break; fi
+    else
+      slow_err="$TEMPO_ERR"
+      warn "트레이스[느린 트레이스]: $TEMPO_ERR"
+    fi
+  done
+  {
+    echo ""
+    if [ -n "$slow_rows" ]; then
+      echo "[2] 느린 트레이스 상위 $TRACE_TOPN    TraceQL: $slow_used    ($slow_stats)"
+      printf '%-34s %-20s %10s  %s\n' TRACE_ID ROOT_SERVICE DUR_MS ROOT_SPAN
+      printf '%s\n' "$slow_rows" | awk -F'\t' '{ printf "%-34s %-20s %10s  %s\n", $1, $2, $3, $4 }'
+    elif [ -n "$slow_used" ]; then
+      echo "[2] 느린 트레이스 상위 $TRACE_TOPN    TraceQL: $slow_used"
+      echo "(질의는 성공했으나 결과가 0건이다 — 이 구간에 트레이스가 없거나 보존이 지났다)"
+    else
+      echo "[2] 느린 트레이스 상위 $TRACE_TOPN"
+      echo "질의 실패: ${slow_err:-원인 미상}"
+    fi
+  } >> "$TRACES_TXT"
+
+  # ---- 3. 서비스별 트레이스 표본 분포 -------------------------------------
+  {
+    echo ""
+    echo "[3] 서비스별 트레이스 표본과 소요시간 분포    TraceQL: { resource.service.name = \"<svc>\" }"
+    echo "    (durationMs는 그 서비스가 참여한 **트레이스 전체**의 길이다. N이 $TRACE_LIMIT 이면 상한에 걸린 표본이다)"
+    printf '%-22s %7s %9s %9s %9s %9s  %s\n' SERVICE N MIN_MS P50_MS P90_MS MAX_MS NOTE
+  } >> "$TRACES_TXT"
+  local svc dist n note
+  for svc in $TRACE_SERVICES; do
+    q="$(printf '{ resource.service.name = "%s" }' "$svc")"
+    if tempo_search "svc:$svc" "$q" "$TRACE_LIMIT"; then
+      dist="$(jq -r "$JQ_DUR_DIST" < "$TRACE_TMP" 2>/dev/null || true)"
+      if [ -z "$dist" ]; then
+        printf '%-22s %7s %9s %9s %9s %9s  %s\n' "$svc" '-' '-' '-' '-' '-' "집계 실패(jq)" >> "$TRACES_TXT"
+        continue
+      fi
+      n="$(printf '%s' "$dist" | cut -f1)"
+      note=""
+      [ "$n" != "$TRACE_LIMIT" ] || note="상한 도달 — 실제는 더 많다"
+      printf '%s\n' "$dist" | awk -F'\t' -v s="$svc" -v note="$note" \
+        '{ printf "%-22s %7s %9s %9s %9s %9s  %s\n", s, $1, $2, $3, $4, $5, note }' >> "$TRACES_TXT"
+    else
+      printf '%-22s %7s %9s %9s %9s %9s  %s\n' "$svc" '-' '-' '-' '-' '-' "질의 실패: $TEMPO_ERR" >> "$TRACES_TXT"
+      warn "트레이스[$svc]: $TEMPO_ERR"
+    fi
+  done
+
+  # ---- 4. 결제 확인 경로 ---------------------------------------------------
+  # 이 스택은 Micrometer 계측이라 http.route가 없다(실측). 스팬 이름 매칭이 1순위,
+  # 나머지는 계측 규약이 바뀌었을 때를 위한 폴백이다. 처음으로 결과가 나온 필터를 쓴다.
+  local pay_dist="" pay_used="" pay_stats="-" pay_err=""
+  for q in '{ name =~ ".*payments/confirm.*" }' \
+           '{ span.uri = "/api/v1/payments/confirm" }' \
+           '{ span.http.uri = "/api/v1/payments/confirm" }' \
+           '{ span.http.route = "/api/v1/payments/confirm" }'; do
+    if tempo_search "payments-confirm" "$q" "$TRACE_LIMIT"; then
+      pay_used="$q"
+      pay_stats="$(jq -r "$JQ_TSTATS" < "$TRACE_TMP" 2>/dev/null | tr -d '\n' || echo '-')"
+      if [ "$(trace_count)" != "0" ]; then
+        pay_dist="$(jq -r "$JQ_DUR_DIST" < "$TRACE_TMP" 2>/dev/null || true)"
+        break
+      fi
+    else
+      pay_err="$TEMPO_ERR"
+      warn "트레이스[결제 확인 경로]: $TEMPO_ERR"
+    fi
+  done
+  {
+    echo ""
+    if [ -n "$pay_dist" ]; then
+      echo "[4] 결제 확인 경로(/api/v1/payments/confirm) 소요시간 분포    TraceQL: $pay_used    ($pay_stats)"
+      printf '%7s %9s %9s %9s %9s\n' N MIN_MS P50_MS P90_MS MAX_MS
+      printf '%s\n' "$pay_dist" | awk -F'\t' '{ printf "%7s %9s %9s %9s %9s\n", $1, $2, $3, $4, $5 }'
+    elif [ -n "$pay_used" ]; then
+      echo "[4] 결제 확인 경로(/api/v1/payments/confirm) 소요시간 분포"
+      echo "(후보 필터를 전부 질의했으나 0건이다 — 이 구간에 결제 확인 호출이 없었거나 스팬 이름/속성이 바뀌었다)"
+    else
+      echo "[4] 결제 확인 경로(/api/v1/payments/confirm) 소요시간 분포"
+      echo "질의 실패: ${pay_err:-원인 미상}"
+    fi
+  } >> "$TRACES_TXT"
+
+  {
+    echo ""
+    echo "읽는 법 — TRACE_ID를 Grafana Explore의 Tempo 데이터소스에 그대로 붙여넣으면 그 트레이스가 열린다."
+    echo "N은 개수가 아니라 표본 수다. Tempo에는 개수 집계 API가 없고(metrics_generator 미구성)"
+    echo "검색은 limit까지만 돌려주므로, N이 상한과 같으면 '적어도 그만큼'으로만 읽어야 한다."
+    echo "[1]의 ERROR_SPANS는 에러 트레이스 표본 안에서 그 서비스가 낸 에러 스팬 수의 합이다."
+    echo "루트가 apigateway인 트레이스가 대부분이므로, 어느 서비스가 실패의 진원인지는 [1]로 보고"
+    echo "그 지연이 어디서 왔는지는 [3]의 P90/MAX와 metrics.csv의 hikari_*·http_* 를 겹쳐 읽는다."
+  } >> "$TRACES_TXT"
+
+  rm -f "$TRACE_TMP" 2>/dev/null || true
+  echo "트레이스: $TRACES_TXT" >&2
+  return 0
+}
+
 # ------------------------------------------------------------------- 요약
 write_summary() {
   {
@@ -444,6 +873,13 @@ write_summary() {
     echo ""
     echo "MAX/LAST는 관측 표본의 최대·마지막 값. DELTA는 마지막−처음(누적 카운터 *_cum 계열에서"
     echo "구간 증가분으로 읽는다). ERR>0 이면 그 지표는 그 횟수만큼 조회 실패·무표본이었다."
+    echo ""
+    echo "커넥션 점유 읽는 법: 전 구간 평균 점유 시간(초) = hikari_usage_sum_cum의 DELTA /"
+    echo "hikari_usage_count_cum의 DELTA (앱별로 각각). 이 값 × hikari_usage_rate 가"
+    echo "hikari_active LAST보다 뚜렷이 작으면, 차이만큼은 요청 경로가 아니라 커넥션을 상시"
+    echo "쥐고 있는 배경 작업 몫이다. hikari_acquire_avg 가 같이 크면 이미 대기가 발생한 것."
+    echo "*_meter_names 행은 값이 아니라 진단이다 — 그 이름의 지표가 실제로 존재했다는 뜻이고,"
+    echo "ERR(empty-result)만 남았다면 해당 계열이 노출되지 않아 쿼리 이름을 고쳐야 한다."
   } >> "$SUMMARY"
 
   echo "요약: $SUMMARY" >&2

@@ -11,13 +11,15 @@
  * Run:
  *   k6 run -e DROP_ID=<uuid> loadtest/k6/drop-flow.js                 # PROFILE=smoke (기본)
  *   k6 run -e DROP_ID=<uuid> -e PROFILE=ramp loadtest/k6/drop-flow.js
+ *   k6 run -e PROFILE=stress loadtest/k6/drop-flow.js                 # 열린 모델(도착률 고정)
+ *   k6 run --out csv=results/raw.csv -e PROFILE=ramp loadtest/k6/drop-flow.js   # 요청 단위 원본
  *
  * Everything is __ENV-driven; see the CFG block below for names and defaults.
  */
 import http from 'k6/http';
 import { group, sleep, check } from 'k6';
 import { SharedArray } from 'k6/data';
-import { Trend, Counter } from 'k6/metrics';
+import { Trend, Counter, Gauge } from 'k6/metrics';
 import exec from 'k6/execution';
 
 // ---------------------------------------------------------------------------
@@ -38,6 +40,55 @@ import exec from 'k6/execution';
 //
 // 이전 기본값(200 VU)은 무릎을 20배 넘겨 뛰어버리는 값이라 측정이 아니라 Hikari 5s
 // 타임아웃 벽(connection is not available)만 찍고 끝난다.
+
+// ---------------------------------------------------------------------------
+// 열린 모델(stress) — 도착률을 고정해 용량 천장을 잰다
+// ---------------------------------------------------------------------------
+// smoke/ramp/hold 는 전부 ramping-vus(닫힌 모델)다. VU는 응답을 받아야 다음 요청을 보내므로
+// 지연이 늘면 제시 부하가 저절로 줄어든다. 그래서 "처리량이 늘었다"가 시스템이 더 받아낸
+// 것인지, 부하가 알아서 줄어든 것인지 분리되지 않는다. 용량 천장을 재려면 서버 상태와
+// 무관하게 도착률이 고정돼야 한다 = ramping-arrival-rate(열린 모델).
+//
+// 계단 값은 실측으로 확정된 천장 앞뒤를 훑도록 잡았다. 지금까지 라운드에서 병목은
+// 게이트웨이 유량제한(사용자별 2/s) -> 결제 커넥션풀(pool 2) -> 2코어 노드 CPU 순서로
+// 드러났고, 이 클러스터의 실질 천장은 **결제 확인 초당 약 8건**이다. 그래서
+// 2(천장의 1/4) -> 4(1/2) -> 8(천장) -> 12(1.5배) -> 16(2배) 로 훑는다. 천장 아래에서
+// 도착률과 처리량이 같이 오르다가, 8 부근에서 처리량이 평평해지고 지연이 꺾이는 지점이
+// 곧 용량이다.
+//
+// target 하나마다 [전환 30s] + [평탄 3m] 두 stage를 넣는다. k6는 stage 안에서 도착률을
+// 직전 값에서 target까지 **선형 보간**하므로, 같은 target을 두 번 쓰지 않으면 평탄 구간이
+// 아예 생기지 않는다. "도착률 8/s 구간의 p95" 처럼 구간을 인용하려면 그 구간의 도착률이
+// 실제로 고정돼 있어야 한다(닫힌 모델의 2분 계단과 같은 이유다).
+//
+// 전부 __ENV로 덮을 수 있고, 이름을 RATE_* 로 따로 뒀다 — 기존 STAGES/VUS/DURATION 규약은
+// VU 단위라서 같은 이름을 나눠 쓰면 "이 숫자가 VU인가 도착률인가"가 섞인다.
+const RATE = {
+  // 초당 iteration 수 계단. 단계 수도 여기서 바뀐다.
+  targets: (__ENV.RATE_TARGETS || '2,4,8,12,16')
+    .split(',').map((t) => parseFloat(t.trim())).filter((t) => t > 0),
+  holdDur: __ENV.RATE_STAGE_DUR || '3m',   // 평탄 구간 — 실제로 인용할 구간
+  rampDur: __ENV.RATE_RAMP_DUR || '30s',   // 계단 사이 전환 구간
+  tailDur: __ENV.RATE_TAIL_DUR || '1m',    // 마지막 0으로 내리는 구간
+  startRate: parseFloat(__ENV.RATE_START || '0'),
+  // VU 사이징용 iteration 소요 가정(초). 포화 시 iteration이 8초를 넘긴 실측이 있어
+  // 4초(seed.js의 EST_ITER_SEC)가 아니라 8초를 쓴다 — 적게 잡으면 VU가 모자라 도착이 버려진다.
+  iterSec: parseFloat(__ENV.RATE_ITER_SEC || '8'),
+};
+
+// 계단 스펙 문자열을 만든다. 표기는 닫힌 모델과 같은 '<dur>:<target>' 이지만 target의
+// 단위가 VU가 아니라 초당 iteration 이다. RATE_STAGES를 주면 통째로 대체된다.
+function buildRateSpec() {
+  if (__ENV.RATE_STAGES) return __ENV.RATE_STAGES;
+  const parts = [];
+  for (const t of RATE.targets) {
+    parts.push(`${RATE.rampDur}:${t}`);
+    parts.push(`${RATE.holdDur}:${t}`);
+  }
+  parts.push(`${RATE.tailDur}:0`);
+  return parts.join(',');
+}
+
 const PROFILES = {
   // 흐름이 끝까지 도는지만 증명. 부하 아님. 항상 이걸 먼저 돌린다.
   // 3 VU면 confirm ~1/s — pool 2로도 여유롭고 사용자별 rate limit(2/s)에도 안 걸린다.
@@ -50,14 +101,20 @@ const PROFILES = {
   // 무릎을 찾은 뒤 그 지점에서 오래 눌러 큐/아웃박스/정산이 밀리는지 본다. -e HOLD_VUS 로 조절.
   hold: `1m:${__ENV.HOLD_VUS || '20'},10m:${__ENV.HOLD_VUS || '20'},1m:0`,
 
-  // 벽을 일부러 보고 싶을 때만. 여기서 나오는 숫자는 "용량"이 아니라 "포화 시 어떻게 깨지는가".
-  stress: '30s:20,1m:60,1m:100,1m:0',
+  // 열린 모델. 여기 숫자만 단위가 VU가 아니라 **초당 iteration(도착률)** 이다.
+  // 예전 stress('30s:20,1m:60,1m:100,1m:0')는 닫힌 모델이라 100 VU가 만드는 실제 부하가
+  // 서버 지연에 따라 저절로 줄어들어, 벽을 봐도 그게 몇 건/초에서 생긴 벽인지 말할 수 없었다.
+  stress: buildRateSpec(),
 };
 
 const PROFILE = __ENV.PROFILE || 'smoke';   // 기본은 안전한 쪽
 if (!(PROFILE in PROFILES) && !__ENV.STAGES && !__ENV.DURATION) {
   throw new Error(`unknown PROFILE=${PROFILE}; one of: ${Object.keys(PROFILES).join(', ')}`);
 }
+
+// 열린 모델로 도는가. STAGES/DURATION 을 명시하면 그건 VU 단위 규약이므로 닫힌 모델이
+// 이긴다 — 즉 smoke/ramp/hold 와 기존 -e STAGES/-e VUS 경로는 이 플래그가 절대 안 켜진다.
+const OPEN_MODEL = PROFILE === 'stress' && !__ENV.STAGES && !__ENV.DURATION;
 
 // ---------------------------------------------------------------------------
 // 시딩 산출물 — seed.js 가 만든 대상 정보
@@ -164,6 +221,13 @@ const outPaymentError = new Counter('outcome_payment_error');
 const outRateLimited = new Counter('outcome_rate_limited_429');
 const outGaveUp = new Counter('outcome_gave_up');
 
+// 재고 검산용 게이지. setup()이 시작 잔여를, teardown()이 종료 잔여를 여기에 싣는다.
+// 게이지를 쓰는 이유는 handleSummary 로 값을 넘길 수 있는 유일한 경로이기 때문이다:
+// teardown 은 지표를 읽을 수 없고(k6가 안 넘겨준다), handleSummary 는 HTTP 조회를 하는
+// 자리가 아니다. 대신 setup/teardown 이 emit한 샘플은 요약 데이터에 그대로 들어온다.
+const stockRemainingStart = new Gauge('stock_remaining_start');
+const stockRemainingEnd = new Gauge('stock_remaining_end');
+
 // ---------------------------------------------------------------------------
 // options
 // ---------------------------------------------------------------------------
@@ -174,9 +238,69 @@ function parseStages(spec) {
   });
 }
 
-const scenario = CFG.duration
-  ? { executor: 'constant-vus', vus: CFG.vus, duration: CFG.duration }
-  : { executor: 'ramping-vus', startVUs: 0, stages: parseStages(CFG.stages), gracefulRampDown: '30s' };
+/** k6 표기('30s','3m','1h')를 초로. 열린 모델의 도착 수 추정에만 쓴다. */
+function durationSeconds(spec) {
+  const m = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(String(spec).trim());
+  if (!m) throw new Error(`stage duration을 파싱할 수 없다: '${spec}'`);
+  return parseFloat(m[1]) * { ms: 0.001, s: 1, m: 60, h: 3600 }[m[2]];
+}
+
+/**
+ * 열린 모델에서 이 계단 스펙이 만들어 낼 총 iteration 수. 도착률을 시간으로 적분한 값이라
+ * 사다리꼴 합이면 된다(k6가 stage 안에서 선형 보간하므로 정확히 사다리꼴이다).
+ * 재고 사전조건 판정에 쓴다 — 열린 모델은 서버가 느려져도 도착이 안 줄어들기 때문에
+ * "VU 수 × 2" 같은 닫힌 모델식 근사가 통하지 않는다.
+ */
+function estimateArrivals(spec, startRate) {
+  let prev = startRate;
+  let total = 0;
+  for (const s of parseStages(spec)) {
+    total += ((prev + s.target) / 2) * durationSeconds(s.duration);
+    prev = s.target;
+  }
+  return Math.ceil(total);
+}
+
+// 열린 모델 VU 사이징 — Little의 법칙: 필요한 동시 VU = 도착률 × iteration 소요시간.
+// iteration 하나가 login(캐시됨) + queue entry + poll 몇 번 + order + confirm + think 1s 를
+// 돌고, 포화 구간에서 8초를 넘긴 실측이 있다(RATE_ITER_SEC 기본 8).
+//   preAllocatedVUs = ceil(peak 16/s × 8s) = 128 — 최고 계단에서도 도착을 놓치지 않는 값.
+//                     미리 만들어 두는 이유는 계단이 오를 때 VU를 새로 띄우느라 도착이
+//                     밀리면 그 지연이 서버 지연으로 오해되기 때문이다.
+//   maxVUs          = 그 2배 = 256 — 포화로 iteration이 16초까지 늘어나도 흡수한다.
+// 이 벽에 닿으면 k6는 도착을 버리고 dropped_iterations 를 올린다. 그 값이 0이 아닌 라운드의
+// 처리량은 "서버가 받아낸 양"이 아니라 "부하 생성기가 만들어낸 양"이라 용량 근거가 못 된다.
+// 그래서 요약 출력에 항상 찍는다(textSummary 참조).
+const peakArrivalRate = OPEN_MODEL
+  ? parseStages(CFG.stages).reduce((max, s) => Math.max(max, s.target), RATE.startRate)
+  : 0;
+const RATE_VUS = {
+  pre: parseInt(__ENV.RATE_PRE_VUS || String(Math.max(10, Math.ceil(peakArrivalRate * RATE.iterSec))), 10),
+  max: parseInt(__ENV.RATE_MAX_VUS || String(Math.max(20, Math.ceil(peakArrivalRate * RATE.iterSec * 2))), 10),
+};
+
+function buildScenario() {
+  // -e DURATION 은 예나 지금이나 constant-vus 로 간다(프로파일보다 우선).
+  if (CFG.duration) {
+    return { executor: 'constant-vus', vus: CFG.vus, duration: CFG.duration };
+  }
+  if (OPEN_MODEL) {
+    return {
+      executor: 'ramping-arrival-rate',
+      startRate: RATE.startRate,
+      timeUnit: '1s',                    // stage target의 단위 = 초당 iteration
+      stages: parseStages(CFG.stages),
+      preAllocatedVUs: RATE_VUS.pre,
+      maxVUs: RATE_VUS.max,
+      // 마지막 계단이 끝난 뒤 진행 중이던 iteration을 끝낼 여유. 여기서 끊으면 confirm이
+      // 응답 전에 죽어 재고를 문 채로 라운드가 끝난다(= 유령 매진처럼 보인다).
+      gracefulStop: '30s',
+    };
+  }
+  return { executor: 'ramping-vus', startVUs: 0, stages: parseStages(CFG.stages), gracefulRampDown: '30s' };
+}
+
+const scenario = buildScenario();
 
 export const options = {
   scenarios: { drop_flow: scenario },
@@ -339,10 +463,19 @@ export function setup() {
   const peak = CFG.duration
     ? CFG.vus
     : parseStages(CFG.stages).reduce((max, s) => Math.max(max, s.target), 0);
+  // 열린 모델에서는 위 peak의 단위가 VU가 아니라 초당 도착률이다. 아래 재고 게이트와
+  // 계정 수 경고가 둘 다 "동시에 몇 명이 붙는가"를 묻기 때문에 여기서 환산해 둔다.
+  const estArrivals = OPEN_MODEL ? estimateArrivals(CFG.stages, RATE.startRate) : 0;
+  const estConcurrency = OPEN_MODEL ? Math.ceil(peak * RATE.iterSec) : peak;
+
   const dropSrc = __ENV.DROP_ID ? '-e DROP_ID' : `${TARGET_FILE} (seed.js)`;
   console.log(
-    `drop-flow: profile=${PROFILE} base=${CFG.baseUrl} drop=${CFG.dropId} [${dropSrc}] ` +
-    `qty=${CFG.quantity} users=${users.length} peakVUs=${peak} stages=${CFG.stages}`,
+    OPEN_MODEL
+      ? `drop-flow: profile=${PROFILE}(열린 모델) base=${CFG.baseUrl} drop=${CFG.dropId} [${dropSrc}] ` +
+        `qty=${CFG.quantity} users=${users.length} peakRate=${peak}/s 추정도착=${estArrivals}건 ` +
+        `preAllocatedVUs=${RATE_VUS.pre} maxVUs=${RATE_VUS.max} stages=${CFG.stages}`
+      : `drop-flow: profile=${PROFILE} base=${CFG.baseUrl} drop=${CFG.dropId} [${dropSrc}] ` +
+        `qty=${CFG.quantity} users=${users.length} peakVUs=${peak} stages=${CFG.stages}`,
   );
   // seed.js가 다른 프로파일 기준으로 사이징했으면 재고가 모자랄 수 있다. 아래 재고 게이트가
   // 어차피 잡아내지만, 원인을 먼저 알려주는 편이 낫다.
@@ -410,12 +543,24 @@ export function setup() {
 
   // 재고 게이트: 재고가 금방 마르면 대부분의 iteration이 SOLD_OUT으로 끝나 부하가 아니라
   // "매진 경합"만 측정하게 된다. peak VU 수의 최소 2배는 있어야 계단 하나를 버틴다.
-  const needed = peak * CFG.quantity * 2;
+  //
+  // 열린 모델은 기준이 다르다. 닫힌 모델에서는 재고가 마르면 iteration이 빨리 끝나고 VU가
+  // 곧바로 다음 iteration을 도는 정도지만, 열린 모델은 서버 상태와 무관하게 도착이 계속
+  // 들어오므로 재고가 마른 시점 이후는 통째로 매진 측정이 된다. 그래서 추정 도착 수 전량이
+  // 주문에 성공한다고 보고 그만큼을 요구한다(429·매진으로 실제 소모는 더 적지만, 여기서
+  // 인색하게 잡아 라운드 후반을 통째로 버리는 쪽이 훨씬 비싸다).
+  const needed = OPEN_MODEL ? estArrivals * CFG.quantity : peak * CFG.quantity * 2;
   if (!__ENV.SKIP_STOCK_CHECK && drop.remainingQuantity < needed) {
     throw new Error(
-      `잔여 재고 ${drop.remainingQuantity} 개로는 peakVUs=${peak}(qty=${CFG.quantity}) 를 감당 못 한다. ` +
-      `최소 ${needed} 개 필요. 재고를 늘린 드롭을 새로 만들거나 프로파일을 낮출 것 ` +
-      `(-e PROFILE=smoke). 확인 후에도 강행하려면 -e SKIP_STOCK_CHECK=1.`,
+      OPEN_MODEL
+        ? `잔여 재고 ${drop.remainingQuantity} 개로는 peakRate=${peak}/s(추정 도착 ${estArrivals}건, ` +
+          `qty=${CFG.quantity}) 를 감당 못 한다. 최소 ${needed} 개 필요.\n` +
+          `  seed.js 의 stress 사이징은 아직 닫힌 모델 기준이라 이 값을 못 맞춘다. 명시적으로 줄 것:\n` +
+          `  PROFILE=stress DROP_TOTAL_QUANTITY=${needed} USER_COUNT=${estConcurrency} node loadtest/k6/seed.js\n` +
+          `  계단을 낮추려면 -e RATE_TARGETS=2,4,8 처럼 줄이고, 확인 후 강행하려면 -e SKIP_STOCK_CHECK=1.`
+        : `잔여 재고 ${drop.remainingQuantity} 개로는 peakVUs=${peak}(qty=${CFG.quantity}) 를 감당 못 한다. ` +
+          `최소 ${needed} 개 필요. 재고를 늘린 드롭을 새로 만들거나 프로파일을 낮출 것 ` +
+          `(-e PROFILE=smoke). 확인 후에도 강행하려면 -e SKIP_STOCK_CHECK=1.`,
     );
   }
 
@@ -430,17 +575,23 @@ export function setup() {
     );
   }
 
-  if (peak > users.length) {
+  // 열린 모델에서는 동시 VU가 도착률 × iteration 소요로 정해지므로(Little), 계정 부족 판정도
+  // peak 도착률이 아니라 그 환산값으로 해야 한다. 계정이 모자라면 VU들이 계정을 공유하고
+  // 사용자별 confirm 유량제한(2/s)에 직렬화되어, 측정하려던 천장 대신 유량제한을 다시 재게 된다.
+  if (estConcurrency > users.length) {
     console.warn(
-      `only ${users.length} seeded users for ${peak} VUs — accounts will be shared, ` +
+      `only ${users.length} seeded users for ${estConcurrency} VUs — accounts will be shared, ` +
       `which serialises them behind the per-user confirm rate limit. ` +
-      `Re-run the seeder with USER_COUNT=${peak}.`,
+      `Re-run the seeder with USER_COUNT=${estConcurrency}.`,
     );
   }
 
   console.log(
     `precondition OK: drop status=${drop.status} remaining=${drop.remainingQuantity} price=${drop.dropPrice}`,
   );
+  // 시작 잔여를 게이지로도 실어 둔다. teardown 은 지표를 못 읽고 handleSummary 는 setup 의
+  // 반환값을 못 받으므로, 재고 검산 산술을 한곳(handleSummary)에서 끝내려면 이 경로가 필요하다.
+  stockRemainingStart.add(drop.remainingQuantity);
   return { dropPrice: drop.dropPrice, remainingAtStart: drop.remainingQuantity };
 }
 
@@ -728,11 +879,71 @@ function confirmPayment(headers, order) {
   return { outcome: body.status };
 }
 
+/**
+ * 라운드 종료 검산 — 재고가 실제로 얼마나 줄었나.
+ *
+ * 라운드마다 사람이 손으로 하던 계산이다. 기대식은 "시작 잔여 − 성공 건수 = 종료 잔여" 인데
+ * 실제로는 실패한 결제가 재고를 물고 만료 보상 때까지 돌려주지 않아 그만큼 덜 남는다
+ * (지난 램프 라운드: 시작 14745 − 성공 2520 = 12225 여야 하는데 종료가 12087, 차이 138이
+ * 실패 138건과 정확히 일치했다 = 유령 매진).
+ *
+ * ── 왜 teardown 과 handleSummary 로 쪼갰나 ────────────────────────────────────
+ * 검산에 필요한 숫자가 셋인데 k6에서 셋을 한 자리에서 볼 수 없다.
+ *   - 시작 잔여: setup() 만 안다. 반환값으로 teardown 에, 게이지로 handleSummary 에 간다.
+ *   - 종료 잔여: HTTP 조회가 있어야 안다. 그래서 teardown 몫이다(handleSummary 는 테스트가
+ *     끝난 뒤 요약을 만드는 자리지 요청을 보내는 자리가 아니다).
+ *   - 성공 건수: 커스텀 지표다. **k6는 teardown 에 지표를 넘겨주지 않는다.** handleSummary 만 안다.
+ * 그래서 teardown 은 조회해서 원본 사실(종료 잔여·드롭 상태)을 시끄럽게 찍고 그 값을 게이지에
+ * 실어 보내는 데까지만 하고, 세 숫자를 합치는 산술은 handleSummary 가 끝낸다. 억지로 teardown
+ * 에 몰면 성공 건수를 몰라 반쪽 검산이 되고, 반대로 몰면 종료 잔여를 알 방법이 없다.
+ *
+ * WireMock 요청 저널은 여기서 안 본다 — ClusterIP라 노트북에서 닿지 않는다(README 4절 참조).
+ */
+export function teardown(data) {
+  const startRemaining = data && typeof data.remainingAtStart === 'number' ? data.remainingAtStart : null;
+
+  const res = http.get(`${CFG.baseUrl}/api/v1/drops/${CFG.dropId}`, {
+    tags: { name: 'teardown GET /api/v1/drops/{dropId}' },
+    timeout: '15s',
+  });
+  const drop = res.status === 200 ? safeJson(res) : null;
+
+  if (!drop || typeof drop.remainingQuantity !== 'number') {
+    // 조용히 넘기면 라운드 결과에 "검산 못 함"이 안 남는다. 시끄럽게 남긴다.
+    console.error(
+      `⚠ 재고 검산 실패: 종료 시점 드롭 조회가 안 됐다 (HTTP ${res.status}, error=${res.error || 'n/a'}). ` +
+      `시작 잔여=${startRemaining === null ? '알 수 없음' : startRemaining}. ` +
+      `GET ${CFG.baseUrl}/api/v1/drops/${CFG.dropId} 로 직접 확인할 것.`,
+    );
+    return;
+  }
+
+  stockRemainingEnd.add(drop.remainingQuantity);
+
+  const decrease = startRemaining === null ? null : startRemaining - drop.remainingQuantity;
+  console.log(
+    `재고(teardown): 시작=${startRemaining === null ? 'n/a' : startRemaining} ` +
+    `종료=${drop.remainingQuantity} 감소=${decrease === null ? 'n/a' : decrease} ` +
+    `드롭 상태=${drop.status}. 성공 건수 대비 검산은 아래 요약의 "재고 검산" 절에 찍힌다.`,
+  );
+}
+
 export function handleSummary(data) {
   return {
     stdout: textSummary(data),
     'loadtest-summary.json': JSON.stringify(data, null, 2),
   };
+}
+
+/** 지표가 한 번도 안 찍혔으면 k6 요약에 아예 안 들어온다. 없는 건 0으로 본다. */
+function counterCount(data, name) {
+  const m = data.metrics[name];
+  return m && m.values && typeof m.values.count === 'number' ? m.values.count : 0;
+}
+
+function gaugeValue(data, name) {
+  const m = data.metrics[name];
+  return m && m.values && typeof m.values.value === 'number' ? m.values.value : null;
 }
 
 // Minimal text summary so handleSummary does not need an external module (jslib.k6.io
@@ -765,6 +976,93 @@ function textSummary(data) {
     const v = m.values;
     lines.push(`  ${k.padEnd(30)} med=${v.med.toFixed(0)} p95=${v['p(95)'].toFixed(0)} max=${v.max.toFixed(0)}`);
   }
+
+  lines.push(...loadGeneratorLines(data));
+  lines.push(...stockReconciliationLines(data));
+
   lines.push('');
   return lines.join('\n');
+}
+
+/**
+ * 부하 생성기가 실제로 계획한 부하를 만들었는가.
+ *
+ * 열린 모델(ramping-arrival-rate)에서 VU가 모자라면 k6는 도착을 그냥 버리고
+ * dropped_iterations 를 올린다. 이 값이 0이 아니면 "서버가 못 받아낸 것"과 "우리가 못 만든
+ * 것"이 결과에 섞여 있다는 뜻이고, 그 라운드의 처리량은 용량 근거로 쓸 수 없다
+ * (RATE_PRE_VUS / RATE_MAX_VUS 를 올리고 다시 돌려야 한다). 기본 요약에는 안 나오므로 여기서 찍는다.
+ * 닫힌 모델에는 이 지표가 아예 없다 — VU가 알아서 기다리기 때문이다.
+ */
+function loadGeneratorLines(data) {
+  const lines = ['=== 부하 생성기 ==='];
+  const iters = data.metrics.iterations;
+  if (iters && iters.values) {
+    lines.push(
+      `  ${'iterations'.padEnd(30)} ${iters.values.count} (${(iters.values.rate || 0).toFixed(2)}/s)`,
+    );
+  }
+  const dropped = data.metrics.dropped_iterations;
+  if (!dropped || !dropped.values) {
+    lines.push(`  ${'dropped_iterations'.padEnd(30)} (없음 — 닫힌 모델이라 도착을 버릴 일이 없다)`);
+    return lines;
+  }
+  const n = dropped.values.count;
+  lines.push(`  ${'dropped_iterations'.padEnd(30)} ${n} (${(dropped.values.rate || 0).toFixed(2)}/s)`);
+  if (n > 0) {
+    lines.push(
+      `  ⚠ 도착 ${n}건을 VU 부족으로 만들지 못했다. 이 라운드의 처리량은 서버 용량이 아니라 ` +
+      `부하 생성기 한계를 포함한다 — RATE_MAX_VUS/RATE_PRE_VUS 를 올려 다시 돌릴 것.`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * 재고 검산. 세 숫자의 출처는 teardown 주석 참조(시작=setup 게이지, 종료=teardown 게이지,
+ * 성공=이 요약의 카운터). 기대식은 "감소량 = 성공 건수" 이고, 남는 차이가 곧 실패한 결제가
+ * 물고 있는 미복원 재고다 = 유령 매진.
+ */
+function stockReconciliationLines(data) {
+  const lines = ['=== 재고 검산 ==='];
+  const start = gaugeValue(data, 'stock_remaining_start');
+  const end = gaugeValue(data, 'stock_remaining_end');
+  const success = counterCount(data, 'outcome_success');
+
+  if (start === null || end === null) {
+    lines.push(
+      `  ⚠ 검산 불가 — ${start === null ? '시작' : '종료'} 잔여를 못 읽었다 ` +
+      `(setup/teardown 로그 확인). 성공 건수만: ${success}`,
+    );
+    return lines;
+  }
+
+  const decrease = start - end;
+  const ghost = decrease - success;
+  lines.push(`  ${'시작 잔여'.padEnd(26)} ${start}`);
+  lines.push(`  ${'종료 잔여'.padEnd(26)} ${end}`);
+  lines.push(`  ${'실제 감소량'.padEnd(25)} ${decrease}`);
+  lines.push(`  ${'성공(outcome_success)'.padEnd(22)} ${success}`);
+  lines.push(`  ${'차이(미복원 재고)'.padEnd(23)} ${ghost}`);
+
+  if (ghost > 0) {
+    // 결제 단계까지 갔다가 실패한 iteration = 주문이 재고를 잡은 뒤 결제가 깨진 건들.
+    // 이 합이 차이와 같으면 미복원 재고의 출처가 확정된다(지난 램프 라운드에서 138=138).
+    const payFailures = counterCount(data, 'outcome_payment_rejected')
+      + counterCount(data, 'outcome_payment_pending')
+      + counterCount(data, 'outcome_payment_error');
+    lines.push(
+      `  ⚠ 유령 매진 후보 ${ghost}건 — 실패한 결제가 재고를 물고 있다(만료 보상 전까지 안 돌아온다).`,
+    );
+    lines.push(
+      `    결제 단계 실패 합 ${payFailures}건(rejected/pending/error). 두 값이 같으면 출처가 확정된다.`,
+    );
+  } else if (ghost < 0) {
+    lines.push(
+      `  ⚠ 감소량이 성공 건수보다 ${-ghost}건 적다. 만료 보상이 라운드 중에 재고를 돌려줬거나 ` +
+      `이 드롭에 다른 트래픽이 섞였다 — 이 라운드의 재고 수치는 그대로 인용하지 말 것.`,
+    );
+  } else {
+    lines.push('  미복원 재고 없음 (감소량 = 성공 건수).');
+  }
+  return lines;
 }

@@ -213,8 +213,15 @@ iteration이 `SOLD_OUT` 으로 끝나서 큐/주문/결제가 아니라 **매진
 | `hold` (VU 20) | 20 | ~3,300 | ~4,290 |
 | `stress` | 100 | ~2,625 | ~3,413 |
 
+> **`stress` 행은 시더에 남아 있는 옛 닫힌 모델 기준이다.** `drop-flow.js` 의 `stress` 는
+> 열린 모델로 바뀌어 추정 도착이 약 9,060건이라 이 값으로는 재고가 라운드 중간에 마른다.
+> `PROFILE=stress DROP_TOTAL_QUANTITY=9060 USER_COUNT=128 node loadtest/k6/seed.js` 로
+> 명시적으로 줄 것(5절의 stress 항목 참조). 어긋난 채로 돌리면 `setup()` 이 거부한다.
+
 `DROP_TOTAL_QUANTITY` 로 덮어쓸 수 있다. 반대편 방어선은 `drop-flow.js` 의 `setup()` 인데,
-**잔여 재고 < peakVU × QTY × 2** 면 VU를 띄우지 않고 거부한다.
+닫힌 모델에서는 **잔여 재고 < peakVU × QTY × 2**, 열린 모델에서는 **잔여 재고 < 추정 도착 수
+× QTY** 면 VU를 띄우지 않고 거부한다(열린 모델은 재고가 마른 뒤에도 도착이 계속 들어와
+라운드 후반이 통째로 매진 측정이 되기 때문에 기준이 더 빡빡하다).
 
 > **`limitPerUser` 와의 상호작용**: 기본은 미지정(=무제한)이다. 값을 주면 admit 가능한
 > 총량이 `(계정 수 × limitPerUser)` 로 잘려서 `totalQuantity` 를 아무리 키워도 그 벽에서
@@ -374,14 +381,73 @@ k6 run -e PROFILE=ramp loadtest/k6/drop-flow.js
 
 ### 프로파일
 
-| PROFILE | stages | 용도 |
-|---|---|---|
-| `smoke` (기본) | `20s:3,40s:3,10s:0` | 흐름이 끝까지 도는지 증명. 부하 아님 |
-| `ramp` | `1m:5,2m:10,2m:20,2m:30,2m:40,1m:0` | 무릎 탐색. 계단마다 2분 유지 |
-| `hold` | `1m:N,10m:N,1m:0` (`-e HOLD_VUS=N`) | 무릎 지점에서 큐/아웃박스/정산이 밀리는지 |
-| `stress` | `30s:20,1m:60,1m:100,1m:0` | 포화 시 어떻게 깨지는지. 용량 수치 아님 |
+| PROFILE | 실행기 | stages | 용도 |
+|---|---|---|---|
+| `smoke` (기본) | `ramping-vus` | `20s:3,40s:3,10s:0` | 흐름이 끝까지 도는지 증명. 부하 아님 |
+| `ramp` | `ramping-vus` | `1m:5,2m:10,2m:20,2m:30,2m:40,1m:0` | 무릎 탐색. 계단마다 2분 유지 |
+| `hold` | `ramping-vus` | `1m:N,10m:N,1m:0` (`-e HOLD_VUS=N`) | 무릎 지점에서 큐/아웃박스/정산이 밀리는지 |
+| `stress` | **`ramping-arrival-rate`** | `30s:2,3m:2,30s:4,3m:4,30s:8,3m:8,30s:12,3m:12,30s:16,3m:16,1m:0` | 도착률을 고정해 용량 천장을 잰다. **숫자 단위가 VU가 아니라 초당 iteration** |
+
+앞의 셋은 **닫힌 모델**이다. VU가 응답을 받아야 다음 요청을 보내므로 stages의 숫자는 동시
+사용자 수이고, 서버가 느려지면 제시 부하가 저절로 줄어든다. `stress` 만 **열린 모델**이라
+stages의 숫자가 초당 도착 수이고 서버 상태와 무관하게 그 속도로 요청이 들어온다.
+앞선 라운드와 비교해야 하므로 `smoke`/`ramp`/`hold` 의 동작은 그대로 두었다.
 
 `-e STAGES=...` 또는 `-e VUS=.. -e DURATION=..` 을 주면 프로파일을 무시하고 그 값을 쓴다.
+이 둘은 VU 단위 규약이므로 **`-e PROFILE=stress` 와 같이 주면 닫힌 모델이 이긴다**
+(같은 숫자가 VU인지 도착률인지 섞이지 않게 하기 위한 것). 열린 모델의 계단은 아래
+`RATE_*` 노브로 바꾼다.
+
+### stress — 열린 모델 (도착률 고정)
+
+**왜 필요한가.** 닫힌 모델에서는 "처리량이 늘었다"가 시스템이 더 받아낸 것인지, 지연이 늘어
+부하가 저절로 줄어든 것인지 분리되지 않는다. 용량 천장을 재려면 서버가 느려져도 도착이
+줄지 않아야 한다. 그게 `ramping-arrival-rate` 다.
+
+**계단 값의 근거.** 지금까지 라운드에서 병목은 게이트웨이 유량제한(사용자별 2/s) → 결제
+커넥션풀(pool 2) → 2코어 노드 CPU 순서로 드러났고, 이 클러스터의 실질 천장은
+**결제 확인 초당 약 8건**이다. 그래서 2(천장의 1/4) → 4(1/2) → 8(천장) → 12(1.5배) →
+16(2배)로 그 앞뒤를 훑는다. 천장 아래에서는 도착률과 처리량이 같이 오르다가, 8 부근에서
+처리량이 평평해지고 지연이 꺾인다. 그 지점이 용량이다.
+
+**계단마다 stage가 둘인 이유.** k6는 stage 안에서 도착률을 직전 값에서 target까지 선형
+보간한다. 같은 target을 두 번 쓰지 않으면 평탄 구간이 아예 생기지 않아 "도착률 8/s 구간의
+p95" 같은 인용이 불가능하다. 그래서 target마다 `[전환 30s] + [평탄 3m]` 를 넣는다.
+총 18.5분.
+
+**VU 사이징 (`preAllocatedVUs` / `maxVUs`).** Little의 법칙 — 필요한 동시 VU = 도착률 ×
+iteration 소요시간. iteration 하나가 login(캐시됨) + 큐 진입 + 폴링 + 주문 + 결제확인 +
+think 1s 를 돌고 **포화 구간에서 8초를 넘긴 실측**이 있다(`RATE_ITER_SEC` 기본 8, 시더의
+`EST_ITER_SEC=4` 보다 크게 잡았다 — 적게 잡으면 VU가 모자라 도착이 버려진다).
+
+| | 계산 | 값 |
+|---|---|---|
+| `preAllocatedVUs` | `ceil(16/s × 8s)` | 128 |
+| `maxVUs` | 그 2배 | 256 |
+
+미리 만들어 두는 이유는, 계단이 오를 때 VU를 새로 띄우느라 도착이 밀리면 그 지연이 서버
+지연으로 오해되기 때문이다. `maxVUs` 는 포화로 iteration이 16초까지 늘어나도 흡수하는 여유다.
+
+> **`dropped_iterations` 를 반드시 볼 것.** VU가 모자라면 k6는 도착을 그냥 버리고 이 지표를
+> 올린다. 0이 아니면 그 라운드에는 "서버가 못 받아낸 것"과 "우리가 부하를 못 만든 것"이
+> 섞여 있어서 처리량을 용량 근거로 쓸 수 없다. 기본 요약에는 안 나오므로
+> `drop-flow.js` 가 요약의 `=== 부하 생성기 ===` 절에 항상 찍는다. 0이 아니면
+> `RATE_MAX_VUS` / `RATE_PRE_VUS` 를 올려 다시 돌린다.
+
+**재고 요구량이 닫힌 모델과 다르다.** 닫힌 모델은 재고가 마르면 iteration이 빨리 끝나는
+정도지만, 열린 모델은 재고가 마른 뒤로도 도착이 계속 들어와 라운드 후반이 통째로 매진
+측정이 된다. 그래서 `setup()` 이 **추정 도착 수 전량**(기본 계단 기준 약 9,060건)을 요구한다.
+`seed.js` 의 `stress` 사이징은 아직 닫힌 모델(peak 100 VU) 기준이라 이 값을 못 맞추므로
+명시적으로 준다:
+
+```bash
+PROFILE=stress DROP_TOTAL_QUANTITY=9060 USER_COUNT=128 node loadtest/k6/seed.js
+k6 run -e PROFILE=stress loadtest/k6/drop-flow.js
+```
+
+계정을 128개까지 못 만들겠으면 계단을 낮춰 요구량을 줄인다(`-e RATE_TARGETS=2,4,8`).
+계정이 모자라면 VU들이 계정을 공유하고 사용자별 confirm 유량제한(2/s)에 직렬화되어,
+재려던 천장 대신 유량제한을 다시 재게 된다 — `setup()` 이 경고한다.
 
 ### 숫자 근거
 
@@ -396,6 +462,61 @@ k6 run -e PROFILE=ramp loadtest/k6/drop-flow.js
 Hikari 5초 타임아웃 벽(`connection is not available`)만 찍고 끝난다.
 계단을 30s가 아니라 2m로 잡은 것도 같은 이유다 — 30s면 램프 과도구간만 보게 되고
 p95가 안정되지 않는다.
+
+### 원시 데이터 남기기 — csv 출력
+
+**왜 필요한가.** 지금은 라운드가 끝나면 집계값만 남는다. 그래서 "계단 4구간(도착률 12/s)의
+p95는?" 같은 **구간별 질문에 사후에 답할 수 없다** — 요약의 p95는 라운드 전체를 뭉갠 값이다.
+csv 출력은 요청 단위 원본이라 나중에 구간을 다시 자를 수 있다.
+
+```bash
+mkdir -p loadtest/results/raw
+k6 run --out csv=loadtest/results/raw/stress-$(date +%m%d-%H%M).csv.gz \
+       -e PROFILE=stress loadtest/k6/drop-flow.js
+```
+
+- 파일명을 `.gz` 로 끝내면 k6가 gzip으로 바로 쓴다. 안 되는 버전이면 라운드 끝나고
+  `gzip -9 <file>.csv` — **압축은 선택이 아니다**(아래 크기 주의).
+- 시각 표기를 사람이 읽을 수 있게 하려면 `K6_CSV_TIME_FORMAT=rfc3339` 를 앞에 붙인다.
+  기본은 unix epoch(초)라 구간을 자를 때는 오히려 이쪽이 편하다.
+- 요약(`loadtest-summary.json`)·teardown 검산 출력은 csv를 켜도 그대로 나온다. csv는 추가다.
+
+**크기 주의.** 행 하나가 "지표 샘플 하나"다. 요청 하나가 `http_req_duration`,
+`http_req_waiting`, `http_req_blocked`, `http_req_connecting`, `http_req_tls_handshaking`,
+`http_req_sending`, `http_req_receiving`, `http_req_failed` … 를 각각 한 행씩 남기므로
+**요청 1건 ≈ 10행**이다. iteration 하나가 요청 5~10건(로그인 캐시 + 큐 진입 + 폴링 + 주문 +
+결제확인)이니 **iteration 1건 ≈ 50~100행**이고, ramp 라운드(iteration 수천)면 수십만 행,
+stress 라운드는 그 이상이다. 압축 전 수십 MB를 각오하고, 라운드 이름을 파일명에 박아 둔다.
+줄이고 싶으면 `--system-tags=proto,status,method,name,scenario` 로 열을 깎는다(행 수는 그대로).
+
+구간을 자를 때는 k6가 계단 경계를 찍어 주지 않으므로 **부하 시작 시각 + 계단 길이**로
+계산한다(기본 계단은 전환 30s + 평탄 3m). 평탄 구간만 골라야 의미가 있다:
+
+```bash
+# 예: 시작 후 10분30초~13분30초(도착률 8/s 평탄 구간)의 confirm p95
+zcat loadtest/results/raw/stress-0727-2010.csv.gz \
+  | awk -F, -v s=$((START+630)) -v e=$((START+810)) \
+      '$1=="http_req_duration" && $2>=s && $2<e && $0~/payments\/confirm/ {print $3}' \
+  | sort -n | awk '{a[NR]=$1} END{print "p95=" a[int(NR*0.95)]}'
+```
+
+**왜 csv만 쓰는가** (k6 v1.6.1이 지원하는 출력: `cloud`, `csv`,
+`experimental-opentelemetry`, `experimental-prometheus-rw`, `influxdb`, `json`,
+`opentelemetry`, `statsd`, `web-dashboard`)
+
+| 출력 | 안 쓰는 이유 |
+|---|---|
+| `experimental-prometheus-rw` | 관측 네임스페이스에 `observability-intra-only` default-deny NetworkPolicy가 있어 **노트북에서 Prometheus에 못 닿는다**(5-0절의 port-forward 사정과 같다) |
+| `opentelemetry` / `experimental-opentelemetry` | 같은 이유로 콜렉터에 못 닿는다. 게다가 받아 줄 OTLP 콜렉터가 배포돼 있지 않다 |
+| `influxdb` | 받아 줄 InfluxDB가 없다. 관측 스택은 Prometheus 기반이다 |
+| `statsd` | 받아 줄 statsd가 없다 |
+| `cloud` | Grafana Cloud 계정·토큰이 필요하고 측정 결과가 외부로 나간다 |
+| `json` | csv와 같은 원본이지만 행마다 스키마가 반복돼 파일이 훨씬 크다. 우리가 하는 후처리는 구간 자르기·백분위 재계산이라 표 형식이 맞다 |
+| `web-dashboard` | 사람이 눈으로 볼 HTML이다. 사후 재집계가 안 되고 라운드마다 해석 부담만 늘린다 |
+
+클러스터 쪽 시계열은 `loadtest/scripts/metrics-snapshot.sh` 가 이미 csv로 받고 있다(5-0절).
+**k6 csv = 클라이언트가 본 것, metrics-snapshot csv = 서버가 본 것.** 둘의 시각을 맞춰
+보는 것이 이 셋업에서 가능한 가장 강한 근거다.
 
 ### 커넥션 정책 (원격/TLS 대상이라 명시적으로 고정)
 
@@ -596,8 +717,22 @@ OOMKill되지 않았는지 확인할 수 있다(목이 죽으면 그 뒤 수치�
 | `TARGET_FILE` | `./target.json` | `loadtest/k6/` 기준 상대경로 |
 | `PROFILE` | `smoke` | `smoke` / `ramp` / `hold` / `stress` |
 | `HOLD_VUS` | `20` | `hold` 프로파일의 VU 수 |
-| `STAGES` | (PROFILE에서) | `<dur>:<target>,...` — 주면 PROFILE 무시 |
+| `STAGES` | (PROFILE에서) | `<dur>:<target>,...` — 주면 PROFILE 무시. **VU 단위**(닫힌 모델) |
 | `VUS` + `DURATION` | `10` + — | `DURATION`을 주면 `constant-vus` 로 전환 |
+
+열린 모델(`PROFILE=stress`) 전용. VU 단위인 위 노브와 섞이지 않게 이름을 `RATE_*` 로 분리했다:
+
+| var | default | meaning |
+|---|---|---|
+| `RATE_TARGETS` | `2,4,8,12,16` | 초당 iteration 계단. **단계 수도 여기서 정해진다** |
+| `RATE_STAGE_DUR` | `3m` | 계단의 평탄 구간 길이 — 인용할 수 있는 구간 |
+| `RATE_RAMP_DUR` | `30s` | 계단 사이 전환 구간 길이 |
+| `RATE_TAIL_DUR` | `1m` | 마지막에 0으로 내리는 구간 |
+| `RATE_START` | `0` | 시작 도착률(초당) |
+| `RATE_STAGES` | (위에서 조립) | `<dur>:<rate>,...` — 주면 위 다섯을 통째로 무시 |
+| `RATE_ITER_SEC` | `8` | VU 사이징용 iteration 소요 가정(초). 포화 실측 기준 |
+| `RATE_PRE_VUS` | `ceil(peak × RATE_ITER_SEC)` = 128 | `preAllocatedVUs` |
+| `RATE_MAX_VUS` | 그 2배 = 256 | `maxVUs`. `dropped_iterations` 가 0이 아니면 여기부터 올린다 |
 | `ALLOWED_HOSTS` | `openat.duckdns.org,localhost,127.0.0.1` | setup 호스트 허용목록 |
 | `SKIP_STOCK_CHECK` | — | 재고 사전조건 검사 우회(권장하지 않음) |
 | `QTY` | `1` | 큐 진입 시 요청 수량 |
@@ -669,7 +804,47 @@ Counter — 모든 iteration은 정확히 하나에 들어간다:
 허가된 수량이므로 스크립트는 항상 `status.quantity`(서버가 허가한 값)로 주문하지, 원래
 요청한 `QTY` 로 주문하지 않는다. 여기서 400이 나면 실제 계약 위반이다.
 
+Gauge: `stock_remaining_start`(setup이 찍는 시작 잔여), `stock_remaining_end`(teardown이 찍는
+종료 잔여). 아래 재고 검산 전용이다.
+
 요약 JSON은 `loadtest-summary.json` 으로 떨어진다(`.gitignore` 됨).
+
+### 라운드 끝 재고 검산 (자동)
+
+라운드마다 손으로 하던 계산을 스크립트가 한다. 기대식은 **시작 잔여 − 성공 건수 = 종료 잔여**
+인데, 실제로는 실패한 결제가 재고를 물고 만료 보상 때까지 돌려주지 않아 그만큼 덜 남는다
+(램프 라운드 실측: 시작 14,745 − 성공 2,520 = 12,225여야 하는데 종료가 12,087, 차이 138이
+결제 실패 138건과 정확히 일치했다 = **유령 매진**).
+
+k6 요약 끝에 이렇게 찍힌다:
+
+```
+=== 재고 검산 ===
+  시작 잔여                  14745
+  종료 잔여                  12087
+  실제 감소량                 2658
+  성공(outcome_success)      2520
+  차이(미복원 재고)             138
+  ⚠ 유령 매진 후보 138건 — 실패한 결제가 재고를 물고 있다(만료 보상 전까지 안 돌아온다).
+    결제 단계 실패 합 138건(rejected/pending/error). 두 값이 같으면 출처가 확정된다.
+```
+
+**왜 `teardown` 과 `handleSummary` 로 나뉘어 있나.** 필요한 숫자가 셋인데 k6에서 셋을 한
+자리에서 볼 수 없다.
+
+| 숫자 | 아는 곳 | 이유 |
+|---|---|---|
+| 시작 잔여 | `setup()` | 사전조건 조회에서 이미 읽는다. 반환값으로 teardown에, 게이지로 요약에 전달 |
+| 종료 잔여 | `teardown()` | `GET /api/v1/drops/{dropId}` 를 한 번 더 쳐야 안다. 요약을 만드는 자리는 요청을 보내는 자리가 아니다 |
+| 성공 건수 | `handleSummary()` | 커스텀 지표다. **k6는 teardown에 지표를 넘겨주지 않는다** |
+
+그래서 teardown은 조회해서 원본 사실(종료 잔여·드롭 상태)을 찍고 게이지에 실어 보내는 데까지만
+하고, 세 숫자를 합치는 산술은 handleSummary가 끝낸다. 억지로 teardown에 몰면 성공 건수를 몰라
+반쪽 검산이 된다. 조회가 실패하면 조용히 넘기지 않고 `⚠ 재고 검산 실패` 를 찍는다.
+WireMock 저널은 여기서 안 본다 — ClusterIP라 노트북에서 닿지 않는다(4절).
+
+차이가 음수로 나오면(감소량 < 성공) 만료 보상이 라운드 중에 재고를 돌려줬거나 그 드롭에 다른
+트래픽이 섞인 것이다. 그 라운드의 재고 수치는 인용하지 않는다.
 
 ---
 
