@@ -19,12 +19,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onCompletion
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
@@ -42,23 +40,32 @@ import org.springframework.stereotype.Component
  * 계산한다"로 트리거만 뒤집는다(queue-events:{dropId} 채널,
  * [com.openat.queue.infrastructure.persistence.QueueEventPublisher]가 유일한 발행자).
  *
- * 스트림 구성 3갈래:
+ * 스트림 구성:
  * 1. 연결 즉시 현재 상태 1회 전송(폴링 첫 응답과 동등한 즉시성 보장)
  * 2. Pub/Sub 신호가 올 때마다 재조회
- * 3. keepalive-ms 주기의 안전망 재조회(신호 유실 대비 + heartbeat 갱신 겸용) - 그 결과가
- *    직전과 같아도 SSE 코멘트를 별도로 보내 커넥션 자체는 항상 살아있음을 알린다(아래
- *    "keepalive가 실제로 바이트를 보내지 않던 버그" 참고).
+ * 3. keepalive-ms 주기의 안전망 재조회(신호 유실 대비 + heartbeat 갱신 겸용)
  *
- * 직전에 보낸 값과 실제로 다를 때만 상태 이벤트로 클라이언트에 내려보낸다(불필요한 푸시
- * 방지) - 이게 폴링 대비 "요청 수 자체가 줄어드는" 근거다. READY/SOLD_OUT/NOT_IN_QUEUE
- * 도달 시 스트림을 닫는다.
+ * 재조회 결과가 직전에 보낸 값과 실제로 다를 때만 상태 이벤트로 클라이언트에 내려보낸다
+ * (불필요한 푸시 방지 - 폴링 대비 "요청 수 자체가 줄어드는" 근거) - **트리거가 Pub/Sub이든
+ * keepalive든 이 규칙은 동일하다**: keepalive tick이 "재조회했더니 마침 값이 바뀌어 있었다"를
+ * 발견하면 그 값도 똑같이 상태 이벤트로 나간다(Pub/Sub 신호가 유실됐을 때 keepalive가 그걸
+ * 잡아주는 게 "안전망"이라는 이름의 실질적 근거 - 재조회만 하고 결과를 버리면 안전망이 아니다).
+ * 값이 안 바뀌었을 때만 "커넥션이 살아있다"는 SSE 코멘트로 대체한다 - 이러면 매 tick마다
+ * 뭔가는(상태 이벤트든 코멘트든) 반드시 전송되어 idle 커넥션 타임아웃도 막힌다.
+ * READY/SOLD_OUT/NOT_IN_QUEUE 도달 시 스트림을 닫는다.
  *
- * **버그 수정(코드 리뷰 반영, 2026-07)**: 초기 구현은 두 가지 문제가 있었다.
- * 1. keepalive 재조회 결과를 "상태 변화" 필터에 그대로 태워서, 상태가 안 바뀌면 재조회는
- *    일어나도(heartbeat는 갱신됨) SSE 바이트 자체는 하나도 안 나갔다 - "idle 커넥션 타임아웃
- *    방지"라는 문서화된 목적이 실제로는 동작하지 않았다. 지금은 keepalive를 별도 코멘트
- *    이벤트로 분리해 상태 변화 여부와 무관하게 항상 전송한다.
- * 2. SSE 연결이 끊기면(취소) 바로 대기열에서 제거했는데, "연결 끊김"의 흔한 원인(지하철
+ * **버그 수정 이력(코드 리뷰 반영, 2026-07)**:
+ * 1. 최초 구현은 keepalive 재조회 결과를 "상태 변화" 필터에 그대로 태워서, 상태가 안 바뀌면
+ *    재조회는 일어나도(heartbeat는 갱신됨) SSE 바이트 자체는 하나도 안 나갔다 - "idle 커넥션
+ *    타임아웃 방지"라는 문서화된 목적이 실제로는 동작하지 않았다.
+ * 2. 그 다음 버전(1차 수정)은 keepalive를 별도 흐름으로 완전히 분리하면서, keepalive
+ *    재조회의 결과값 자체를 버리고 하트비트 갱신 부수효과로만 썼다 - "바이트를 안 보내는"
+ *    문제는 고쳤지만, 그 과정에서 "Pub/Sub 신호 유실 시 keepalive가 놓친 변화를 다시 잡아
+ *    준다"는 안전망의 존재 이유 자체를 없애버렸다(재발 버그). 한 번 이상한/오래된 스냅샷을
+ *    보내고 나면 다음 진짜 Pub/Sub 신호가 올 때까지 자가 교정이 안 됐다 - "기다린다" 결정
+ *    직후 잘못된 상태가 잠깐 보이거나, 다른 대기자의 GIVE_UP이 반영 안 되고 멈추는 증상으로
+ *    나타났다. 지금 버전은 트리거 종류와 무관하게 재조회 결과가 바뀌었으면 항상 전달한다.
+ * 3. SSE 연결이 끊기면(취소) 바로 대기열에서 제거했는데, "연결 끊김"의 흔한 원인(지하철
  *    터널 진입, 폰 화면 잠금/앱 전환, 다중 탭 중 하나만 닫힘, 브라우저 자동 재연결)은 전부
  *    "곧 다시 붙는" 끊김이지 "진짜로 나감"이 아니다. 이제 같은 dropId+userId의 마지막
  *    연결이 끊긴 뒤 [QueueProperties.Waiting.reconnectGraceMs] 동안 기다렸다가 그 사이 재연결이
@@ -121,35 +128,44 @@ class QueueStreamService(
             .asFlow()
             .map { fetchStatus() }
 
+        // keepalive tick도 "재조회"라는 점은 Pub/Sub tick과 동일하다 - 안전망(신호 유실 대비)
+        // 역할을 하려면 이 재조회 결과도 반드시 아래 changed-필터를 거쳐 실제 상태 이벤트로
+        // 나갈 수 있어야 한다(재조회만 하고 결과를 버리면 안전망이 이름만 안전망이다 - 버그
+        // 이력, 아래 참고).
+        val onKeepaliveTick: Flow<QueueStatusInfo> = keepaliveTicks(queueProperties.sse.keepaliveMs)
+            .map { fetchStatus() }
+
         val statuses: Flow<QueueStatusInfo> = flow {
             emit(fetchStatus())
-            emitAll(onPubSubTick)
+            emitAll(merge(onPubSubTick, onKeepaliveTick))
         }
 
         var lastSent: QueueStatusInfo? = null
         var lastObserved: QueueStatusInfo? = null
 
-        val statusEvents: Flow<ServerSentEvent<QueueStatusInfo>> = statuses
-            .filter { info ->
-                val changed = lastSent != info
-                if (changed) lastSent = info
-                changed
-            }
-            .onEach { info -> lastObserved = info }
-            .map { info -> ServerSentEvent.builder(info).event("status").build() }
-
-        // keepalive: 상태 변화와 무관하게 "커넥션이 살아있다"를 알리는 SSE 코멘트를 주기적으로
-        // 내보낸다. fetchStatus()는 여기서도 호출하는데, 반환값 자체는 안 쓰고(코멘트 전송과
-        // 무관) heartbeat 갱신이라는 부수효과만 취한다 - status-변화 여부로 걸러지는 위
-        // statusEvents와 달리 이 이벤트는 무조건 전송되므로 idle 타임아웃 방지 목적을
-        // 실제로 달성한다.
-        val keepaliveEvents: Flow<ServerSentEvent<QueueStatusInfo>> = keepaliveTicks(queueProperties.sse.keepaliveMs)
-            .map {
-                fetchStatus()
+        // 재조회 결과가 직전과 다르면(어느 트리거로 재조회했든) 그 상태를 그대로 전달하고,
+        // 같으면 "그냥 살아있다"는 keepalive 코멘트로 대체한다 - 상태 변화는 트리거 종류와
+        // 무관하게 항상 전달되고(안전망이 실제로 동작), 동시에 매 tick마다 뭔가는 반드시
+        // 전송되어(코멘트라도) idle 타임아웃도 막힌다.
+        //
+        // **버그 수정(2026-07, 재발)**: 이전 버전은 keepalive tick의 재조회 결과를 버리고
+        // 하트비트 갱신 부수효과로만 썼다 - "keepalive가 바이트를 안 보내던 버그"는 고쳤지만
+        // 그 과정에서 "Pub/Sub 신호 유실 시 keepalive가 놓친 변화를 다시 잡아준다"는 원래
+        // 목적을 없애버렸다. 한 번 이상한 스냅샷을 보내고 나면 다음 진짜 변화(Pub/Sub 신호)가
+        // 올 때까지 자가 교정이 안 됐다 - "기다린다" 결정 직후 잘못된 상태가 보이거나, 다른
+        // 대기자의 GIVE_UP이 반영 안 되고 멈추는 증상으로 나타났다.
+        val events: Flow<ServerSentEvent<QueueStatusInfo>> = statuses.map { info ->
+            lastObserved = info
+            val changed = lastSent != info
+            if (changed) {
+                lastSent = info
+                ServerSentEvent.builder(info).event("status").build()
+            } else {
                 ServerSentEvent.builder<QueueStatusInfo>().comment("keepalive").build()
             }
+        }
 
-        return merge(statusEvents, keepaliveEvents)
+        return events
             .onStart { onConnectionOpened(connectionKey) }
             .transformWhile { event ->
                 emit(event)
@@ -193,6 +209,11 @@ class QueueStreamService(
         val graceMs = queueProperties.waiting.reconnectGraceMs
         val job = reclaimScope.launch {
             delay(graceMs)
+            // Job 생성과 pendingReclaims 등록 사이의 좁은 틈에 재연결이 끼어들면
+            // onConnectionOpened의 취소가 이 Job을 못 찾을 수 있다(리뷰 지적) - 그래서 실제로
+            // 회수하기 직전에 "그 사이 연결이 이미 돌아왔는지"를 한 번 더 확인한다. 이러면
+            // 등록 타이밍과 무관하게 재연결된 정상 사용자를 잘못 회수할 수 없다.
+            if ((activeConnections[key]?.get() ?: 0) > 0) return@launch
             try {
                 withContext(NonCancellable) {
                     waitingQueueRepository.removeFromQueue(dropId, userId)

@@ -75,9 +75,19 @@ class QueueController(
     ): Flow<ServerSentEvent<QueueStatusResponse>> =
         queueStreamService.stream(dropId, userContext.userId())
             .map { event ->
-                ServerSentEvent.builder(QueueStatusResponse.from(event.data()!!))
-                    .event("status")
-                    .build()
+                // keepalive tick(상태 변화 없음)은 QueueStreamService가 data 없이 comment만
+                // 채워 보낸다(NPE 버그 이력 - event.data()!!로 바로 변환하면 매 keepalive마다
+                // 스트림이 죽었다) - data가 없으면 comment만 그대로 전달한다.
+                val data = event.data()
+                if (data != null) {
+                    ServerSentEvent.builder(QueueStatusResponse.from(data))
+                        .event("status")
+                        .build()
+                } else {
+                    ServerSentEvent.builder<QueueStatusResponse>()
+                        .comment(event.comment() ?: "keepalive")
+                        .build()
+                }
             }
 
     /** `DECISION_REQUIRED` 상태에 대한 응답(WAIT/PARTIAL/GIVE_UP). 결과 상태를 즉시 반환해
