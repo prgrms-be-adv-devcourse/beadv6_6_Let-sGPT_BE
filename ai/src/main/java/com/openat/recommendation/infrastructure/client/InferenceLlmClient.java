@@ -4,6 +4,7 @@ import static com.openat.recommendation.infrastructure.client.RestClientResponse
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.openat.recommendation.application.port.out.LlmClient;
+import com.openat.recommendation.application.service.RecommendationMetrics;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,18 +18,25 @@ public class InferenceLlmClient implements LlmClient {
   private final RestClient restClient;
   private final String apiKey;
   private final String model;
+  private final RecommendationMetrics metrics;
 
   public InferenceLlmClient(
       @Qualifier("inferenceRestClient") RestClient restClient,
       @Value("${inference.api-key}") String apiKey,
-      @Value("${inference.model}") String model) {
+      @Value("${inference.model}") String model,
+      RecommendationMetrics metrics) {
     this.restClient = restClient;
     this.apiKey = apiKey;
     this.model = model;
+    this.metrics = metrics;
   }
 
   @Override
   public String complete(String prompt) {
+    return metrics.recordLlm(() -> call(prompt));
+  }
+
+  private String call(String prompt) {
     ChatCompletionResponse response =
         requireBody(
             restClient

@@ -12,7 +12,7 @@ public class RecommendationAsyncConfig {
   /**
    * 추천 스케줄 태스크 전용 스케줄러. {@code spring.threads.virtual.enabled=true}에서 Boot의 기본
    * {@code SimpleAsyncTaskScheduler}는 fixed-delay 태스크를 직렬로 몰아 한 refresh의 느린 블로킹
-   * 호출이 다른 refresh를 지연시킨다. 전용 스케줄러로 PopularProductsCache·OpenDropCache의 갱신이
+   * 호출이 다른 refresh를 지연시킨다. 전용 스케줄러로 LastResortProductsCache·OpenDropCache의 갱신이
    * 서로 독립된 스레드에서 돌게 해 상호 간섭을 없앤다.
    *
    * <p>풀 크기는 3. 두 개는 5분 주기 refresh 두 개를 각각 격리하고, 나머지 한 개는 오래 도는

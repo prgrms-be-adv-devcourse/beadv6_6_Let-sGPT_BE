@@ -35,7 +35,7 @@ class RecommendationControllerTest {
     RecommendationResponse response =
         new RecommendationResponse(
             List.of(
-                new Section("추천", List.of(new Product(productId, "상품", "판매자", 1000L, "thumb")))));
+                new Section("추천", List.of(new Product(productId, null, "상품", "판매자", 1000L, "thumb")))));
     when(recommendationService.recommend(isNull())).thenReturn(response);
 
     mvc()

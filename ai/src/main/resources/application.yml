@@ -131,8 +131,9 @@ inference:
   base-url: ${INFERENCE_BASE_URL:https://api.openai.com/v1}
   api-key: ${INFERENCE_API_KEY:${OPENAI_API_KEY:}}
   model: ${INFERENCE_MODEL:gpt-4.1-nano}
-  # OpenAI는 sub-second 응답 — 옛 inferway 대비 5s면 충분(기존 120s는 느린 추론기 잔재).
-  timeout: ${INFERENCE_LLM_TIMEOUT:5000ms}
+  # 실측(n=2000, gpt-4.1-nano): p50 0.8s / p95 1.5s / >3s 2.2%. 3s면 97.8%가 개인화를 받고,
+  # 나머지는 더 기다리는 대신 즉시 폴백을 받는다 — 추천 섹션은 기다림보다 폴백이 낫다.
+  timeout: ${INFERENCE_LLM_TIMEOUT:3000ms}
 
 recommendation:
   kafka:
@@ -140,15 +141,18 @@ recommendation:
       order-completed: order.completed.events
       wishlist-changed: wishlist.changed.events
   fallback-limit: ${RECOMMENDATION_FALLBACK_LIMIT:4}
-  # 캐시 미스(검색+LLM) 동시 실행 상한. 가상 스레드로 워커 풀이 사라졌으므로,
-  # OpenAI/검색으로의 무제한 팬아웃을 막는 명시적 admission valve. 초과분은 폴백으로 흘린다.
-  max-concurrent-pipelines: ${RECOMMENDATION_MAX_CONCURRENT_PIPELINES:64}
+  # 캐시 미스(검색+LLM) 동시 실행 상한. 초과분은 기다리지 않고 폴백으로 흘린다.
+  # 반드시 server.tomcat.threads.max(50) 미만이어야 한다. 이상이면 요청 스레드가 먼저 마르고
+  # 이 밸브가 발동하지 못해 초과분이 accept 큐에 쌓인다(실측 90/s에서 p95 7.7s).
+  # 40으로 두어 남은 스레드를 캐시 히트(~10ms)·헬스체크에 남긴다 — 미스가 히트를 굶기지 않게.
+  max-concurrent-pipelines: ${RECOMMENDATION_MAX_CONCURRENT_PIPELINES:40}
   drop-cache:
     page-size: ${RECOMMENDATION_DROP_CACHE_PAGE_SIZE:100}
     refresh-interval: ${RECOMMENDATION_DROP_CACHE_REFRESH_INTERVAL:5m}
-  # 최후 폴백: 드롭 무관 최신 상품(스케줄로 미리 채워 요청당 지연 0).
+  # 최후 폴백: 드롭 무관 최신 상품(스케줄로 미리 채워 요청당 지연 0). 상품 상세 전용.
+  # fallback-limit과 같은 4 — 같은 화면에서 카테고리 드롭 4개와 개수가 어긋나지 않게.
   last-resort:
-    size: ${RECOMMENDATION_LAST_RESORT_SIZE:8}
+    size: ${RECOMMENDATION_LAST_RESORT_SIZE:4}
   # 열린 드롭 상품의 DETAIL 추천을 주기적으로 미리 계산해 rec:detail:{productId}를 데운다.
   # LLM 비용이 있으므로 기본 비활성(opt-in). 새벽 고정이 아니라 설정 가능한 간격으로 돈다.
   prebatch:
@@ -156,7 +160,12 @@ recommendation:
     interval: ${RECOMMENDATION_PREBATCH_INTERVAL:6h}
     initial-delay: ${RECOMMENDATION_PREBATCH_INITIAL_DELAY:1m}
   weights:
+    # 한쪽 신호만 받아 만든 시드의 TTL. 실패한 쪽은 기존 캐시에서 살려 쓰므로 절반이 낡았고,
+    # 완전 데이터의 24h(FULL_TTL)를 물려주면 안 된다. 곧 다시 조회해 완전 데이터로 덮게 짧게 둔다.
     partial-ttl: ${RECOMMENDATION_WEIGHTS_PARTIAL_TTL:10m}
+    # 살려 쓴 시드의 연령 상한. 부분 저장이 반복되면 실패한 쪽 시드를 계속 물려받게 되므로,
+    # 완전 데이터였다면 살아 있었을 기간(FULL_TTL)을 넘기면 버리고 성공한 쪽만 남긴다.
+    salvage-max-age: ${RECOMMENDATION_WEIGHTS_SALVAGE_MAX_AGE:24h}
     wishlist-score: ${RECOMMENDATION_WISHLIST_SCORE:0.3}
     purchase-base-score: ${RECOMMENDATION_PURCHASE_BASE_SCORE:0.5}
     purchase-increment: ${RECOMMENDATION_PURCHASE_INCREMENT:0.1}

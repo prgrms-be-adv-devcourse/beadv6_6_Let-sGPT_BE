@@ -36,6 +36,37 @@ class RecommendationPromptBuilderTest {
   }
 
   @Test
+  void build_forDetail_includesCategoryNameOfCurrentProduct() {
+    ProductDetailResponse current =
+        new ProductDetailResponse(
+            UUID.randomUUID(),
+            null,
+            null,
+            "무선 스탠드",
+            "책상용 조명",
+            UUID.randomUUID(),
+            "조명",
+            1000L,
+            "thumb",
+            List.of(),
+            null);
+    var candidate = new SimilarProductResponse(UUID.randomUUID(), "후보", "설명", "이미지 설명");
+
+    String prompt = builder.build(RecommendationMode.DETAIL, current, List.of(candidate));
+
+    assertThat(prompt).contains("무선 스탠드 | 카테고리: 조명 | 책상용 조명");
+  }
+
+  @Test
+  void build_requiresConcreteProductNounInTitle() {
+    String prompt = builder.build(RecommendationMode.HOME, null, List.of());
+
+    assertThat(prompt)
+        .contains("어떤 상품군인지 알 수 있는 구체적인 명사를 반드시 하나")
+        .contains("'아이템·선물·제품·상품·굿즈'");
+  }
+
+  @Test
   void build_forHome_omitsCurrentProductSection() {
     var candidate = new SimilarProductResponse(UUID.randomUUID(), "후보", "설명", "이미지 설명");
 

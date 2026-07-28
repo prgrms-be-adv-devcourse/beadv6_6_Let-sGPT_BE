@@ -2,6 +2,7 @@ package com.openat.recommendation.application.service;
 
 import com.openat.recommendation.application.port.out.OpenDropClient;
 import com.openat.recommendation.domain.model.DropMeta;
+import com.openat.recommendation.domain.model.DropStatus;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.Collections;
@@ -97,7 +98,18 @@ public class OpenDropCache {
         .toList();
   }
 
+  /**
+   * 지금 살 수 있는 드롭인지 판정한다. 갱신 주기(기본 5분) 사이의 변화를 캐시에 담긴 값만으로
+   * 재검증하는 것이 목적이라, 판정은 조회 시점보다 느슨해질 수 없고 오직 더 엄격해질 뿐이다.
+   *
+   * <p>{@code closeAt == null}은 product 계약상 "매진까지"라는 정당한 무기한 드롭이므로 마감으로
+   * 보지 않는다. 대신 {@code status}로 보강해, 상태가 OPEN이 아닌 것(REGISTERED·CLOSE·SOLD_OUT,
+   * 그리고 알 수 없는 값)은 마감 시각 유무와 무관하게 제외한다.
+   */
   private boolean isStillOpen(DropMeta drop) {
-    return drop.closeAt() == null || drop.closeAt().isAfter(Instant.now());
+    Instant now = Instant.now();
+    return drop.status() == DropStatus.OPEN
+        && (drop.openAt() == null || !drop.openAt().isAfter(now))
+        && (drop.closeAt() == null || drop.closeAt().isAfter(now));
   }
 }
