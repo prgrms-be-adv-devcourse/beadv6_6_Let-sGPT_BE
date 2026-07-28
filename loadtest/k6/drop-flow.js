@@ -142,6 +142,12 @@ const CFG = {
   quantity: parseInt(__ENV.QTY || '1', 10),
   usersFile: __ENV.USERS_FILE || './users.json',
 
+  // 결제 경로 선택. 기본 'PG' = 기존 /api/v1/payments/confirm(WireMock PG 왕복) 경로 그대로.
+  // 'WALLET' 이면 결제 단계만 POST /api/v1/payments {method:"WALLET"} 로 바꿔 PG 왕복을 0으로
+  // 만든다(지갑 즉시 차감). 큐·주문 등 나머지 흐름은 불변이다. WALLET 외의 값은 전부 PG로 떨어져
+  // 기존 동작을 절대 바꾸지 않는다(오타 안전).
+  payMethod: __ENV.PAY_METHOD === 'WALLET' ? 'WALLET' : 'PG',
+
   // 엉뚱한 호스트(다른 팀 환경, 오타난 도메인)를 때리는 걸 막는 허용목록.
   // 새 환경을 겨냥하려면 -e ALLOWED_HOSTS=... 로 명시적으로 넓혀야 한다.
   allowedHosts: (__ENV.ALLOWED_HOSTS || 'openat.duckdns.org,localhost,127.0.0.1')
@@ -226,6 +232,10 @@ const outOrderError = new Counter('outcome_order_error');
 const outPaymentError = new Counter('outcome_payment_error');
 const outRateLimited = new Counter('outcome_rate_limited_429');
 const outGaveUp = new Counter('outcome_gave_up');
+// WALLET 결제 전용 — 409 INSUFFICIENT_BALANCE(지갑 잔액부족). 이 건은 outcome_payment_error 로도
+// 계수되지만(종단 결과가 결제 실패이므로), 잔액부족을 다른 결제 오류와 구분해 읽으려고 따로 센다.
+// PG 경로에서는 절대 증가하지 않는다.
+const outWalletInsufficient = new Counter('outcome_wallet_insufficient');
 
 // 재고 검산용 게이지. setup()이 시작 잔여를, teardown()이 종료 잔여를 여기에 싣는다.
 // 게이지를 쓰는 이유는 handleSummary 로 값을 넘길 수 있는 유일한 경로이기 때문이다:
@@ -599,7 +609,11 @@ export function setup() {
   }
 
   console.log(
-    `precondition OK: drop status=${drop.status} remaining=${drop.remainingQuantity} price=${drop.dropPrice}`,
+    `precondition OK: drop status=${drop.status} remaining=${drop.remainingQuantity} ` +
+    `price=${drop.dropPrice} payMethod=${CFG.payMethod}` +
+    (CFG.payMethod === 'WALLET'
+      ? ' (결제=POST /api/v1/payments WALLET 즉시결제, PG 왕복 0, confirm 유량제한 미적용)'
+      : ''),
   );
   // 시작 잔여를 게이지로도 실어 둔다. teardown 은 지표를 못 읽고 handleSummary 는 setup 의
   // 반환값을 못 받으므로, 재고 검산 산술을 한곳(handleSummary)에서 끝내려면 이 경로가 필요하다.
@@ -657,13 +671,20 @@ export default function () {
   }
 
   // -- payment ---------------------------------------------------------------
-  const payResult = group('payment', () => confirmPayment(headers, orderResult));
+  // PAY_METHOD=WALLET 이면 결제 단계만 지갑 즉시결제로 바꾼다(PG 왕복 0). 그 외엔 기존 PG confirm.
+  const payResult = group('payment', () =>
+    CFG.payMethod === 'WALLET'
+      ? payWithWallet(headers, orderResult)
+      : confirmPayment(headers, orderResult));
 
   switch (payResult.outcome) {
     case 'APPROVED': outSuccess.add(1); break;
     case 'FAILED': outPaymentRejected.add(1); break;
     case 'PAYMENT_PENDING': outPaymentPending.add(1); break;
     case 'RATE_LIMITED': outRateLimited.add(1); break;
+    // 지갑 잔액부족(409) — payment_error 로 종단(아래 default 와 동일). 별도 카운터
+    // outcome_wallet_insufficient 는 payWithWallet 안에서 이미 증가시켰다.
+    case 'WALLET_INSUFFICIENT': outPaymentError.add(1); break;
     default: outPaymentError.add(1); break;
   }
 
@@ -889,6 +910,71 @@ function confirmPayment(headers, order) {
     assert('payment APPROVED', approved);
   }
   return { outcome: body.status };
+}
+
+/**
+ * WALLET 즉시결제 — PAY_METHOD=WALLET 일 때 confirmPayment 대신 호출된다.
+ * POST /api/v1/payments {orderId, amount, method:"WALLET"} 는 PG 왕복 없이 지갑에서 즉시
+ * 차감하고 201 + {status:"APPROVED"} 를 준다(payment PaymentController.create). 잔액부족은
+ * 409 INSUFFICIENT_BALANCE 다. 이 경로엔 게이트웨이 confirm 유량제한(2/s)이 걸리지 않는다
+ * — 유량제한은 /api/v1/payments/confirm 전용 라우트(payment-confirm-rl)에만 있다.
+ *
+ * 지연은 단계 비교 일관성을 위해 기존 paymentConfirmMs 트렌드에 그대로 싣는다(PG confirm 과
+ * 같은 자리에서 읽을 수 있게). 성공 판정은 201 + status==APPROVED.
+ */
+function payWithWallet(headers, order) {
+  // 결제 금액은 주문 생성 응답의 amount(createOrder 가 body.amount 로 반환)를 그대로 쓴다.
+  // 응답에 금액이 없을 때만 드롭가격 × 수량으로 산출한다(seed 의 DROP_PRICE 기본 10000,
+  // target.json 에 dropPrice 로 남는다). 정상 경로에서는 order.amount 가 항상 채워진다.
+  const amount = (typeof order.amount === 'number' && order.amount > 0)
+    ? order.amount
+    : (TARGET && typeof TARGET.dropPrice === 'number' ? TARGET.dropPrice : 10000) * CFG.quantity;
+
+  const started = Date.now();
+  const res = http.post(
+    `${CFG.baseUrl}/api/v1/payments`,
+    JSON.stringify({ orderId: order.orderId, amount, method: 'WALLET' }),
+    {
+      // Idempotency-Key 는 이 컨트롤러에서 필수 헤더다(@RequestHeader). 주문 멱등키에서 파생해
+      // 결제마다 고유하게 만든다(같은 주문 재시도 시에만 동일 키 재사용 = 멱등).
+      headers: { ...headers, 'Idempotency-Key': `pay-${order.idempotencyKey}` },
+      tags: { name: 'POST /api/v1/payments' },
+    },
+  );
+  const elapsed = Date.now() - started;
+
+  // 이 라우트엔 유량제한이 없지만, 혹시 429가 나오면 confirm 과 같은 규약으로 분리한다.
+  if (res.status === 429) {
+    paymentConfirm429Ms.add(elapsed);
+    return { outcome: 'RATE_LIMITED' };
+  }
+  // status 0 = 응답 없음(전송 오류) — 왕복 지연이 아니므로 트렌드에 넣지 않는다.
+  if (res.status === 0) {
+    assert('wallet payment got a response (not a transport error)', false);
+    return { outcome: 'PAYMENT_ERROR' };
+  }
+  // 409 = 잔액부족(INSUFFICIENT_BALANCE) 등. 실제 백엔드 왕복이 일어난 응답이라 지연은 트렌드에
+  // 남긴다(confirm 의 409 처리와 동일 취지). 잔액부족은 별도 카운터로 계수한다.
+  if (res.status === 409) {
+    paymentConfirmMs.add(elapsed);
+    const conflict = safeJson(res);
+    const code = conflict && (conflict.error || conflict.code);
+    if (code === 'INSUFFICIENT_BALANCE') {
+      outWalletInsufficient.add(1);
+    }
+    assert(`wallet payment not a conflict (got ${code || res.status})`, false);
+    return { outcome: 'WALLET_INSUFFICIENT' };
+  }
+  paymentConfirmMs.add(elapsed);
+
+  const body = safeJson(res);
+  const created = res.status === 201 && !!(body && body.status);
+  assert('wallet payment 201 + status', created);
+  if (!created) return { outcome: 'PAYMENT_ERROR' };
+
+  const approved = body.status === 'APPROVED';
+  assert('wallet payment APPROVED', approved);
+  return { outcome: approved ? 'APPROVED' : body.status };
 }
 
 /**

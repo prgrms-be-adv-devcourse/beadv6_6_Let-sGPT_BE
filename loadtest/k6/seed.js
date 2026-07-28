@@ -44,6 +44,12 @@ const CONCURRENCY = parseInt(process.env.SEED_CONCURRENCY || '4', 10);
 const SEED_DROP = process.env.SEED_DROP !== '0';
 const FORCE_NEW_DROP = process.env.FORCE_NEW_DROP === '1';
 
+// 월렛 MOCK 충전액(원). 기본 0 = 비활성. 값을 주면 각 사용자에게 그 금액을 MOCK으로 1회 충전한다
+// (PAY_METHOD=WALLET 라운드가 잔액부족(409 INSUFFICIENT_BALANCE) 없이 돌게 하기 위한 선충전).
+// MOCK 충전은 PG 왕복 없이 즉시 승인된다(payment WalletChargeController.charge). 드롭 시딩이
+// 끝난 뒤 dropId를 알게 되면 실행하며, 멱등키를 dropId+email로 잡아 재실행 시 중복충전을 막는다.
+const WALLET_TOPUP = parseInt(process.env.WALLET_TOPUP || '0', 10);
+
 // ---------------------------------------------------------------------------
 // 드롭 사이징 — 프로파일에서 역산
 // ---------------------------------------------------------------------------
@@ -143,8 +149,8 @@ function userFor(i) {
   };
 }
 
-async function request(method, pathname, { body, token } = {}) {
-  const headers = { ...JSON_HEADERS };
+async function request(method, pathname, { body, token, headers: extraHeaders } = {}) {
+  const headers = { ...JSON_HEADERS, ...(extraHeaders || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${BASE_URL}${pathname}`, {
     method,
@@ -486,6 +492,50 @@ async function seedDrop() {
 }
 
 // ---------------------------------------------------------------------------
+// 4. 월렛 MOCK 선충전 (WALLET_TOPUP > 0)
+// ---------------------------------------------------------------------------
+/**
+ * 사용자 1명에게 MOCK 충전 1회. 로그인 -> POST /api/v1/wallet/charge {amount, method:"MOCK"}.
+ * MOCK은 PG 왕복 없이 즉시 승인(201 + status=APPROVED)이다.
+ * 멱등키는 (dropId, email)로 결정적이라 재실행 시 같은 키로 재요청 -> 중복충전 없음(멱등 replay).
+ */
+async function chargeWallet(user, dropId) {
+  const token = await login(user);
+  if (!token) return { ok: false, email: user.email, reason: 'login', status: null };
+  const idemKey = `lt-topup-${dropId}-${user.email}`;
+  const res = await request('POST', '/api/v1/wallet/charge', {
+    token,
+    headers: { 'Idempotency-Key': idemKey },
+    body: { amount: WALLET_TOPUP, method: 'MOCK' },
+  });
+  const ok = (res.status === 200 || res.status === 201)
+    && res.body && res.body.status === 'APPROVED';
+  return { ok, email: user.email, status: res.status, body: res.body };
+}
+
+/** 모든 usable 사용자에게 MOCK 충전. 실패 건수를 시드 로그에 남긴다. */
+async function topUpWallets(usableUsers, dropId) {
+  console.log(
+    `월렛 MOCK 선충전: ${usableUsers.length}명 × ${WALLET_TOPUP}원 ` +
+    `(드롭 ${dropId}, concurrency ${CONCURRENCY})`,
+  );
+  const indices = Array.from({ length: usableUsers.length }, (_, i) => i);
+  const results = await runPool(indices, (i) => chargeWallet(usableUsers[i], dropId), CONCURRENCY);
+  const ok = results.filter((r) => r.ok).length;
+  const failed = results.filter((r) => !r.ok);
+  console.log(`월렛 충전: 성공=${ok} 실패=${failed.length}`);
+  if (failed.length) {
+    const f = failed[0];
+    console.warn(
+      `  ⚠ 충전 실패 ${failed.length}건. 첫 실패: ${f.email} ` +
+      `(status=${f.status}, reason=${f.reason || 'n/a'}, body=${JSON.stringify(f.body)}). ` +
+      `이 사용자들은 WALLET 라운드에서 잔액부족(409)을 낼 수 있다.`,
+    );
+  }
+  return { ok, failed: failed.length };
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 (async () => {
@@ -540,8 +590,17 @@ async function seedDrop() {
     return;
   }
 
-  await seedDrop();
+  const target = await seedDrop();
   console.log(`wrote target -> ${TARGET_FILE}`);
+
+  // 월렛 선충전은 드롭 시딩 뒤에 한다 — 멱등키에 dropId가 필요하기 때문이다.
+  if (WALLET_TOPUP > 0) {
+    if (!target || !target.dropId) {
+      console.warn('WALLET_TOPUP>0 이지만 dropId가 없어 월렛 충전을 건너뛴다 (SEED_DROP=0?).');
+    } else {
+      await topUpWallets(usable, target.dropId);
+    }
+  }
   if (DROP_PRICE !== 10000) {
     console.warn(
       `⚠ DROP_PRICE=${DROP_PRICE} 가 WireMock toss-query-payment.json 스텁의 고정 ` +
