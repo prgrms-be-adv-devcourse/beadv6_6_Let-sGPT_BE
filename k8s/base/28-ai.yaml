@@ -58,6 +58,8 @@ spec:
             - { name: JAVA_TOOL_OPTIONS, value: "-XX:+UseSerialGC -XX:MaxRAMPercentage=55.0 -XX:InitialRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - { name: SERVER_TOMCAT_THREADS_MAX, value: "50" }
+            # 통합 테스트 기본 — 추천 캐시 사전 생성(prebatch) 비활성. 첫 조회 시 생성이 정상 경로.
+            - { name: RECOMMENDATION_PREBATCH_ENABLED, value: "false" }
           startupProbe:
             httpGet: { path: /actuator/health/liveness, port: 9161 }
             periodSeconds: 5
