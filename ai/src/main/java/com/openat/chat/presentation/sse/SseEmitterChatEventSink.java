@@ -4,6 +4,8 @@ import com.openat.chat.application.dto.ChatStreamEvent;
 import com.openat.chat.application.port.ChatStreamClosedException;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -16,7 +18,7 @@ public class SseEmitterChatEventSink implements ChatStreamSink {
   private final Runnable closeListener;
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private final AtomicBoolean partialResponse = new AtomicBoolean(false);
-  private final Object sendLock = new Object();
+  private final Lock sendLock = new ReentrantLock();
 
   public SseEmitterChatEventSink(SseEmitter emitter) {
     this(emitter, ignored -> {}, ignored -> {}, () -> {});
@@ -38,7 +40,8 @@ public class SseEmitterChatEventSink implements ChatStreamSink {
     if (closed.get()) {
       throw new ChatStreamClosedException(null);
     }
-    synchronized (sendLock) {
+    sendLock.lock();
+    try {
       if (closed.get()) {
         throw new ChatStreamClosedException(null);
       }
@@ -52,12 +55,15 @@ public class SseEmitterChatEventSink implements ChatStreamSink {
         closeWithError(exception);
         throw new ChatStreamClosedException(exception);
       }
+    } finally {
+      sendLock.unlock();
     }
   }
 
   @Override
   public boolean terminate(Function<Boolean, ChatStreamEvent> eventFactory) {
-    synchronized (sendLock) {
+    sendLock.lock();
+    try {
       if (closed.get()) {
         return false;
       }
@@ -73,6 +79,8 @@ public class SseEmitterChatEventSink implements ChatStreamSink {
         closeWithError(exception);
         return false;
       }
+    } finally {
+      sendLock.unlock();
     }
   }
 
@@ -81,7 +89,8 @@ public class SseEmitterChatEventSink implements ChatStreamSink {
     if (closed.get()) {
       return;
     }
-    synchronized (sendLock) {
+    sendLock.lock();
+    try {
       if (closed.get()) {
         return;
       }
@@ -90,6 +99,8 @@ public class SseEmitterChatEventSink implements ChatStreamSink {
       } catch (IOException | IllegalStateException exception) {
         closeWithError(exception);
       }
+    } finally {
+      sendLock.unlock();
     }
   }
 
