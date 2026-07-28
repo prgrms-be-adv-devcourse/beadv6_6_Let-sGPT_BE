@@ -2,8 +2,10 @@ package com.openat.recommendation.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -60,9 +62,9 @@ class RecommendationSeedServiceTest {
             invocation ->
                 seedWeightsCache
                     .find(invocation.getArgument(0, UUID.class))
-                    .map(weights -> new CachedWeights(weights, "cached-json")));
+                    .map(weights -> new CachedWeights(weights, "cached-json", 0L)));
     lenient()
-        .when(seedWeightsCache.saveIfUnchanged(any(), any(), any(), any()))
+        .when(seedWeightsCache.saveIfUnchanged(any(), any(), any(), any(), anyLong()))
         .thenReturn(true);
   }
 
@@ -314,7 +316,7 @@ class RecommendationSeedServiceTest {
     when(wishlistSignalClient.getWishlistProductIds(memberId))
         .thenReturn(List.of(UUID.randomUUID()));
     when(seedWeightsCache.findSnapshot(memberId)).thenReturn(Optional.empty());
-    when(seedWeightsCache.saveIfUnchanged(eq(memberId), any(), any(), eq(PARTIAL_TTL)))
+    when(seedWeightsCache.saveIfUnchanged(eq(memberId), any(), any(), eq(PARTIAL_TTL), anyLong()))
         .thenReturn(false);
     when(seedWeightsCache.find(memberId))
         .thenReturn(Optional.of(SeedWeights.full(concurrentlySaved, Instant.now())));
@@ -333,12 +335,16 @@ class RecommendationSeedServiceTest {
     List<Seed> completeSeeds = List.of(new Seed(UUID.randomUUID(), 0.5, true));
     when(orderSignalClient.getPurchaseSignals(memberId)).thenThrow(new RuntimeException("order"));
     when(wishlistSignalClient.getWishlistProductIds(memberId)).thenReturn(List.of(UUID.randomUUID()));
-    when(seedWeightsCache.find(memberId))
-        .thenReturn(Optional.of(SeedWeights.full(completeSeeds, Instant.now().plusSeconds(1))));
+    doReturn(
+            Optional.of(
+                new CachedWeights(
+                    SeedWeights.full(completeSeeds, Instant.now().minusSeconds(1)), "complete-json", 1L)))
+        .when(seedWeightsCache)
+        .findSnapshot(memberId);
 
     assertThat(service().refreshWeightsCache(memberId)).isEqualTo(completeSeeds);
 
-    verify(seedWeightsCache, never()).saveIfUnchanged(any(), any(), any(), any());
+    verify(seedWeightsCache, never()).saveIfUnchanged(any(), any(), any(), any(), anyLong());
     assertThat(salvageCounter("superseded")).isEqualTo(1);
     assertThat(salvageCounter("none")).isZero();
     assertThat(salvageCounter("merged")).isZero();
@@ -423,7 +429,8 @@ class RecommendationSeedServiceTest {
     if (expectedTtl.equals(SeedWeightsCache.FULL_TTL)) {
       verify(seedWeightsCache).save(any(), captor.capture(), eq(expectedTtl));
     } else {
-      verify(seedWeightsCache).saveIfUnchanged(any(), any(), captor.capture(), eq(expectedTtl));
+      verify(seedWeightsCache)
+          .saveIfUnchanged(any(), any(), captor.capture(), eq(expectedTtl), anyLong());
     }
     return captor.getValue();
   }

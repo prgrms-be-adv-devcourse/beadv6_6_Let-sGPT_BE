@@ -69,6 +69,7 @@ public class RecommendationSeedService {
 
   public List<Seed> refreshWeightsCache(UUID memberId) {
     Instant startedAt = Instant.now();
+    long generationAtStart = seedWeightsCache.generation(memberId);
     CompletableFuture<Optional<List<PurchaseSignal>>> purchaseSignalsFuture =
         CompletableFuture.supplyAsync(() -> getPurchaseSignals(memberId), executor);
     CompletableFuture<Optional<List<UUID>>> wishlistProductIdsFuture =
@@ -102,8 +103,11 @@ public class RecommendationSeedService {
     // 그대로 반환하면 방금 받은 변경(예: 새 찜)이 FULL_TTL 동안 묻힌다.
     boolean purchaseSucceeded = purchaseSignals.isPresent();
     metrics.seedRefresh(purchaseSucceeded ? "wishlist-missing" : "order-missing");
-    // CAS는 find 이후의 변경을 막는다. 이 검사는 find 직전에 이미 들어온 완전 결과도 보호한다.
-    if (cached.filter(weights -> weights.complete() && weights.collectedAt().isAfter(startedAt)).isPresent()) {
+    // Redis 세대 번호는 모든 인스턴스가 공유한다. 로컬 wall clock 비교 대신, 신호 조회가 시작된
+    // 뒤 완전 저장된 엔트리를 판정해 clock skew가 있어도 부분 결과로 덮지 않는다.
+    if (cachedSnapshot
+        .filter(snapshot -> snapshot.weights().complete() && snapshot.generation() > generationAtStart)
+        .isPresent()) {
       metrics.seedSalvage("superseded");
       return cached.orElseThrow().seeds();
     }
@@ -122,7 +126,11 @@ public class RecommendationSeedService {
     SeedWeights partial = SeedWeights.partial(mergedSeeds, collectedAt);
     boolean saved =
         seedWeightsCache.saveIfUnchanged(
-            memberId, cachedSnapshot.map(CachedWeights::serialized).orElse(null), partial, partialTtl);
+            memberId,
+            cachedSnapshot.map(CachedWeights::serialized).orElse(null),
+            partial,
+            partialTtl,
+            generationAtStart);
     if (saved) {
       metrics.seedSalvage(salvageOutcome);
       return mergedSeeds;

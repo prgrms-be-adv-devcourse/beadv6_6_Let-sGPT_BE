@@ -35,13 +35,14 @@ public class SeedWeightsCache {
 
   /** 원자적 부분 갱신을 위해, 역직렬화 결과와 Redis 원문을 함께 읽는다. */
   public Optional<CachedWeights> findSnapshot(UUID memberId) {
+    String key = key(memberId);
     return jsonRedisStore
-        .readRaw(key(memberId))
+        .readRaw(key)
         .flatMap(
             serialized -> {
               try {
                 return toSeedWeights(objectMapper.readTree(serialized))
-                    .map(weights -> new CachedWeights(weights, serialized));
+                    .map(weights -> new CachedWeights(weights, serialized, jsonRedisStore.generation(key)));
               } catch (Exception exception) {
                 log.warn("Failed to parse cached seed weights; treating as miss", exception);
                 return Optional.empty();
@@ -50,7 +51,7 @@ public class SeedWeightsCache {
   }
 
   public void save(UUID memberId, SeedWeights weights, Duration ttl) {
-    jsonRedisStore.write(key(memberId), weights, ttl);
+    jsonRedisStore.writeFull(key(memberId), weights, ttl);
   }
 
   /**
@@ -58,8 +59,13 @@ public class SeedWeightsCache {
    * 호출자가 새 완전 결과를 보존·반환하게 한다.
    */
   public boolean saveIfUnchanged(
-      UUID memberId, String expectedSerialized, SeedWeights weights, Duration ttl) {
-    return jsonRedisStore.writeIfUnchanged(key(memberId), expectedSerialized, weights, ttl);
+      UUID memberId,
+      String expectedSerialized,
+      SeedWeights weights,
+      Duration ttl,
+      long generationAtStart) {
+    return jsonRedisStore.writeIfUnchanged(
+        key(memberId), expectedSerialized, weights, ttl, generationAtStart);
   }
 
   private Optional<SeedWeights> toSeedWeights(JsonNode node) {
@@ -78,7 +84,11 @@ public class SeedWeightsCache {
     return "weights:" + memberId;
   }
 
-  public record CachedWeights(SeedWeights weights, String serialized) {}
+  public record CachedWeights(SeedWeights weights, String serialized, long generation) {}
+
+  public long generation(UUID memberId) {
+    return jsonRedisStore.generation(key(memberId));
+  }
 
   /**
    * 가중치 캐시 엔트리. {@code complete}는 이 엔트리를 만들 때 모든 신호 조회가 성공했는지,
