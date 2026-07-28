@@ -60,19 +60,87 @@ spec:
             - |
               set -eu
               # 로그인은 웜업 루프가 아니라 여기서 1회만 — 매 실행 신선한 토큰이라 만료 문제가
-              # 구조적으로 사라진다. 비밀번호를 다루므로 set -x 는 절대 켜지 않는다.
-              if [ -n "${WARMUP_EMAIL:-}" ] && [ -n "${WARMUP_PASSWORD:-}" ]; then
-                BODY=$(printf '{"email":"%s","password":"%s"}' "$WARMUP_EMAIL" "$WARMUP_PASSWORD")
-                AUTH_TOKEN=$(curl -sf -X POST "$BASE_URL/api/v1/members/login" \
-                               -H 'Content-Type: application/json' -d "$BODY" \
-                             | grep -o '"accessToken":"[^"]*"' | head -1 | cut -d'"' -f4)
-                if [ -z "$AUTH_TOKEN" ]; then
-                  echo "ERROR: 웜업 토큰 발급 실패 — 테스트 계정/로그인 라우트를 확인하세요." >&2
+              # 구조적으로 사라진다. 비밀번호를 다루므로 set -x 는 절대 켜지 않고, 요청 바디·응답
+              # 본문을 로그로 출력하지 않는다.
+              #
+              # 실패 정책: 웜업(캐시 예열=최적화)이 배포 성공을 인질로 잡지 않게 한다.
+              #   - WARMUP_STRICT=false(기본): 어떤 실패든 크게 로깅하고 exit 0(배포 비차단).
+              #   - WARMUP_STRICT=true: 기존처럼 exit 1(배포 실패).
+              #   - 재시도로 풀릴 수 없는 자격증명/요청 오류(400/401/403 등)는 즉시 포기.
+              #   - 연결 실패·타임아웃·5xx 등 일시 오류만 5초 간격 3회 자체 재시도.
+              WARMUP_STRICT="${WARMUP_STRICT:-false}"
+
+              # 실패 종류를 구분해 크게 로깅한 뒤, strict 여부로 exit 코드를 결정한다.
+              #   credential : 재시도 불가 자격증명/요청 오류.
+              #   transient  : 재시도 후에도 남은 일시 오류.
+              apply_failure_policy() {
+                if [ "$1" = "credential" ]; then
+                  echo "ERROR: 웜업 자격증명 오류 — 재시도로 풀 수 없습니다. warmup-secrets 시크릿의 웜업 계정(WARMUP_EMAIL/WARMUP_PASSWORD)과 로그인 라우트를 확인하세요." >&2
+                else
+                  echo "ERROR: 웜업 게이트웨이 연결 실패 — 연결 실패/타임아웃/5xx가 재시도 후에도 지속(일시 오류 가능). apigateway 상태를 확인하세요." >&2
+                fi
+                if [ "$WARMUP_STRICT" = "true" ]; then
+                  echo "ERROR: WARMUP_STRICT=true — 웜업 실패를 배포 실패로 처리합니다(exit 1)." >&2
                   exit 1
                 fi
+                echo "WARN: WARMUP_STRICT=false — 웜업 실패를 배포 비차단으로 처리합니다(exit 0). 위 로그를 확인하세요." >&2
+                exit 0
+              }
+
+              if [ -n "${WARMUP_EMAIL:-}" ] && [ -n "${WARMUP_PASSWORD:-}" ]; then
+                BODY=$(printf '{"email":"%s","password":"%s"}' "$WARMUP_EMAIL" "$WARMUP_PASSWORD")
+                BODY_FILE="$(mktemp /tmp/warmup-login.XXXXXX)"
+                trap 'rm -f "$BODY_FILE"' EXIT
+
+                AUTH_TOKEN=""
+                attempt=1
+                max_attempts=4   # 최초 1회 + 일시 오류 재시도 3회.
+                while : ; do
+                  # -f 미사용: 4xx/5xx도 응답으로 받아 HTTP 상태코드로 분기. 본문은 파일로만 받는다.
+                  http_code=$(curl -s -o "$BODY_FILE" -w '%{http_code}' \
+                                   --connect-timeout 5 --max-time 15 \
+                                   -X POST "$BASE_URL/api/v1/members/login" \
+                                   -H 'Content-Type: application/json' -d "$BODY") && rc=0 || rc=$?
+
+                  if [ "$rc" -ne 0 ]; then
+                    kind="transient"   # 연결 실패/타임아웃(curl 7/28 등) — 응답 없음(http=000).
+                  elif printf '%s' "$http_code" | grep -q '^2'; then
+                    AUTH_TOKEN=$(grep -o '"accessToken":"[^"]*"' "$BODY_FILE" | head -1 | cut -d'"' -f4)
+                    if [ -n "$AUTH_TOKEN" ]; then
+                      break   # 성공 — 토큰 확보.
+                    fi
+                    kind="credential"  # 2xx인데 토큰 없음 — 응답 계약/계정 문제, 재시도 무의미.
+                  elif printf '%s' "$http_code" | grep -q '^5'; then
+                    kind="transient"   # 5xx — 일시 오류 가능.
+                  else
+                    kind="credential"  # 400/401/403 등 — 재시도로 풀리지 않는 오류.
+                  fi
+
+                  if [ "$kind" = "credential" ]; then
+                    echo "WARN: 웜업 로그인 실패(비재시도, http=${http_code}, curl_rc=${rc})." >&2
+                    apply_failure_policy credential
+                  fi
+
+                  if [ "$attempt" -ge "$max_attempts" ]; then
+                    echo "WARN: 웜업 로그인 일시 오류 — 재시도 소진(http=${http_code}, curl_rc=${rc})." >&2
+                    apply_failure_policy transient
+                  fi
+                  echo "WARN: 웜업 로그인 일시 오류(http=${http_code}, curl_rc=${rc}) — 시도 ${attempt}/${max_attempts}, 5초 후 재시도." >&2
+                  attempt=$((attempt + 1))
+                  sleep 5
+                done
+
+                rm -f "$BODY_FILE"
+                trap - EXIT
                 export AUTH_TOKEN
               fi
               exec bash /warmup/warmup.sh
+          env:
+            # 웜업 실패 정책 스위치. "false"(기본)면 로그인/토큰 실패를 크게 로깅하되 배포를
+            # 막지 않는다(exit 0). 운영에서 웜업 실패를 배포 실패로 강제하려면 이 값만 "true"로
+            # 바꾼다(이미지 재빌드 없음).
+            - name: WARMUP_STRICT
+              value: "false"
           envFrom:
             - configMapRef: { name: warmup-config }
             - secretRef: { name: warmup-secrets, optional: true }   # 미준비 상태 배포 허용(단계적 활성화)
