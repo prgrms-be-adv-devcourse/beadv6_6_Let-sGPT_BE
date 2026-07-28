@@ -236,8 +236,22 @@ public class RecommendationService {
               // 현재 상품이 담긴 옛 캐시도 마감된 드롭과 같은 열화로 본다. 이렇게 해야 그룹이
               // 통째로 사라질 때 재계산이 예약돼 TTL(12h)을 기다리지 않고 스스로 복구된다.
               .filter(product -> !Objects.equals(product.productId(), productId))
+              // dropId 필드가 없던 배포 전 캐시는 열린 드롭 카드라도 상품 링크·정가를 담고 있다.
+              // 현재 메타로 카드 전체를 복원해 링크와 드롭가 계약을 즉시 맞춘다.
+              .map(
+                  product ->
+                      product.dropId() == null
+                          ? openDropCache
+                              .findByProductId(product.productId())
+                              .map(this::toProduct)
+                              // filterOpenProductIds와 재조회 사이에 드롭이 닫히면 이미 열린 카드의
+                              // 링크를 임의로 지우지 않고, 다음 캐시 재계산에서 정리하게 둔다.
+                              .orElse(product)
+                          : product)
               .toList();
-      if (retained.size() != section.products().size()) {
+      // 제거뿐 아니라 구버전 카드의 dropId·드롭가 복원도 새 응답을 반환해야 한다. 그렇지 않으면
+      // 크기가 같은 경우 아래 비열화 fast-path가 원래 캐시 객체를 그대로 돌려준다.
+      if (!retained.equals(section.products())) {
         anyRemoved = true;
       }
       if (retained.isEmpty()) {
@@ -714,16 +728,17 @@ public class RecommendationService {
           if (detail.price() == null) {
             yield Optional.empty();
           }
+          Optional<DropMeta> openDrop = openDropCache.findByProductId(productId);
           yield Optional.of(
               new Product(
                   detail.id(),
                   // 상품 상세만으로는 드롭을 알 수 없다. 인메모리 캐시 조회라 HTTP 없이 0 비용으로
                   // 채운다. 후보는 filterCandidates에서 이미 열린 드롭으로 걸러졌으므로 보통
                   // 찾히고, 그 사이 마감돼 못 찾으면 null(=상품 페이지로) 계약과 일치한다.
-                  openDropCache.findByProductId(productId).map(DropMeta::dropId).orElse(null),
+                  openDrop.map(DropMeta::dropId).orElse(null),
                   detail.name(),
                   detail.sellerName(),
-                  detail.price(),
+                  openDrop.map(DropMeta::dropPrice).orElse(detail.price()),
                   detail.thumbnailKey()));
         }
       };

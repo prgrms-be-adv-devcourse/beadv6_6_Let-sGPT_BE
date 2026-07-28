@@ -3,6 +3,7 @@ package com.openat.recommendation.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,6 +16,7 @@ import com.openat.recommendation.domain.model.PurchaseSignal;
 import com.openat.recommendation.domain.model.Seed;
 import com.openat.recommendation.domain.service.SeedScorer;
 import com.openat.recommendation.infrastructure.cache.SeedWeightsCache;
+import com.openat.recommendation.infrastructure.cache.SeedWeightsCache.CachedWeights;
 import com.openat.recommendation.infrastructure.cache.SeedWeightsCache.SeedWeights;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
@@ -29,6 +31,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,6 +51,20 @@ class RecommendationSeedServiceTest {
   private final SeedScorer seedScorer = new SeedScorer(0.3, 0.5, 0.1, 0.85, 20, 20);
   private final ExecutorService executor = Executors.newFixedThreadPool(4);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+
+  @BeforeEach
+  void setUp() {
+    lenient()
+        .when(seedWeightsCache.findSnapshot(any()))
+        .thenAnswer(
+            invocation ->
+                seedWeightsCache
+                    .find(invocation.getArgument(0))
+                    .map(weights -> new CachedWeights(weights, "cached-json")));
+    lenient()
+        .when(seedWeightsCache.saveIfUnchanged(any(), any(), any(), any()))
+        .thenReturn(true);
+  }
 
   @AfterEach
   void tearDown() {
@@ -296,9 +313,11 @@ class RecommendationSeedServiceTest {
     when(orderSignalClient.getPurchaseSignals(memberId)).thenThrow(new RuntimeException("order"));
     when(wishlistSignalClient.getWishlistProductIds(memberId))
         .thenReturn(List.of(UUID.randomUUID()));
+    when(seedWeightsCache.findSnapshot(memberId)).thenReturn(Optional.empty());
+    when(seedWeightsCache.saveIfUnchanged(eq(memberId), any(), any(), eq(PARTIAL_TTL)))
+        .thenReturn(false);
     when(seedWeightsCache.find(memberId))
-        .thenReturn(
-            Optional.of(SeedWeights.full(concurrentlySaved, Instant.now().plusSeconds(60))));
+        .thenReturn(Optional.of(SeedWeights.full(concurrentlySaved, Instant.now())));
 
     var result = service().refreshWeightsCache(memberId);
 
@@ -382,7 +401,11 @@ class RecommendationSeedServiceTest {
 
   private SeedWeights captureSave(Duration expectedTtl) {
     ArgumentCaptor<SeedWeights> captor = ArgumentCaptor.forClass(SeedWeights.class);
-    verify(seedWeightsCache).save(any(), captor.capture(), eq(expectedTtl));
+    if (expectedTtl.equals(SeedWeightsCache.FULL_TTL)) {
+      verify(seedWeightsCache).save(any(), captor.capture(), eq(expectedTtl));
+    } else {
+      verify(seedWeightsCache).saveIfUnchanged(any(), any(), captor.capture(), eq(expectedTtl));
+    }
     return captor.getValue();
   }
 

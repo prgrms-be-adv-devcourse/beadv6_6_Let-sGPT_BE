@@ -6,6 +6,7 @@ import com.openat.recommendation.domain.model.PurchaseSignal;
 import com.openat.recommendation.domain.model.Seed;
 import com.openat.recommendation.domain.service.SeedScorer;
 import com.openat.recommendation.infrastructure.cache.SeedWeightsCache;
+import com.openat.recommendation.infrastructure.cache.SeedWeightsCache.CachedWeights;
 import com.openat.recommendation.infrastructure.cache.SeedWeightsCache.SeedWeights;
 import java.time.Duration;
 import java.time.Instant;
@@ -84,7 +85,8 @@ public class RecommendationSeedService {
       return freshSeeds;
     }
 
-    Optional<SeedWeights> cached = seedWeightsCache.find(memberId);
+    Optional<CachedWeights> cachedSnapshot = seedWeightsCache.findSnapshot(memberId);
+    Optional<SeedWeights> cached = cachedSnapshot.map(CachedWeights::weights);
     if (purchaseSignals.isEmpty() && wishlistProductIds.isEmpty()) {
       metrics.seedRefresh("both-missing");
       if (cached.isPresent()) {
@@ -100,13 +102,6 @@ public class RecommendationSeedService {
     // 그대로 반환하면 방금 받은 변경(예: 새 찜)이 FULL_TTL 동안 묻힌다.
     boolean purchaseSucceeded = purchaseSignals.isPresent();
     metrics.seedRefresh(purchaseSucceeded ? "wishlist-missing" : "order-missing");
-    // 신호를 받는 동안 다른 스레드가 완전 데이터를 저장했으면, 절반이 낡은 부분 데이터로 그것을
-    // 짧은 TTL에 덮지 않는다. 그쪽이 우리 것보다 새롭고 완전하므로 그대로 쓴다.
-    if (cached.isPresent() && supersedes(cached.get(), startedAt)) {
-      metrics.seedSalvage("superseded");
-      return cached.get().seeds();
-    }
-
     // 살려 온 절반을 계속 물려주면 실패가 이어지는 동안 그 시드의 수명이 무한 연장된다. 상한을
     // 넘으면 실패한 쪽을 버리고 방금 받은 쪽만 남긴다.
     Optional<SeedWeights> salvageable = cached.filter(weights -> canSalvage(weights, startedAt));
@@ -119,8 +114,18 @@ public class RecommendationSeedService {
     // 처음 모은 시각을 물려줘 다음 부분 저장이 수명을 더 늘리지 못하게 한다.
     Instant collectedAt =
         salvagedSeeds.isEmpty() ? startedAt : salvageable.orElseThrow().collectedAt();
-    seedWeightsCache.save(memberId, SeedWeights.partial(mergedSeeds, collectedAt), partialTtl);
-    return mergedSeeds;
+    SeedWeights partial = SeedWeights.partial(mergedSeeds, collectedAt);
+    boolean saved =
+        seedWeightsCache.saveIfUnchanged(
+            memberId, cachedSnapshot.map(CachedWeights::serialized).orElse(null), partial, partialTtl);
+    if (saved) {
+      return mergedSeeds;
+    }
+    // find와 save 사이에 다른 요청이 갱신했다. 특히 완전 결과를 부분 결과로 덮지 않도록, CAS에
+    // 실패하면 현재 값을 다시 읽어 그 값을 반환한다. 읽기마저 실패한 경우에만 이번 부분 결과를
+    // 응답으로 쓰되 Redis에는 저장하지 않는다.
+    metrics.seedSalvage("superseded");
+    return seedWeightsCache.find(memberId).map(SeedWeights::seeds).orElse(mergedSeeds);
   }
 
   private String salvageOutcome(
@@ -129,11 +134,6 @@ public class RecommendationSeedService {
       return "expired";
     }
     return salvagedSeeds.isEmpty() ? "none" : "merged";
-  }
-
-  /** 우리가 신호를 조회하기 시작한 뒤에 저장된 완전 데이터. 부분 데이터로 덮으면 손해다. */
-  private boolean supersedes(SeedWeights cached, Instant startedAt) {
-    return cached.complete() && cached.collectedAt().isAfter(startedAt);
   }
 
   /** 캐시에 담긴 가장 오래된 시드가 완전 데이터로 살아 있을 수 있는 기간을 넘지 않았는지. */

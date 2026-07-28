@@ -349,6 +349,59 @@ class RecommendationServiceTest {
   }
 
   @Test
+  void recommend_forDetailWhenCandidateHasOpenDrop_usesDropPrice() {
+    UUID currentId = UUID.randomUUID();
+    UUID candidateId = UUID.randomUUID();
+    DropMeta openDrop = drop(candidateId, UUID.randomUUID());
+    ProductDetailResponse current = product(currentId, "현재", 100L);
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
+    when(productDetailClient.getProduct(currentId)).thenReturn(current);
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
+        .thenReturn("prompt");
+    when(llmClient.complete("prompt")).thenReturn("raw");
+    when(postProcessor.process("raw", List.of(candidateId)))
+        .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
+    when(productDetailClient.getProduct(candidateId)).thenReturn(product(candidateId, "선택", 2_000L));
+    when(openDropCache.findByProductId(candidateId)).thenReturn(Optional.of(openDrop));
+
+    var response = service.recommend(currentId);
+
+    assertThat(response.sections().get(0).products())
+        .singleElement()
+        .extracting(RecommendationResponse.Product::price)
+        .isEqualTo(openDrop.dropPrice());
+  }
+
+  @Test
+  void recommend_forDetailLegacyCacheHit_restoresDropLinkAndPrice() {
+    UUID currentId = UUID.randomUUID();
+    UUID candidateId = UUID.randomUUID();
+    DropMeta openDrop = drop(candidateId, UUID.randomUUID());
+    RecommendationResponse cached =
+        new RecommendationResponse(
+            List.of(
+                new RecommendationResponse.Section(
+                    "추천",
+                    List.of(
+                        new RecommendationResponse.Product(
+                            candidateId, null, "옛 상품", "판매자", 2_000L, "thumb")))));
+    when(resultCache.find("rec:detail:" + currentId)).thenReturn(Optional.of(cached));
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
+    when(openDropCache.findByProductId(candidateId)).thenReturn(Optional.of(openDrop));
+
+    var response = service.recommend(currentId);
+
+    assertThat(response.sections().get(0).products())
+        .singleElement()
+        .satisfies(
+            product -> {
+              assertThat(product.dropId()).isEqualTo(openDrop.dropId());
+              assertThat(product.price()).isEqualTo(openDrop.dropPrice());
+            });
+  }
+
+  @Test
   void recommend_forDetail_fetchesProductsConcurrentlyAndPreservesSelectionOrder()
       throws Exception {
     UUID currentId = UUID.randomUUID();

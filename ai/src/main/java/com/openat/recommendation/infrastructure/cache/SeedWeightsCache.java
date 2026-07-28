@@ -30,11 +30,36 @@ public class SeedWeightsCache {
   }
 
   public Optional<SeedWeights> find(UUID memberId) {
-    return jsonRedisStore.read(key(memberId), JsonNode.class).flatMap(this::toSeedWeights);
+    return findSnapshot(memberId).map(CachedWeights::weights);
+  }
+
+  /** 원자적 부분 갱신을 위해, 역직렬화 결과와 Redis 원문을 함께 읽는다. */
+  public Optional<CachedWeights> findSnapshot(UUID memberId) {
+    return jsonRedisStore
+        .readRaw(key(memberId))
+        .flatMap(
+            serialized -> {
+              try {
+                return toSeedWeights(objectMapper.readTree(serialized))
+                    .map(weights -> new CachedWeights(weights, serialized));
+              } catch (Exception exception) {
+                log.warn("Failed to parse cached seed weights; treating as miss", exception);
+                return Optional.empty();
+              }
+            });
   }
 
   public void save(UUID memberId, SeedWeights weights, Duration ttl) {
     jsonRedisStore.write(key(memberId), weights, ttl);
+  }
+
+  /**
+   * 부분 결과는 읽은 캐시가 그대로일 때만 저장한다. 그 사이 완전 결과가 들어오면 false를 반환해
+   * 호출자가 새 완전 결과를 보존·반환하게 한다.
+   */
+  public boolean saveIfUnchanged(
+      UUID memberId, String expectedSerialized, SeedWeights weights, Duration ttl) {
+    return jsonRedisStore.writeIfUnchanged(key(memberId), expectedSerialized, weights, ttl);
   }
 
   private Optional<SeedWeights> toSeedWeights(JsonNode node) {
@@ -52,6 +77,8 @@ public class SeedWeightsCache {
   private String key(UUID memberId) {
     return "weights:" + memberId;
   }
+
+  public record CachedWeights(SeedWeights weights, String serialized) {}
 
   /**
    * 가중치 캐시 엔트리. {@code complete}는 이 엔트리를 만들 때 모든 신호 조회가 성공했는지,
