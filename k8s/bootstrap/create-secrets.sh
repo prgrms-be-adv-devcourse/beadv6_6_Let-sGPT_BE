@@ -167,7 +167,7 @@ render_secret_manifest search-secrets "$NS" Opaque \
 echo "OK: search-secrets 적용 완료"
 
 # AI 외부 연동 인증 전용
-render_secret_manifest ai-inference-secrets "$NS" Opaque CHAT_INFERENCE_API_KEY TAVILY_API_KEY \
+render_secret_manifest ai-inference-secrets "$NS" Opaque CHAT_INFERENCE_API_KEY TAVILY_API_KEY OPENAI_API_KEY \
   | "$KUBECTL" apply -f -
 echo "OK: ai-inference-secrets 적용 완료"
 
