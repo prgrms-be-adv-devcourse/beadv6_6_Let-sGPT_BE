@@ -1,0 +1,16 @@
+# product의 시드 실행을 끈다. 재기동 시 SeedDataRunner의 데모 스토어 upsert 오염을
+# 막는다. env는 이름 키로 전략적 병합되므로 base(22-product.yaml)의 나머지 env는
+# 보존되고 APP_SEED_ENABLED 항목만 추가된다. 대응 코드 가드는 별도 PR로 진행 중이며,
+# 코드가 아직 없어도 이 env는 무해하다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product
+  namespace: openat
+spec:
+  template:
+    spec:
+      containers:
+        - name: product
+          env:
+            - { name: APP_SEED_ENABLED, value: "false" }
