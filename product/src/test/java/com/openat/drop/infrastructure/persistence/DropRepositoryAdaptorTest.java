@@ -11,6 +11,7 @@ import com.openat.product.domain.model.Product;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -23,6 +24,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -285,6 +287,119 @@ class DropRepositoryAdaptorTest {
       assertThat(result.getContent()).hasSize(1);
       assertThat(result.getContent().get(0).getProduct().getSellerId()).isEqualTo(sellerId);
     }
+
+    @Test
+    @DisplayName("openAt 오름차순으로 요청한 두 번째 페이지와 전체 메타데이터를 반환한다")
+    void search_secondPage_returnsSortedContentAndMetadata() {
+      // given
+      Instant now = Instant.parse("2026-07-28T00:00:00Z");
+      Product product = persistProduct();
+      Instant firstOpenAt = now.plusSeconds(60);
+      Instant secondOpenAt = now.plusSeconds(120);
+      Instant thirdOpenAt = now.plusSeconds(180);
+      Instant fourthOpenAt = now.plusSeconds(240);
+      Instant fifthOpenAt = now.plusSeconds(300);
+      persistDrop(product, firstOpenAt, null);
+      persistDrop(product, secondOpenAt, null);
+      Drop third = persistDrop(product, thirdOpenAt, null);
+      Drop fourth = persistDrop(product, fourthOpenAt, null);
+      persistDrop(product, fifthOpenAt, null);
+      entityManager.flush();
+      entityManager.clear();
+      PageRequest pageable =
+          PageRequest.of(1, 2, Sort.by(Sort.Direction.ASC, "openAt"));
+
+      // when
+      Page<Drop> result =
+          dropRepository.search(
+              new DropSearchCondition(null, null, null, null), now, pageable);
+
+      // then
+      assertThat(result.getContent())
+          .extracting(Drop::getId)
+          .containsExactly(third.getId(), fourth.getId());
+      assertThat(result.getNumber()).isEqualTo(1);
+      assertThat(result.getSize()).isEqualTo(2);
+      assertThat(result.getTotalElements()).isEqualTo(5);
+      assertThat(result.getTotalPages()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("dropPrice 내림차순 정렬을 목록 전체에 적용한다")
+    void search_dropPriceSort_returnsDescendingPrices() {
+      // given
+      Instant now = Instant.parse("2026-07-28T00:00:00Z");
+      Product product = persistProduct();
+      persistDrop(product, 10_000L, now.plusSeconds(60));
+      persistDrop(product, 30_000L, now.plusSeconds(120));
+      persistDrop(product, 20_000L, now.plusSeconds(180));
+      entityManager.flush();
+      entityManager.clear();
+      PageRequest pageable =
+          PageRequest.of(0, 10, Sort.by(Sort.Direction.DESC, "dropPrice"));
+
+      // when
+      Page<Drop> result =
+          dropRepository.search(
+              new DropSearchCondition(null, null, null, null), now, pageable);
+
+      // then
+      assertThat(result.getContent())
+          .extracting(Drop::getDropPrice)
+          .containsExactly(30_000L, 20_000L, 10_000L);
+    }
+
+    @Test
+    @DisplayName("지원하지 않는 정렬 필드는 무시하고 openAt 내림차순을 사용한다")
+    void search_unsupportedSort_usesDefaultOrder() {
+      // given
+      Instant now = Instant.parse("2026-07-28T00:00:00Z");
+      Product product = persistProduct();
+      Instant firstOpenAt = now.plusSeconds(60);
+      Instant secondOpenAt = now.plusSeconds(120);
+      Instant thirdOpenAt = now.plusSeconds(180);
+      persistDrop(product, firstOpenAt, null);
+      persistDrop(product, secondOpenAt, null);
+      persistDrop(product, thirdOpenAt, null);
+      entityManager.flush();
+      entityManager.clear();
+      PageRequest pageable =
+          PageRequest.of(0, 10, Sort.by(Sort.Direction.ASC, "createdAt"));
+
+      // when
+      Page<Drop> result =
+          dropRepository.search(
+              new DropSearchCondition(null, null, null, null), now, pageable);
+
+      // then
+      assertThat(result.getContent())
+          .extracting(Drop::getOpenAt)
+          .containsExactly(thirdOpenAt, secondOpenAt, firstOpenAt);
+    }
+
+    @Test
+    @DisplayName("정렬을 지정하지 않으면 같은 openAt 안에서 id 내림차순으로 순서를 고정한다")
+    void search_defaultSort_ordersEqualOpenAtByIdDescending() {
+      // given
+      Instant now = Instant.parse("2026-07-28T00:00:00Z");
+      Instant sameOpenAt = now.plusSeconds(60);
+      Product product = persistProduct();
+      persistDrop(product, sameOpenAt, null);
+      persistDrop(product, sameOpenAt, null);
+      persistDrop(product, sameOpenAt, null);
+      entityManager.flush();
+      entityManager.clear();
+
+      // when
+      Page<Drop> result =
+          dropRepository.search(
+              new DropSearchCondition(null, null, null, null), now, PageRequest.of(0, 10));
+
+      // then
+      assertThat(result.getContent())
+          .extracting(drop -> drop.getId().toString())
+          .isSortedAccordingTo(Comparator.reverseOrder());
+    }
   }
 
   private Drop dropOf(Product product) {
@@ -311,6 +426,16 @@ class DropRepositoryAdaptorTest {
             .totalQuantity(100)
             .openAt(openAt)
             .closeAt(closeAt)
+            .build());
+  }
+
+  private Drop persistDrop(Product product, long dropPrice, Instant openAt) {
+    return dropRepository.save(
+        Drop.schedule()
+            .product(product)
+            .dropPrice(dropPrice)
+            .totalQuantity(100)
+            .openAt(openAt)
             .build());
   }
 

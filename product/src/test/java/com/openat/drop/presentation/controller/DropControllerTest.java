@@ -39,6 +39,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -184,19 +185,39 @@ class DropControllerTest {
   class GetList {
 
     @Test
-    @DisplayName("목록을 페이징해 200으로 반환한다")
-    void searchDrops_returns200() throws Exception {
+    @DisplayName("페이지·크기·정렬을 전달하고 페이지 메타데이터를 반환한다")
+    void searchDrops_pageable_returnsPageMetadata() throws Exception {
       // given
       DropInfo info = sampleInfo();
+      Pageable responsePageable = PageRequest.of(1, 2);
       given(dropQueryUseCase.searchDrops(any(DropSearchCondition.class), any(Pageable.class)))
-          .willReturn(new PageImpl<>(List.of(info), PageRequest.of(0, 10), 1));
+          .willReturn(new PageImpl<>(List.of(info), responsePageable, 5));
 
-      // when & then
+      // when
       mockMvc
-          .perform(get("/api/v1/drops").param("status", "OPEN"))
+          .perform(
+              get("/api/v1/drops")
+                  .param("status", "OPEN")
+                  .param("page", "1")
+                  .param("size", "2")
+                  .param("sort", "dropPrice,asc"))
           .andExpect(status().isOk())
           .andExpect(jsonPath("$.content[0].id").value(info.id().toString()))
-          .andExpect(jsonPath("$.totalElements").value(1));
+          .andExpect(jsonPath("$.page").value(1))
+          .andExpect(jsonPath("$.size").value(2))
+          .andExpect(jsonPath("$.totalElements").value(5))
+          .andExpect(jsonPath("$.totalPages").value(3));
+
+      // then
+      ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+      then(dropQueryUseCase)
+          .should()
+          .searchDrops(any(DropSearchCondition.class), pageableCaptor.capture());
+      Pageable pageable = pageableCaptor.getValue();
+      assertThat(pageable.getPageNumber()).isEqualTo(1);
+      assertThat(pageable.getPageSize()).isEqualTo(2);
+      assertThat(pageable.getSort().getOrderFor("dropPrice"))
+          .isEqualTo(Sort.Order.asc("dropPrice"));
     }
 
     @Test

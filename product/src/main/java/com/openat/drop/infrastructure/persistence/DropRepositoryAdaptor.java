@@ -7,16 +7,19 @@ import com.openat.drop.domain.repository.DropRepository;
 import com.openat.drop.domain.repository.DropSearchCondition;
 import com.openat.product.domain.model.QProduct;
 import com.querydsl.core.BooleanBuilder;
+import com.querydsl.core.types.OrderSpecifier;
 import com.querydsl.core.types.Predicate;
 import com.querydsl.jpa.impl.JPAQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.support.PageableExecutionUtils;
 import org.springframework.stereotype.Repository;
 import org.springframework.util.StringUtils;
@@ -75,6 +78,24 @@ public class DropRepositoryAdaptor implements DropRepository {
       where.and(product.sellerId.eq(condition.sellerId()));
     }
 
+    List<OrderSpecifier<?>> orderSpecifiers = new ArrayList<>();
+    for (Sort.Order order : pageable.getSort()) {
+      switch (order.getProperty()) {
+        case "openAt" ->
+            orderSpecifiers.add(order.isAscending() ? drop.openAt.asc() : drop.openAt.desc());
+        case "dropPrice" ->
+            orderSpecifiers.add(
+                order.isAscending() ? drop.dropPrice.asc() : drop.dropPrice.desc());
+        default -> {
+          // 지원하지 않는 정렬은 경로 표현식으로 변환하지 않는다.
+        }
+      }
+    }
+    if (orderSpecifiers.isEmpty()) {
+      orderSpecifiers.add(drop.openAt.desc());
+    }
+    orderSpecifiers.add(drop.id.desc());
+
     List<Drop> content =
         queryFactory
             .selectFrom(drop)
@@ -83,7 +104,7 @@ public class DropRepositoryAdaptor implements DropRepository {
             .leftJoin(product.category)
             .fetchJoin()
             .where(where)
-            .orderBy(drop.openAt.desc())
+            .orderBy(orderSpecifiers.toArray(new OrderSpecifier<?>[0]))
             .offset(pageable.getOffset())
             .limit(pageable.getPageSize())
             .fetch();
