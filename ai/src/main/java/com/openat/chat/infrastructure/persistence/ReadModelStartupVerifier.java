@@ -9,6 +9,8 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.ApplicationArguments;
@@ -263,6 +265,7 @@ public class ReadModelStartupVerifier implements ApplicationRunner, DataQueryCap
   private final ChatQueryDataSourceProperties properties;
   private final AtomicReference<Availability> availability =
       new AtomicReference<>(Availability.NOT_CHECKED);
+  private final Lock verificationLock = new ReentrantLock();
 
   public ReadModelStartupVerifier(
       @Qualifier("chatQueryJdbcTemplate") NamedParameterJdbcTemplate jdbcTemplate,
@@ -276,7 +279,16 @@ public class ReadModelStartupVerifier implements ApplicationRunner, DataQueryCap
     verifyNow();
   }
 
-  public synchronized Availability verifyNow() {
+  public Availability verifyNow() {
+    verificationLock.lock();
+    try {
+      return verifyReadModel();
+    } finally {
+      verificationLock.unlock();
+    }
+  }
+
+  private Availability verifyReadModel() {
     if (!properties.isConfigured()) {
       availability.set(Availability.UNAVAILABLE);
       log.info("관리자 AI 데이터 조회 capability가 비활성 상태야. reason=NOT_CONFIGURED");
