@@ -1,0 +1,15 @@
+# member의 SQL 초기화를 끈다. 재기동 시 sql init(init-data.sql) 재실행으로 목 회원이
+# 다시 삽입되는 오염을 막는다. env는 이름 키로 전략적 병합되므로 base(21-member.yaml)의
+# 나머지 env는 보존되고 SPRING_SQL_INIT_MODE 항목만 추가된다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: member
+  namespace: openat
+spec:
+  template:
+    spec:
+      containers:
+        - name: member
+          env:
+            - { name: SPRING_SQL_INIT_MODE, value: "never" }

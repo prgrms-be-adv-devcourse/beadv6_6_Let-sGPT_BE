@@ -129,7 +129,7 @@ management:
 
 inference:
   base-url: ${INFERENCE_BASE_URL:https://api.openai.com/v1}
-  api-key: ${INFERENCE_API_KEY:}
+  api-key: ${INFERENCE_API_KEY:${OPENAI_API_KEY:}}
   model: ${INFERENCE_MODEL:gpt-4.1-nano}
   # OpenAI는 sub-second 응답 — 옛 inferway 대비 5s면 충분(기존 120s는 느린 추론기 잔재).
   timeout: ${INFERENCE_LLM_TIMEOUT:5000ms}
