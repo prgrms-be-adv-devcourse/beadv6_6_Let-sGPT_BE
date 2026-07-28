@@ -11,4 +11,6 @@ public record DropMeta(
     long dropPrice,
     String thumbnailKey,
     UUID categoryId,
+    DropStatus status,
+    Instant openAt,
     Instant closeAt) {}

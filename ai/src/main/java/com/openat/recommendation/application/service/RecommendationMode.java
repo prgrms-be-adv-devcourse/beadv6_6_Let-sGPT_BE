@@ -1,6 +1,7 @@
 package com.openat.recommendation.application.service;
 
 import com.openat.recommendation.infrastructure.cache.RecommendationResultCache;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -53,6 +54,11 @@ enum RecommendationMode {
 
   boolean isHome() {
     return this == HOME;
+  }
+
+  /** 메트릭 태그 값. */
+  String tag() {
+    return name().toLowerCase(Locale.ROOT);
   }
 
   // 캐시 키 분기를 모드로 일원화한다. 홈은 CurrentMember로 회원 id를 구하되, 잘못된 id는

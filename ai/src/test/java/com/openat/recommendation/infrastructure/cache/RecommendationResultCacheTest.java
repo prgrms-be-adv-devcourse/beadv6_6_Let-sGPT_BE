@@ -12,6 +12,7 @@ import com.openat.recommendation.application.service.RecommendationResponse;
 import com.openat.recommendation.infrastructure.config.JacksonConfig;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,6 +41,63 @@ class RecommendationResultCacheTest {
 
     verify(valueOperations).set(key, json, Duration.ofHours(12));
     assertThat(cache.find(key)).contains(response);
+  }
+
+  @Test
+  void saveAndFind_roundTripsProductsIncludingDropId() throws Exception {
+    String key = "rec:detail:product";
+    RecommendationResponse response =
+        new RecommendationResponse(
+            List.of(
+                new RecommendationResponse.Section(
+                    "연관",
+                    List.of(
+                        new RecommendationResponse.Product(
+                            UUID.randomUUID(), UUID.randomUUID(), "드롭 상품", "판매자", 900L, "thumb"),
+                        new RecommendationResponse.Product(
+                            UUID.randomUUID(), null, "일반 상품", "판매자", 800L, "thumb")))));
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    when(valueOperations.get(key)).thenReturn(objectMapper.writeValueAsString(response));
+
+    assertThat(new RecommendationResultCache(redisTemplate, objectMapper).find(key))
+        .contains(response);
+  }
+
+  /**
+   * dropId 추가 이전에 쓰인 캐시 엔트리(TTL 12시간)는 배포 직후에도 그대로 남아 있다. 역직렬화가
+   * 깨지면 모든 히트가 미스로 떨어져 전면 LLM 폭주가 되므로, 옛 JSON이 그대로 읽히는지 못 박는다.
+   */
+  @Test
+  void find_whenCachedJsonPredatesDropIdField_parsesWithNullDropId() {
+    String key = "rec:member:home";
+    UUID productId = UUID.randomUUID();
+    String legacyJson =
+        """
+        {"sections":[{"title":"이런 드롭은 어떠세요?","products":[
+          {"productId":"%s","name":"옛 상품","sellerName":"판매자","price":1000,
+           "thumbnailUrl":"thumb"}]}]}
+        """
+            .formatted(productId);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    when(valueOperations.get(key)).thenReturn(legacyJson);
+
+    Optional<RecommendationResponse> found =
+        new RecommendationResultCache(redisTemplate, objectMapper).find(key);
+
+    assertThat(found).isPresent();
+    assertThat(found.get().sections())
+        .singleElement()
+        .satisfies(
+            section ->
+                assertThat(section.products())
+                    .singleElement()
+                    .satisfies(
+                        product -> {
+                          assertThat(product.productId()).isEqualTo(productId);
+                          assertThat(product.dropId()).isNull();
+                          assertThat(product.name()).isEqualTo("옛 상품");
+                          assertThat(product.price()).isEqualTo(1000L);
+                        }));
   }
 
   @Test

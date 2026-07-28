@@ -20,6 +20,7 @@ import com.openat.common.auth.UserContextHolder;
 import com.openat.recommendation.application.port.out.LlmClient;
 import com.openat.recommendation.application.service.RecommendationPostProcessor.SelectedSection;
 import com.openat.recommendation.domain.model.DropMeta;
+import com.openat.recommendation.domain.model.DropStatus;
 import com.openat.recommendation.domain.model.Seed;
 import com.openat.recommendation.domain.service.SeedScorer;
 import com.openat.recommendation.infrastructure.cache.RecommendationResultCache;
@@ -27,6 +28,9 @@ import com.openat.recommendation.infrastructure.client.ProductDetailClient;
 import com.openat.recommendation.infrastructure.client.ProductDetailClient.ProductDetailResponse;
 import com.openat.recommendation.infrastructure.client.SearchRecommendClient;
 import com.openat.recommendation.infrastructure.client.SearchRecommendClient.SimilarProductResponse;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -57,14 +61,18 @@ class RecommendationServiceTest {
   @Mock RecommendationPostProcessor postProcessor;
   @Mock ProductDetailClient productDetailClient;
   @Mock RecommendationResultCache resultCache;
-  @Mock PopularProductsCache popularProductsCache;
+  @Mock LastResortProductsCache lastResortProductsCache;
 
   private RecommendationService service;
   private ExecutorService executor;
+  private SimpleMeterRegistry meterRegistry;
+  private RecommendationMetrics metrics;
 
   @BeforeEach
   void setUp() {
     executor = Executors.newFixedThreadPool(4);
+    meterRegistry = new SimpleMeterRegistry();
+    metrics = new RecommendationMetrics(meterRegistry);
     // cacheKey는 순수 계산 메서드 — 실제 키 생성 로직을 그대로 사용
     lenient()
         .when(resultCache.cacheKey(any(), any()))
@@ -85,7 +93,8 @@ class RecommendationServiceTest {
             postProcessor,
             productDetailClient,
             resultCache,
-            popularProductsCache,
+            lastResortProductsCache,
+            metrics,
             3,
             64,
             executor);
@@ -178,7 +187,8 @@ class RecommendationServiceTest {
             new RecommendationPostProcessor(new ObjectMapper()),
             productDetailClient,
             resultCache,
-            popularProductsCache,
+            lastResortProductsCache,
+            metrics,
             3,
             64,
             executor);
@@ -283,6 +293,112 @@ class RecommendationServiceTest {
     verify(openDropCache).filterOpenProductIds(List.of(candidateId));
     verify(seedService, never()).collect();
     verify(seedScorer).currentProductSeed(currentId);
+  }
+
+  @Test
+  void recommend_forDetail_fillsDropIdFromOpenDropCacheWithoutExtraHttpCall() {
+    UUID currentId = UUID.randomUUID();
+    UUID candidateId = UUID.randomUUID();
+    DropMeta openDrop = drop(candidateId, UUID.randomUUID());
+    ProductDetailResponse current = product(currentId, "현재", 100L);
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
+    when(productDetailClient.getProduct(currentId)).thenReturn(current);
+    when(openDropCache.filterOpenProductIds(List.of(candidateId)))
+        .thenReturn(List.of(candidateId));
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
+        .thenReturn("prompt");
+    when(llmClient.complete("prompt")).thenReturn("raw");
+    when(postProcessor.process("raw", List.of(candidateId)))
+        .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
+    when(productDetailClient.getProduct(candidateId))
+        .thenReturn(product(candidateId, "선택", 200L));
+    when(openDropCache.findByProductId(candidateId)).thenReturn(Optional.of(openDrop));
+
+    var response = service.recommend(currentId);
+
+    assertThat(response.sections().get(0).products())
+        .singleElement()
+        .extracting(RecommendationResponse.Product::dropId)
+        .isEqualTo(openDrop.dropId());
+  }
+
+  @Test
+  void recommend_forDetailWhenDropClosedBetweenFilterAndAssemble_leavesDropIdNull() {
+    UUID currentId = UUID.randomUUID();
+    UUID candidateId = UUID.randomUUID();
+    ProductDetailResponse current = product(currentId, "현재", 100L);
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
+    when(productDetailClient.getProduct(currentId)).thenReturn(current);
+    when(openDropCache.filterOpenProductIds(List.of(candidateId)))
+        .thenReturn(List.of(candidateId));
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
+        .thenReturn("prompt");
+    when(llmClient.complete("prompt")).thenReturn("raw");
+    when(postProcessor.process("raw", List.of(candidateId)))
+        .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
+    when(productDetailClient.getProduct(candidateId))
+        .thenReturn(product(candidateId, "선택", 200L));
+    when(openDropCache.findByProductId(candidateId)).thenReturn(Optional.empty());
+
+    var response = service.recommend(currentId);
+
+    assertThat(response.sections().get(0).products())
+        .singleElement()
+        .extracting(RecommendationResponse.Product::dropId)
+        .isNull();
+  }
+
+  @Test
+  void recommend_forDetailWhenCandidateHasOpenDrop_usesDropPrice() {
+    UUID currentId = UUID.randomUUID();
+    UUID candidateId = UUID.randomUUID();
+    DropMeta openDrop = drop(candidateId, UUID.randomUUID());
+    ProductDetailResponse current = product(currentId, "현재", 100L);
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
+    when(productDetailClient.getProduct(currentId)).thenReturn(current);
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
+        .thenReturn("prompt");
+    when(llmClient.complete("prompt")).thenReturn("raw");
+    when(postProcessor.process("raw", List.of(candidateId)))
+        .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
+    when(productDetailClient.getProduct(candidateId)).thenReturn(product(candidateId, "선택", 2_000L));
+    when(openDropCache.findByProductId(candidateId)).thenReturn(Optional.of(openDrop));
+
+    var response = service.recommend(currentId);
+
+    assertThat(response.sections().get(0).products())
+        .singleElement()
+        .extracting(RecommendationResponse.Product::price)
+        .isEqualTo(openDrop.dropPrice());
+  }
+
+  @Test
+  void recommend_forDetailLegacyCacheHit_restoresDropLinkAndPrice() {
+    UUID currentId = UUID.randomUUID();
+    UUID candidateId = UUID.randomUUID();
+    DropMeta openDrop = drop(candidateId, UUID.randomUUID());
+    RecommendationResponse cached =
+        new RecommendationResponse(
+            List.of(
+                new RecommendationResponse.Section(
+                    "추천",
+                    List.of(
+                        new RecommendationResponse.Product(
+                            candidateId, null, "옛 상품", "판매자", 2_000L, "thumb")))));
+    when(resultCache.find("rec:detail:" + currentId)).thenReturn(Optional.of(cached));
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
+    when(openDropCache.findByProductId(candidateId)).thenReturn(Optional.of(openDrop));
+
+    var response = service.recommend(currentId);
+
+    assertThat(response.sections().get(0).products())
+        .singleElement()
+        .satisfies(
+            product -> {
+              assertThat(product.dropId()).isEqualTo(openDrop.dropId());
+              assertThat(product.price()).isEqualTo(openDrop.dropPrice());
+            });
   }
 
   @Test
@@ -496,7 +612,7 @@ class RecommendationServiceTest {
     DropMeta fallback = drop(UUID.randomUUID(), categoryId);
     when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
     when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
-    when(openDropCache.findByCategory(categoryId, 3)).thenReturn(List.of(fallback));
+    when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of(fallback));
 
     assertFallback(service.recommend(currentId), "이 카테고리의 다른 드롭", fallback.productId());
   }
@@ -514,7 +630,7 @@ class RecommendationServiceTest {
         .thenReturn(List.of(candidateId));
     when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId)))).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenThrow(new RuntimeException("llm"));
-    when(openDropCache.findByCategory(categoryId, 3)).thenReturn(List.of(fallback));
+    when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of(fallback));
 
     assertFallback(service.recommend(currentId), "이 카테고리의 다른 드롭", fallback.productId());
   }
@@ -545,13 +661,275 @@ class RecommendationServiceTest {
   }
 
   @Test
-  void recommend_forDetailWhenCategoryIsNull_returnsEmptyFallback() {
+  void recommend_forDetailWhenCategoryIsNull_skipsCategoryDropsAndServesLastResort() {
     UUID currentId = UUID.randomUUID();
     when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, null));
     when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
 
-    assertThat(service.recommend(currentId).sections()).isEmpty();
+    assertThat(service.recommend(currentId).sections())
+        .singleElement()
+        .satisfies(section -> assertThat(section.title()).isEqualTo("이런 상품은 어떠세요?"));
     verify(openDropCache, never()).findByCategory(any(), anyInt());
+  }
+
+  @Test
+  void recommend_forDetailWhenCategoryHasNoOpenDrops_servesLastResortUnderProductTitle() {
+    UUID currentId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of());
+    when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
+
+    assertThat(service.recommend(currentId).sections())
+        .singleElement()
+        .satisfies(
+            section -> {
+              assertThat(section.title()).isEqualTo("이런 상품은 어떠세요?");
+              // 드롭 무관 상품이므로 dropId는 null — 프런트는 상품 페이지로 보낸다.
+              assertThat(section.products())
+                  .singleElement()
+                  .extracting(RecommendationResponse.Product::dropId)
+                  .isNull();
+            });
+  }
+
+  @Test
+  void recommend_forDetailWhenCategoryHasOpenDrops_servesDropTitleAndSkipsLastResort() {
+    UUID currentId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    DropMeta fallback = drop(UUID.randomUUID(), categoryId);
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of(fallback));
+
+    assertFallback(service.recommend(currentId), "이 카테고리의 다른 드롭", fallback.productId());
+    verify(lastResortProductsCache, never()).get();
+  }
+
+  @Test
+  void recommend_forDetailWhenLastResortCacheIsEmpty_returnsEmptyResponse() {
+    UUID currentId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, null));
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    when(lastResortProductsCache.get()).thenReturn(List.of());
+
+    // 최후 폴백 캐시는 스케줄로 채워진다. 기동 직후엔 비어 있어 빈 응답이 될 수밖에 없다.
+    assertThat(service.recommend(currentId).sections()).isEmpty();
+  }
+
+  @Test
+  void recommend_forDetailWhenLastResortServed_countsFallbackAndLastResort() {
+    UUID currentId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, null));
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
+
+    service.recommend(currentId);
+
+    assertThat(counterCount("recommendation.fallback", "mode", "detail", "reason", "search-failed"))
+        .isEqualTo(1);
+    assertThat(
+            counterCount("recommendation.last-resort", "mode", "detail", "reason", "search-failed"))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void recommend_forDetailWhenCategoryFallbackContainsCurrentProduct_excludesIt() {
+    UUID currentId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    DropMeta other = drop(UUID.randomUUID(), categoryId);
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    when(openDropCache.findByCategory(categoryId, 4))
+        .thenReturn(List.of(drop(currentId, categoryId), other));
+
+    assertFallback(service.recommend(currentId), "이 카테고리의 다른 드롭", other.productId());
+  }
+
+  @Test
+  void recommend_forDetailWhenCategoryFallbackHasOnlyCurrentProduct_servesLastResort() {
+    UUID currentId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    when(openDropCache.findByCategory(categoryId, 4))
+        .thenReturn(List.of(drop(currentId, categoryId)));
+    when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
+
+    assertThat(service.recommend(currentId).sections())
+        .singleElement()
+        .satisfies(section -> assertThat(section.title()).isEqualTo("이런 상품은 어떠세요?"));
+  }
+
+  @Test
+  void recommend_forDetailWhenCurrentProductIsAmongTopCategoryDrops_stillFillsFallbackLimit() {
+    UUID currentId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    DropMeta first = drop(UUID.randomUUID(), categoryId);
+    DropMeta second = drop(UUID.randomUUID(), categoryId);
+    DropMeta third = drop(UUID.randomUUID(), categoryId);
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    // 현재 상품이 마감 임박 상위에 들어 있다. 상한(3)만 가져와 제외하면 2개로 언더필된다.
+    when(openDropCache.findByCategory(categoryId, 4))
+        .thenReturn(List.of(drop(currentId, categoryId), first, second, third));
+
+    assertThat(service.recommend(currentId).sections())
+        .singleElement()
+        .satisfies(
+            section ->
+                assertThat(section.products())
+                    .extracting(RecommendationResponse.Product::productId)
+                    .containsExactly(first.productId(), second.productId(), third.productId()));
+  }
+
+  @Test
+  void recommend_forDetailCategoryFallback_neverExceedsFallbackLimit() {
+    UUID currentId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    // 현재 상품이 없으면 한 개 더 받아 온 만큼이 그대로 남으므로, 상한으로 자르는지 확인한다.
+    when(openDropCache.findByCategory(categoryId, 4))
+        .thenReturn(
+            List.of(
+                drop(UUID.randomUUID(), categoryId),
+                drop(UUID.randomUUID(), categoryId),
+                drop(UUID.randomUUID(), categoryId),
+                drop(UUID.randomUUID(), categoryId)));
+
+    assertThat(service.recommend(currentId).sections())
+        .singleElement()
+        .satisfies(section -> assertThat(section.products()).hasSize(3));
+  }
+
+  @Test
+  void recommend_forDetailWhenLastResortContainsCurrentProduct_excludesIt() {
+    UUID currentId = UUID.randomUUID();
+    RecommendationResponse.Product other = latestProduct();
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, null));
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    when(lastResortProductsCache.get())
+        .thenReturn(
+            List.of(
+                new RecommendationResponse.Product(currentId, null, "현재", "판매자", 100L, "thumb"),
+                other));
+
+    assertFallback(service.recommend(currentId), "이런 상품은 어떠세요?", other.productId());
+  }
+
+  @Test
+  void recommend_forDetailWhenEveryFallbackProductIsCurrentProduct_returnsEmptyResponse() {
+    UUID currentId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, null));
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    when(lastResortProductsCache.get())
+        .thenReturn(
+            List.of(new RecommendationResponse.Product(currentId, null, "현재", "판매자", 100L, "thumb")));
+
+    // 제외 후 남는 상품이 없으면 빈 섹션을 내보내지 않고 빈 응답이 된다.
+    assertThat(service.recommend(currentId).sections()).isEmpty();
+  }
+
+  @Test
+  void recommend_forDetailStaleCacheHit_excludesCurrentProductWithoutRecomputing() {
+    UUID currentId = UUID.randomUUID();
+    UUID otherId = UUID.randomUUID();
+    RecommendationResponse cached =
+        new RecommendationResponse(
+            List.of(
+                new RecommendationResponse.Section(
+                    "추천",
+                    List.of(
+                        new RecommendationResponse.Product(
+                            currentId, UUID.randomUUID(), "현재", "판매자", 100L, "thumb"),
+                        new RecommendationResponse.Product(
+                            otherId, UUID.randomUUID(), "다른", "판매자", 200L, "thumb")))));
+    when(resultCache.find("rec:detail:" + currentId)).thenReturn(Optional.of(cached));
+    when(openDropCache.filterOpenProductIds(List.of(currentId, otherId)))
+        .thenReturn(List.of(currentId, otherId));
+
+    assertFallback(service.recommend(currentId), "추천", otherId);
+    verify(searchClient, never()).recommend(any());
+    verify(llmClient, never()).complete(any());
+  }
+
+  @Test
+  void recommend_forDetailStaleCacheHitWithOnlyCurrentProduct_routesToFallbackLadder() {
+    UUID currentId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    DropMeta fallback = drop(UUID.randomUUID(), categoryId);
+    RecommendationResponse cached =
+        new RecommendationResponse(
+            List.of(
+                new RecommendationResponse.Section(
+                    "추천",
+                    List.of(
+                        new RecommendationResponse.Product(
+                            currentId, UUID.randomUUID(), "현재", "판매자", 100L, "thumb")))));
+    when(resultCache.find("rec:detail:" + currentId)).thenReturn(Optional.of(cached));
+    when(openDropCache.filterOpenProductIds(List.of(currentId))).thenReturn(List.of(currentId));
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
+    when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of(fallback));
+
+    assertFallback(service.recommend(currentId), "이 카테고리의 다른 드롭", fallback.productId());
+  }
+
+  @Test
+  @Timeout(10)
+  void recommend_forDetailStaleCacheHitWithOnlyCurrentProduct_regeneratesInBackground()
+      throws Exception {
+    UUID currentId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    UUID candidateId = UUID.randomUUID();
+    String key = "rec:detail:" + currentId;
+    RecommendationResponse cached =
+        new RecommendationResponse(
+            List.of(
+                new RecommendationResponse.Section(
+                    "추천",
+                    List.of(
+                        new RecommendationResponse.Product(
+                            currentId, UUID.randomUUID(), "현재", "판매자", 100L, "thumb")))));
+    ProductDetailResponse current = product(currentId, categoryId);
+    when(resultCache.find(key)).thenReturn(Optional.of(cached));
+    // 캐시에 남은 유일한 상품이 현재 상품이다. 드롭 자체는 아직 열려 있어 마감 필터로는 걸러지지
+    // 않으므로, 열화 판정이 "현재 상품"을 반영하지 않으면 배경 재계산이 아예 시작되지 않는다.
+    when(openDropCache.filterOpenProductIds(List.of(currentId))).thenReturn(List.of(currentId));
+    when(productDetailClient.getProduct(currentId)).thenReturn(current);
+    when(openDropCache.findByCategory(categoryId, 4))
+        .thenReturn(List.of(drop(UUID.randomUUID(), categoryId)));
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
+    when(openDropCache.filterOpenProductIds(List.of(candidateId)))
+        .thenReturn(List.of(candidateId));
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
+        .thenReturn("prompt");
+    when(llmClient.complete("prompt")).thenReturn("raw");
+    when(postProcessor.process("raw", List.of(candidateId)))
+        .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
+    when(productDetailClient.getProduct(candidateId))
+        .thenReturn(product(candidateId, "선택", 200L));
+
+    service.recommend(currentId);
+
+    // 동기 응답은 폴백이지만, 배경에서는 전체 파이프라인이 돌아 캐시가 갱신돼야 한다.
+    verify(searchClient, timeout(5000)).recommend(any());
+    verify(llmClient, timeout(5000)).complete("prompt");
+    verify(resultCache, timeout(5000)).save(eq(key), any());
+  }
+
+  @Test
+  void recommend_forHome_keepsProductsThatWouldBeExcludedInDetail() {
+    UUID candidateId = UUID.randomUUID();
+    DropMeta fallback = drop(candidateId, UUID.randomUUID());
+    when(seedService.collect()).thenReturn(seeds());
+    when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
+    when(openDropCache.findGeneral(3)).thenReturn(List.of(fallback));
+
+    // 홈에는 "현재 상품" 개념이 없으므로 제외가 적용되지 않는다.
+    assertFallback(service.recommend(null), "이런 드롭은 어떠세요?", candidateId);
   }
 
   @Test
@@ -568,7 +946,7 @@ class RecommendationServiceTest {
     when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId)))).thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId))).thenReturn(List.of());
-    when(openDropCache.findByCategory(categoryId, 3)).thenReturn(List.of(fallback));
+    when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of(fallback));
 
     assertFallback(service.recommend(currentId), "이 카테고리의 다른 드롭", fallback.productId());
   }
@@ -690,27 +1068,39 @@ class RecommendationServiceTest {
   }
 
   @Test
-  void recommend_forHomeWhenNoDropsForFallback_servesPopularProductsLastResort() {
-    UUID popularId = UUID.randomUUID();
+  void recommend_forHomeWhenNoOpenDrops_returnsEmptyResponseAndSkipsLastResort() {
     when(seedService.collect()).thenReturn(List.of());
     when(openDropCache.findGeneral(3)).thenReturn(List.of());
-    when(popularProductsCache.get())
-        .thenReturn(
-            List.of(
-                new RecommendationResponse.Product(popularId, "인기상품", "판매자", 1000L, "thumb")));
+
+    // 홈은 드롭 쇼케이스다. 빈 섹션이 프런트에서 "진행중인 드롭이 없습니다"로 보인다.
+    assertThat(service.recommend(null).sections()).isEmpty();
+    verify(lastResortProductsCache, never()).get();
+  }
+
+  @Test
+  void recommend_forHomeWhenNoOpenDrops_stillCountsFallback() {
+    when(seedService.collect()).thenReturn(List.of());
+    when(openDropCache.findGeneral(3)).thenReturn(List.of());
+
+    service.recommend(null);
+
+    assertThat(counterCount("recommendation.fallback", "mode", "home", "reason", "no-seeds"))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void recommend_forHomeWhenOpenDropsExist_servesDropSectionWithDropId() {
+    DropMeta fallback = drop(UUID.randomUUID(), UUID.randomUUID());
+    when(seedService.collect()).thenReturn(List.of());
+    when(openDropCache.findGeneral(3)).thenReturn(List.of(fallback));
 
     RecommendationResponse response = service.recommend(null);
 
-    assertThat(response.sections())
+    assertFallback(response, "이런 드롭은 어떠세요?", fallback.productId());
+    assertThat(response.sections().get(0).products())
         .singleElement()
-        .satisfies(
-            section -> {
-              assertThat(section.title()).isEqualTo("새로 올라온 상품");
-              assertThat(section.products())
-                  .singleElement()
-                  .extracting(RecommendationResponse.Product::productId)
-                  .isEqualTo(popularId);
-            });
+        .extracting(RecommendationResponse.Product::dropId)
+        .isEqualTo(fallback.dropId());
   }
 
   @Test
@@ -825,7 +1215,8 @@ class RecommendationServiceTest {
             postProcessor,
             productDetailClient,
             resultCache,
-            popularProductsCache,
+            lastResortProductsCache,
+            metrics,
             3,
             0,
             executor);
@@ -850,8 +1241,8 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "추천",
                     List.of(
-                        new RecommendationResponse.Product(openId, "열림", "판매자", 100L, "t"),
-                        new RecommendationResponse.Product(closedId, "마감", "판매자", 200L, "t")))));
+                        new RecommendationResponse.Product(openId, null, "열림", "판매자", 100L, "t"),
+                        new RecommendationResponse.Product(closedId, null, "마감", "판매자", 200L, "t")))));
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
     when(openDropCache.filterOpenProductIds(List.of(openId, closedId)))
         .thenReturn(List.of(openId));
@@ -883,11 +1274,11 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "마감그룹",
                     List.of(
-                        new RecommendationResponse.Product(closedId, "마감", "판매자", 200L, "t"))),
+                        new RecommendationResponse.Product(closedId, null, "마감", "판매자", 200L, "t"))),
                 new RecommendationResponse.Section(
                     "열린그룹",
                     List.of(
-                        new RecommendationResponse.Product(openId, "열림", "판매자", 100L, "t")))));
+                        new RecommendationResponse.Product(openId, null, "열림", "판매자", 100L, "t")))));
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
     when(openDropCache.filterOpenProductIds(List.of(closedId, openId)))
         .thenReturn(List.of(openId));
@@ -916,7 +1307,7 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "마감그룹",
                     List.of(
-                        new RecommendationResponse.Product(closedId, "마감", "판매자", 200L, "t")))));
+                        new RecommendationResponse.Product(closedId, null, "마감", "판매자", 200L, "t")))));
     DropMeta fallback = drop(UUID.randomUUID(), UUID.randomUUID());
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
     when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
@@ -940,11 +1331,11 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "마감그룹",
                     List.of(
-                        new RecommendationResponse.Product(closedId, "마감", "판매자", 200L, "t"))),
+                        new RecommendationResponse.Product(closedId, null, "마감", "판매자", 200L, "t"))),
                 new RecommendationResponse.Section(
                     "열린그룹",
                     List.of(
-                        new RecommendationResponse.Product(openId, "열림", "판매자", 100L, "t")))));
+                        new RecommendationResponse.Product(openId, null, "열림", "판매자", 100L, "t")))));
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
     when(openDropCache.filterOpenProductIds(List.of(closedId, openId)))
         .thenReturn(List.of(openId));
@@ -1003,7 +1394,7 @@ class RecommendationServiceTest {
                     "연관",
                     List.of(
                         new RecommendationResponse.Product(
-                            UUID.randomUUID(), "상품", "판매자", 100L, "t")))));
+                            UUID.randomUUID(), null, "상품", "판매자", 100L, "t")))));
     when(resultCache.find("rec:detail:" + productId)).thenReturn(Optional.of(cached));
 
     assertThat(service.warmDetail(productId)).isFalse();
@@ -1063,8 +1454,8 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "추천",
                     List.of(
-                        new RecommendationResponse.Product(null, "오염", "판매자", 100L, "t"),
-                        new RecommendationResponse.Product(openId, "열림", "판매자", 200L, "t")))));
+                        new RecommendationResponse.Product(null, null, "오염", "판매자", 100L, "t"),
+                        new RecommendationResponse.Product(openId, null, "열림", "판매자", 200L, "t")))));
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
     when(openDropCache.filterOpenProductIds(List.of(openId))).thenReturn(List.of(openId));
 
@@ -1091,7 +1482,7 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "추천",
                     List.of(
-                        new RecommendationResponse.Product(openId, "열림", "판매자", 100L, "t")))));
+                        new RecommendationResponse.Product(openId, null, "열림", "판매자", 100L, "t")))));
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
     when(openDropCache.filterOpenProductIds(List.of(openId)))
         .thenThrow(new RuntimeException("cache serve boom"));
@@ -1114,14 +1505,14 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "마감그룹",
                     List.of(
-                        new RecommendationResponse.Product(closedId, "마감", "판매자", 200L, "t")))));
+                        new RecommendationResponse.Product(closedId, null, "마감", "판매자", 200L, "t")))));
     RecommendationResponse fresh =
         new RecommendationResponse(
             List.of(
                 new RecommendationResponse.Section(
                     "신선그룹",
                     List.of(
-                        new RecommendationResponse.Product(freshId, "신선", "판매자", 100L, "t")))));
+                        new RecommendationResponse.Product(freshId, null, "신선", "판매자", 100L, "t")))));
     CountDownLatch regenRechecked = new CountDownLatch(1);
     // 1차(요청 스레드 serveCached)는 열화된 캐시, 2차(배경 재계산 재확인)는 신선한 캐시를 본다.
     when(resultCache.find(key))
@@ -1154,12 +1545,225 @@ class RecommendationServiceTest {
     when(resultCache.find("rec:detail:" + currentId)).thenReturn(Optional.empty());
     when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
     when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
-    when(openDropCache.findByCategory(categoryId, 3))
+    when(openDropCache.findByCategory(categoryId, 4))
         .thenReturn(List.of(drop(UUID.randomUUID(), categoryId)));
 
     // 검색 실패 → 카테고리 폴백(저장 없음) → 캐시는 여전히 비어 warmDetail은 false.
     assertThat(service.warmDetail(currentId)).isFalse();
     verify(resultCache, never()).save(any(), any());
+  }
+
+  @Test
+  void recommend_forDetailCacheHit_countsHitWithDetailModeTag() {
+    UUID productId = UUID.randomUUID();
+    RecommendationResponse cached = new RecommendationResponse(List.of());
+    when(resultCache.find("rec:detail:" + productId)).thenReturn(Optional.of(cached));
+
+    service.recommend(productId);
+
+    assertThat(counterCount("recommendation.cache", "mode", "detail", "result", "hit"))
+        .isEqualTo(1);
+    assertThat(counterCount("recommendation.cache", "mode", "detail", "result", "miss")).isZero();
+    assertThat(counterCount("recommendation.cache", "mode", "home", "result", "hit")).isZero();
+  }
+
+  @Test
+  void recommend_forHomeNoSeeds_countsMissAndFallbackButNotPipeline() {
+    UUID memberId = UUID.randomUUID();
+    UserContextHolder.set(new UserContext(memberId.toString(), Set.of("USER")));
+    when(seedService.collect()).thenReturn(List.of());
+    when(openDropCache.findGeneral(3)).thenReturn(List.of());
+
+    service.recommend(null);
+
+    assertThat(counterCount("recommendation.cache", "mode", "home", "result", "miss")).isEqualTo(1);
+    assertThat(counterCount("recommendation.fallback", "mode", "home", "reason", "no-seeds"))
+        .isEqualTo(1);
+    // 검색·LLM을 타지 않은 ≈0ms 요청이므로 파이프라인 타이머 표본이 아니다.
+    assertThat(pipelineCount("home")).isZero();
+  }
+
+  @Test
+  void recommend_whenLlmFails_stillRecordsPipelineTimer() {
+    UUID candidateId = UUID.randomUUID();
+    UserContextHolder.set(new UserContext(UUID.randomUUID().toString(), Set.of("USER")));
+    stubHomeUntilPrompt(candidateId);
+    when(llmClient.complete("prompt")).thenThrow(new RuntimeException("llm down"));
+    when(openDropCache.findGeneral(3)).thenReturn(List.of());
+
+    service.recommend(null);
+
+    // 실패한 파이프라인도 시간을 썼으므로 표본에 남는다.
+    assertThat(pipelineCount("home")).isEqualTo(1);
+    assertThat(counterCount("recommendation.fallback", "mode", "home", "reason", "llm-failed"))
+        .isEqualTo(1);
+  }
+
+  @Test
+  @Timeout(5)
+  void recommend_whenShedByLimiter_doesNotAddPipelineSample() throws Exception {
+    // 허가 1개. 첫 요청이 파이프라인 안에서 대기해 슬롯을 잡고 있는 동안 두 번째 요청이 셰딩된다.
+    RecommendationService limited = serviceWithPermits(1);
+    UUID heldId = UUID.randomUUID();
+    UUID shedId = UUID.randomUUID();
+    CountDownLatch entered = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    when(productDetailClient.getProduct(heldId))
+        .thenAnswer(
+            invocation -> {
+              entered.countDown();
+              release.await(3, TimeUnit.SECONDS);
+              return product(heldId, UUID.randomUUID());
+            });
+    CompletableFuture<Void> holder =
+        CompletableFuture.runAsync(() -> limited.recommend(heldId), executor);
+    assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
+
+    limited.recommend(shedId);
+
+    // 셰딩 시점: 표본은 아직 하나도 완료되지 않았고, 셰딩은 overloaded로만 센다.
+    assertThat(pipelineCount("detail")).isZero();
+    assertThat(meterRegistry.get("recommendation.overloaded").counter().count()).isEqualTo(1);
+    release.countDown();
+    holder.get(3, TimeUnit.SECONDS);
+    // 실제로 슬롯을 잡고 돈 요청만 표본에 남는다.
+    assertThat(pipelineCount("detail")).isEqualTo(1);
+    assertThat(limited.inFlightCount()).isZero();
+  }
+
+  @Test
+  void recommend_whenPipelineOverloaded_countsOverloadedAndFallback() {
+    RecommendationService saturated = serviceWithPermits(0);
+
+    saturated.recommend(null);
+
+    assertThat(meterRegistry.get("recommendation.overloaded").counter().count()).isEqualTo(1);
+    assertThat(counterCount("recommendation.fallback", "mode", "home", "reason", "overloaded"))
+        .isEqualTo(1);
+    assertThat(pipelineCount("home")).isZero();
+  }
+
+  @Test
+  void recommend_forDetailWhenPipelineOverloaded_servesLastResortInsteadOfEmpty() {
+    RecommendationService saturated = serviceWithPermits(0);
+    RecommendationResponse.Product latest = latestProduct();
+    when(lastResortProductsCache.get()).thenReturn(List.of(latest));
+
+    assertFallback(
+        saturated.recommend(UUID.randomUUID()), "이런 상품은 어떠세요?", latest.productId());
+    // 셰딩의 목적은 다운스트림 보호다. 인메모리 캐시만 쓰고 상품·검색·LLM은 건드리지 않는다.
+    verify(productDetailClient, never()).getProduct(any());
+    verify(openDropCache, never()).findByCategory(any(), anyInt());
+    verify(searchClient, never()).recommend(any());
+    verify(llmClient, never()).complete(any());
+  }
+
+  @Test
+  void recommend_forDetailWhenPipelineOverloaded_countsDetailFallbackAndLastResort() {
+    RecommendationService saturated = serviceWithPermits(0);
+    when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
+
+    saturated.recommend(UUID.randomUUID());
+
+    assertThat(meterRegistry.get("recommendation.overloaded").counter().count()).isEqualTo(1);
+    assertThat(counterCount("recommendation.fallback", "mode", "detail", "reason", "overloaded"))
+        .isEqualTo(1);
+    assertThat(counterCount("recommendation.last-resort", "mode", "detail", "reason", "overloaded"))
+        .isEqualTo(1);
+    assertThat(pipelineCount("detail")).isZero();
+  }
+
+  @Test
+  void warmDetail_whenPipelineOverloaded_doesNotCountRequestPathFallbackOrLastResort() {
+    RecommendationService saturated = serviceWithPermits(0);
+    UUID productId = UUID.randomUUID();
+    when(resultCache.find("rec:detail:" + productId)).thenReturn(Optional.empty());
+    when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
+
+    assertThat(saturated.warmDetail(productId)).isFalse();
+
+    // 요청 경로 시계열은 배경 셰딩으로 오염되지 않는다.
+    assertThat(
+            counterCountOrZero("recommendation.fallback", "mode", "detail", "reason", "overloaded"))
+        .isZero();
+    assertThat(
+            counterCountOrZero(
+                "recommendation.last-resort", "mode", "detail", "reason", "overloaded"))
+        .isZero();
+    // 배경 셰딩은 별도 reason과 overloaded 카운터로 여전히 관측된다.
+    assertThat(
+            counterCount(
+                "recommendation.fallback", "mode", "detail", "reason", "overloaded-background"))
+        .isEqualTo(1);
+    assertThat(
+            counterCount(
+                "recommendation.last-resort", "mode", "detail", "reason", "overloaded-background"))
+        .isEqualTo(1);
+    assertThat(meterRegistry.get("recommendation.overloaded").counter().count()).isEqualTo(1);
+    // 응답 조립은 요청 경로와 동일한 최후 폴백 단계를 그대로 탄다.
+    verify(lastResortProductsCache).get();
+    assertThat(pipelineCount("detail")).isZero();
+  }
+
+  @Test
+  @Timeout(5)
+  void recommend_forDetailShedWhileSemaphoreExhausted_servesLastResortSection() throws Exception {
+    // 허가 1개를 실제 요청이 잡고 있는 동안 들어온 상세 요청이 셰딩된다.
+    RecommendationService limited = serviceWithPermits(1);
+    UUID heldId = UUID.randomUUID();
+    RecommendationResponse.Product latest = latestProduct();
+    CountDownLatch entered = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    when(productDetailClient.getProduct(heldId))
+        .thenAnswer(
+            invocation -> {
+              entered.countDown();
+              release.await(3, TimeUnit.SECONDS);
+              return product(heldId, UUID.randomUUID());
+            });
+    when(lastResortProductsCache.get()).thenReturn(List.of(latest));
+    CompletableFuture<Void> holder =
+        CompletableFuture.runAsync(() -> limited.recommend(heldId), executor);
+    assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
+
+    assertFallback(limited.recommend(UUID.randomUUID()), "이런 상품은 어떠세요?", latest.productId());
+    assertThat(counterCount("recommendation.fallback", "mode", "detail", "reason", "overloaded"))
+        .isEqualTo(1);
+
+    release.countDown();
+    holder.get(3, TimeUnit.SECONDS);
+  }
+
+  private RecommendationService serviceWithPermits(int maxConcurrentPipelines) {
+    return new RecommendationService(
+        seedService,
+        seedScorer,
+        searchClient,
+        openDropCache,
+        promptBuilder,
+        llmClient,
+        postProcessor,
+        productDetailClient,
+        resultCache,
+        lastResortProductsCache,
+        metrics,
+        3,
+        maxConcurrentPipelines,
+        executor);
+  }
+
+  private double counterCount(String name, String... tags) {
+    return meterRegistry.get(name).tags(tags).counter().count();
+  }
+
+  /** 아직 만들어지지 않은 시계열도 0으로 본다(증가하지 않았음을 확인할 때). */
+  private double counterCountOrZero(String name, String... tags) {
+    Counter counter = meterRegistry.find(name).tags(tags).counter();
+    return counter == null ? 0 : counter.count();
+  }
+
+  private long pipelineCount(String modeTag) {
+    return meterRegistry.get("recommendation.pipeline").tags("mode", modeTag).timer().count();
   }
 
   private void stubHomeUntilPrompt(UUID id) {
@@ -1187,8 +1791,23 @@ class RecommendationServiceTest {
         id, null, null, "현재", "설명", categoryId, null, 100L, "thumb", List.of(), null);
   }
 
+  private RecommendationResponse.Product latestProduct() {
+    return new RecommendationResponse.Product(
+        UUID.randomUUID(), null, "최신상품", "판매자", 1000L, "thumb");
+  }
+
   private DropMeta drop(UUID id, UUID categoryId) {
-    return new DropMeta(UUID.randomUUID(), id, "드롭 상품", "판매자", 900L, "thumb", categoryId, null);
+    return new DropMeta(
+        UUID.randomUUID(),
+        id,
+        "드롭 상품",
+        "판매자",
+        900L,
+        "thumb",
+        categoryId,
+        DropStatus.OPEN,
+        Instant.parse("2020-01-01T00:00:00Z"),
+        null);
   }
 
   private void assertFallback(RecommendationResponse response, String title, UUID productId) {
