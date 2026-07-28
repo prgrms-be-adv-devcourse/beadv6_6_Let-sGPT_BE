@@ -63,25 +63,40 @@ spec:
               # 구조적으로 사라진다. 비밀번호를 다루므로 set -x 는 절대 켜지 않고, 요청 바디·응답
               # 본문을 로그로 출력하지 않는다.
               #
-              # 실패 정책: 웜업(캐시 예열=최적화)이 배포 성공을 인질로 잡지 않게 한다.
-              #   - WARMUP_STRICT=false(기본): 어떤 실패든 크게 로깅하고 exit 0(배포 비차단).
-              #   - WARMUP_STRICT=true: 기존처럼 exit 1(배포 실패).
-              #   - 재시도로 풀릴 수 없는 자격증명/요청 오류(400/401/403 등)는 즉시 포기.
-              #   - 연결 실패·타임아웃·5xx 등 일시 오류만 5초 간격 3회 자체 재시도.
+              # 실패 정책: 웜업(캐시 예열=최적화)이 배포 성공을 인질로 잡지 않게 한다. 이 컨테이너의
+              # 실패 경로는 두 단계 — (1) 로그인 단계, (2) 웜업 스크립트 실행 단계 — 이고, 두 단계
+              # 모두 같은 정책 함수를 통과한다.
+              #   - WARMUP_STRICT=false(기본): 두 단계 중 어디서 실패하든 크게 로깅하고 exit 0(배포 비차단).
+              #   - WARMUP_STRICT=true: 실패한 단계의 종료 코드로 exit(배포 실패).
+              #   - 로그인 중 재시도로 풀릴 수 없는 자격증명/요청 오류(400/401/403 등)는 즉시 포기.
+              #   - 로그인 중 연결 실패·타임아웃·5xx 등 일시 오류만 5초 간격 3회 자체 재시도.
               WARMUP_STRICT="${WARMUP_STRICT:-false}"
 
-              # 실패 종류를 구분해 크게 로깅한 뒤, strict 여부로 exit 코드를 결정한다.
-              #   credential : 재시도 불가 자격증명/요청 오류.
-              #   transient  : 재시도 후에도 남은 일시 오류.
+              # 실패 단계·종류를 구분해 크게 로깅한 뒤, strict 여부로 exit 코드를 결정한다.
+              # 사용법: apply_failure_policy <kind> [exit_code]  (exit_code 기본 1)
+              #   credential : [로그인] 재시도 불가 자격증명/요청 오류.
+              #   transient  : [로그인] 재시도 후에도 남은 게이트웨이 연결/5xx 오류.
+              #   script     : [웜업 실행] 로그인은 통과했으나 warmup.sh 가 비정상 종료.
               apply_failure_policy() {
-                if [ "$1" = "credential" ]; then
-                  echo "ERROR: 웜업 자격증명 오류 — 재시도로 풀 수 없습니다. warmup-secrets 시크릿의 웜업 계정(WARMUP_EMAIL/WARMUP_PASSWORD)과 로그인 라우트를 확인하세요." >&2
-                else
-                  echo "ERROR: 웜업 게이트웨이 연결 실패 — 연결 실패/타임아웃/5xx가 재시도 후에도 지속(일시 오류 가능). apigateway 상태를 확인하세요." >&2
-                fi
+                fail_kind="$1"
+                fail_code="${2:-1}"
+                case "$fail_kind" in
+                  credential)
+                    echo "ERROR: [로그인 단계] 웜업 자격증명 오류 — 재시도로 풀 수 없습니다. warmup-secrets 시크릿의 웜업 계정(WARMUP_EMAIL/WARMUP_PASSWORD)과 로그인 라우트를 확인하세요." >&2
+                    ;;
+                  transient)
+                    echo "ERROR: [로그인 단계] 웜업 게이트웨이 연결 실패 — 연결 실패/타임아웃/5xx가 재시도 후에도 지속(일시 오류 가능). apigateway 상태를 확인하세요." >&2
+                    ;;
+                  script)
+                    echo "ERROR: [웜업 실행 단계] warmup.sh 가 비정상 종료(exit=${fail_code}) — 로그인/토큰 확보는 통과했고 웜업 호출 루프에서 실패했습니다. 위 warmup.sh 로그(대상별 2xx 건수·p95)를 확인하세요." >&2
+                    ;;
+                  *)
+                    echo "ERROR: [알 수 없는 단계] 웜업 실패(kind=${fail_kind}, exit=${fail_code})." >&2
+                    ;;
+                esac
                 if [ "$WARMUP_STRICT" = "true" ]; then
-                  echo "ERROR: WARMUP_STRICT=true — 웜업 실패를 배포 실패로 처리합니다(exit 1)." >&2
-                  exit 1
+                  echo "ERROR: WARMUP_STRICT=true — 웜업 실패를 배포 실패로 처리합니다(exit ${fail_code})." >&2
+                  exit "$fail_code"
                 fi
                 echo "WARN: WARMUP_STRICT=false — 웜업 실패를 배포 비차단으로 처리합니다(exit 0). 위 로그를 확인하세요." >&2
                 exit 0
@@ -132,13 +147,24 @@ spec:
 
                 rm -f "$BODY_FILE"
                 trap - EXIT
+                # 토큰은 환경변수로만 넘긴다 — 인자로 주면 ps/로그에 노출된다. 값은 출력하지 않는다.
                 export AUTH_TOKEN
+                echo "INFO: [로그인 단계] 웜업 토큰 확보 완료(값은 로깅하지 않음)."
               fi
-              exec bash /warmup/warmup.sh
+
+              # exec 를 쓰지 않는다 — exec 하면 warmup.sh 의 종료 코드가 그대로 컨테이너 종료 코드가
+              # 되어 WARMUP_STRICT=false 여도 웜업 실패가 배포를 막는다. 종료 코드를 받아 로그인
+              # 실패와 동일한 정책을 적용한다. (set -e 아래이므로 || 로 errexit 를 비켜간다.)
+              warmup_rc=0
+              bash /warmup/warmup.sh || warmup_rc=$?
+              if [ "$warmup_rc" -ne 0 ]; then
+                apply_failure_policy script "$warmup_rc"
+              fi
+              echo "INFO: [웜업 실행 단계] warmup.sh 정상 종료 — 웜업 완료."
           env:
-            # 웜업 실패 정책 스위치. "false"(기본)면 로그인/토큰 실패를 크게 로깅하되 배포를
-            # 막지 않는다(exit 0). 운영에서 웜업 실패를 배포 실패로 강제하려면 이 값만 "true"로
-            # 바꾼다(이미지 재빌드 없음).
+            # 웜업 실패 정책 스위치. "false"(기본)면 로그인/토큰 실패와 warmup.sh 비정상 종료를
+            # 모두 크게 로깅하되 배포를 막지 않는다(exit 0). 운영에서 웜업 실패를 배포 실패로
+            # 강제하려면 이 값만 "true"로 바꾼다(이미지 재빌드 없음).
             - name: WARMUP_STRICT
               value: "false"
           envFrom:
