@@ -5,6 +5,7 @@ import static org.mockito.Mockito.when;
 
 import com.openat.recommendation.application.port.out.OpenDropClient;
 import com.openat.recommendation.domain.model.DropMeta;
+import com.openat.recommendation.domain.model.DropStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -17,6 +18,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class OpenDropCacheTest {
+
+  private static final Instant OPENED = Instant.parse("2020-01-01T00:00:00Z");
 
   @Mock private OpenDropClient openDropClient;
 
@@ -243,6 +246,126 @@ class OpenDropCacheTest {
   }
 
   @Test
+  @DisplayName("판매중 상태·오픈 시각 과거·마감 시각 미래인 드롭은 모든 조회에 그대로 포함한다")
+  void lookup_keepsLiveDrop() {
+    UUID productId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    DropMeta live =
+        drop(
+            UUID.randomUUID(),
+            productId,
+            categoryId,
+            1000L,
+            DropStatus.OPEN,
+            OPENED,
+            Instant.now().plusSeconds(3600));
+    when(openDropClient.getAllOpenDrops()).thenReturn(List.of(live));
+    cache.refresh();
+
+    assertThat(cache.openProductIds()).containsExactly(productId);
+    assertThat(cache.filterOpenProductIds(List.of(productId))).containsExactly(productId);
+    assertThat(cache.findByProductId(productId)).contains(live);
+    assertThat(cache.findByCategory(categoryId, 1)).containsExactly(live);
+    assertThat(cache.findGeneral(1)).containsExactly(live);
+  }
+
+  @Test
+  @DisplayName("마감 시각이 없는 드롭은 판매중이면 포함하고 판매중이 아니면 제외한다")
+  void lookup_whenCloseAtMissing_reliesOnStatus() {
+    UUID openProductId = UUID.randomUUID();
+    UUID closedProductId = UUID.randomUUID();
+    DropMeta indefinite =
+        drop(UUID.randomUUID(), openProductId, null, 1000L, DropStatus.OPEN, OPENED, null);
+    DropMeta closed =
+        drop(UUID.randomUUID(), closedProductId, null, 1000L, DropStatus.CLOSE, OPENED, null);
+    when(openDropClient.getAllOpenDrops()).thenReturn(List.of(indefinite, closed));
+    cache.refresh();
+
+    assertThat(cache.openProductIds()).containsExactly(openProductId);
+    assertThat(cache.findByProductId(closedProductId)).isEmpty();
+    assertThat(cache.findGeneral(2)).containsExactly(indefinite);
+  }
+
+  @Test
+  @DisplayName("오픈 시각이 아직 오지 않은 드롭은 제외한다")
+  void lookup_excludesDropNotYetOpened() {
+    UUID productId = UUID.randomUUID();
+    DropMeta upcoming =
+        drop(
+            UUID.randomUUID(),
+            productId,
+            null,
+            1000L,
+            DropStatus.OPEN,
+            Instant.now().plusSeconds(3600),
+            Instant.now().plusSeconds(7200));
+    when(openDropClient.getAllOpenDrops()).thenReturn(List.of(upcoming));
+    cache.refresh();
+
+    assertThat(cache.openProductIds()).isEmpty();
+    assertThat(cache.filterOpenProductIds(List.of(productId))).isEmpty();
+    assertThat(cache.findByProductId(productId)).isEmpty();
+    assertThat(cache.findGeneral(1)).isEmpty();
+  }
+
+  @Test
+  @DisplayName("매진·마감·미오픈·알 수 없는 상태의 드롭은 마감 시각이 남아도 제외한다")
+  void lookup_excludesDropsNotOpenByStatus() {
+    Instant closeAt = Instant.now().plusSeconds(3600);
+    UUID soldOutProductId = UUID.randomUUID();
+    UUID closedProductId = UUID.randomUUID();
+    UUID registeredProductId = UUID.randomUUID();
+    UUID unknownProductId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    when(openDropClient.getAllOpenDrops())
+        .thenReturn(
+            List.of(
+                drop(
+                    UUID.randomUUID(),
+                    soldOutProductId,
+                    categoryId,
+                    1000L,
+                    DropStatus.SOLD_OUT,
+                    OPENED,
+                    closeAt),
+                drop(
+                    UUID.randomUUID(),
+                    closedProductId,
+                    categoryId,
+                    1000L,
+                    DropStatus.CLOSE,
+                    OPENED,
+                    closeAt),
+                drop(
+                    UUID.randomUUID(),
+                    registeredProductId,
+                    categoryId,
+                    1000L,
+                    DropStatus.REGISTERED,
+                    OPENED,
+                    closeAt),
+                drop(
+                    UUID.randomUUID(),
+                    unknownProductId,
+                    categoryId,
+                    1000L,
+                    DropStatus.UNKNOWN,
+                    OPENED,
+                    closeAt)));
+    cache.refresh();
+
+    assertThat(cache.openProductIds()).isEmpty();
+    assertThat(
+            cache.filterOpenProductIds(
+                List.of(
+                    soldOutProductId, closedProductId, registeredProductId, unknownProductId)))
+        .isEmpty();
+    assertThat(cache.findByProductId(soldOutProductId)).isEmpty();
+    assertThat(cache.findByCategory(categoryId, 4)).isEmpty();
+    assertThat(cache.findGeneral(4)).isEmpty();
+  }
+
+  @Test
   @DisplayName("빈 목록으로 갱신하면 기존 캐시를 비운다")
   void refresh_whenClientReturnsEmptyList_clearsPreviousCache() {
     UUID productId = UUID.randomUUID();
@@ -277,7 +400,19 @@ class OpenDropCacheTest {
 
   private DropMeta drop(
       UUID dropId, UUID productId, UUID categoryId, long dropPrice, Instant closeAt) {
+    return drop(dropId, productId, categoryId, dropPrice, DropStatus.OPEN, OPENED, closeAt);
+  }
+
+  private DropMeta drop(
+      UUID dropId,
+      UUID productId,
+      UUID categoryId,
+      long dropPrice,
+      DropStatus status,
+      Instant openAt,
+      Instant closeAt) {
     return new DropMeta(
-        dropId, productId, "상품", "판매자", dropPrice, "thumb.png", categoryId, closeAt);
+        dropId, productId, "상품", "판매자", dropPrice, "thumb.png", categoryId, status, openAt,
+        closeAt);
   }
 }

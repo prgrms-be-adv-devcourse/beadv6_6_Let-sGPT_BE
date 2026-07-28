@@ -7,6 +7,8 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import com.openat.recommendation.domain.model.DropStatus;
+import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -81,6 +83,51 @@ class OpenDropRestClientTest {
     var result = client.getAllOpenDrops();
 
     assertThat(result).extracting("productId").containsExactly(openProductId);
+    server.verify();
+  }
+
+  @Test
+  @DisplayName("드롭 상태와 오픈 시각을 화면 메타에 보존하고 모르는 상태는 UNKNOWN으로 받는다")
+  void getAllOpenDrops_preservesStatusAndOpenAt() {
+    UUID openProductId = UUID.randomUUID();
+    UUID unknownStatusProductId = UUID.randomUUID();
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/drops?status=OPEN&page=0&size=100"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess(
+                """
+                {"content":[
+                  {"id":"%s","productId":"%s","productName":"판매 중","sellerName":"판매자",
+                   "categoryId":null,"categoryName":null,"thumbnailKey":"open.png","dropPrice":1000,
+                   "totalQuantity":10,"remainingQuantity":1,"status":"OPEN",
+                   "openAt":"2026-07-20T00:00:00Z","closeAt":"2026-08-06T00:00:00Z",
+                   "limitPerUser":null},
+                  {"id":"%s","productId":"%s","productName":"미래 상태","sellerName":"판매자",
+                   "categoryId":null,"categoryName":null,"thumbnailKey":"new.png","dropPrice":2000,
+                   "totalQuantity":10,"remainingQuantity":1,"status":"PAUSED",
+                   "openAt":null,"closeAt":null,"limitPerUser":null}
+                ],"page":0,"size":100,"totalElements":2,"totalPages":1}
+                """
+                    .formatted(
+                        UUID.randomUUID(),
+                        openProductId,
+                        UUID.randomUUID(),
+                        unknownStatusProductId),
+                MediaType.APPLICATION_JSON));
+
+    var result = client.getAllOpenDrops();
+
+    assertThat(result)
+        .extracting("productId", "status", "openAt", "closeAt")
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple(
+                openProductId,
+                DropStatus.OPEN,
+                Instant.parse("2026-07-20T00:00:00Z"),
+                Instant.parse("2026-08-06T00:00:00Z")),
+            org.assertj.core.groups.Tuple.tuple(
+                unknownStatusProductId, DropStatus.UNKNOWN, null, null));
     server.verify();
   }
 
