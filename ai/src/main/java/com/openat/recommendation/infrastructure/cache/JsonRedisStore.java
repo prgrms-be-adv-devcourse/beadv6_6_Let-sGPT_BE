@@ -51,17 +51,49 @@ final class JsonRedisStore {
     }
   }
 
+  long generation(String key) {
+    try {
+      String generation = redisTemplate.opsForValue().get(key + ":generation");
+      return generation == null ? 0L : Long.parseLong(generation);
+    } catch (Exception exception) {
+      log.warn("Failed to read JSON Redis generation; treating as zero: key={}", key, exception);
+      return 0L;
+    }
+  }
+
+  void writeFull(String key, Object value, Duration ttl) {
+    try {
+      DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+      script.setResultType(Long.class);
+      script.setScriptText(
+          "local generation = redis.call('INCR', KEYS[2]) "
+              + "redis.call('PSETEX', KEYS[1], ARGV[2], ARGV[1]) "
+              + "redis.call('PEXPIRE', KEYS[2], ARGV[2]) "
+              + "return generation");
+      redisTemplate.execute(
+          script,
+          List.of(key, key + ":generation"),
+          objectMapper.writeValueAsString(value),
+          Long.toString(ttl.toMillis()));
+    } catch (Exception exception) {
+      log.warn("Failed to write full JSON Redis value: key={}", key, exception);
+    }
+  }
+
   /**
    * 읽은 직후 다른 요청이 갱신한 캐시를 덮지 않는 Redis CAS. {@code expected}가 null이면 키가
    * 아직 없는 경우에만 쓴다.
    */
-  boolean writeIfUnchanged(String key, String expected, Object value, Duration ttl) {
+  boolean writeIfUnchanged(
+      String key, String expected, Object value, Duration ttl, long generationAtStart) {
     try {
       String serialized = objectMapper.writeValueAsString(value);
       DefaultRedisScript<Long> script = new DefaultRedisScript<>();
       script.setResultType(Long.class);
       script.setScriptText(
           "local current = redis.call('GET', KEYS[1]) "
+              + "local generation = tonumber(redis.call('GET', KEYS[2]) or '0') "
+              + "if generation > tonumber(ARGV[4]) then return 0 end "
               + "if ARGV[1] == '__ABSENT__' then "
               + "  if current then return 0 end "
               + "elseif current ~= ARGV[1] then return 0 end "
@@ -70,10 +102,11 @@ final class JsonRedisStore {
       Long written =
           redisTemplate.execute(
               script,
-              List.of(key),
+              List.of(key, key + ":generation"),
               expected == null ? "__ABSENT__" : expected,
               serialized,
-              Long.toString(ttl.toMillis()));
+              Long.toString(ttl.toMillis()),
+              Long.toString(generationAtStart));
       return Long.valueOf(1L).equals(written);
     } catch (Exception exception) {
       log.warn("Failed to conditionally write JSON Redis value: key={}", key, exception);

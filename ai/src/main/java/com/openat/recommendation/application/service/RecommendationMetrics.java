@@ -37,7 +37,6 @@ public class RecommendationMetrics {
   private final Map<RecommendationMode, Timer> pipelineTimers =
       new EnumMap<>(RecommendationMode.class);
   private final Timer llmTimer;
-  private final Counter overloaded;
 
   public RecommendationMetrics(MeterRegistry registry) {
     this.registry = registry;
@@ -48,7 +47,6 @@ public class RecommendationMetrics {
           mode, histogram(Timer.builder(PIPELINE).tag("mode", mode.tag())));
     }
     this.llmTimer = histogram(Timer.builder(LLM));
-    this.overloaded = registry.counter(OVERLOADED);
   }
 
   // 백분위(p95)를 Prometheus에서 계산할 수 있게 히스토그램을 낸다. 버킷 수를 관심 구간으로
@@ -127,8 +125,10 @@ public class RecommendationMetrics {
     registry.counter(LAST_RESORT, "mode", mode.tag(), "reason", reason).increment();
   }
 
-  void overloaded() {
-    overloaded.increment();
+  void overloaded(boolean requestPath) {
+    registry
+        .counter(OVERLOADED, "source", requestPath ? "request" : "background")
+        .increment();
   }
 
   /**

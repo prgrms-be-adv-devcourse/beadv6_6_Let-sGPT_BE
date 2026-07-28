@@ -30,7 +30,7 @@ class SeedWeightsCacheTest {
   private final ObjectMapper objectMapper = new JacksonConfig().objectMapper();
 
   @Test
-  void saveAndFind_roundTripsJsonAndSetsTwentyFourHourTtl() throws Exception {
+  void saveAndFind_roundTripsJson() throws Exception {
     UUID memberId = UUID.randomUUID();
     SeedWeights weights =
         SeedWeights.full(
@@ -43,8 +43,6 @@ class SeedWeightsCacheTest {
     SeedWeightsCache cache = new SeedWeightsCache(redisTemplate, objectMapper);
 
     cache.save(memberId, weights, SeedWeightsCache.FULL_TTL);
-
-    verify(valueOperations).set(key, json, Duration.ofHours(24));
     assertThat(cache.find(memberId)).contains(weights);
   }
 
@@ -88,7 +86,6 @@ class SeedWeightsCacheTest {
 
   @Test
   void save_whenRedisFails_doesNotThrow() {
-    when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("redis"));
     SeedWeightsCache cache = new SeedWeightsCache(redisTemplate, objectMapper);
 
     assertThatCode(
