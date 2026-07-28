@@ -8,6 +8,8 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import com.openat.recommendation.application.service.RecommendationMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,12 +24,19 @@ class InferenceLlmClientTest {
   private static final String BASE_URL = "http://inference-service";
   private MockRestServiceServer server;
   private InferenceLlmClient client;
+  private SimpleMeterRegistry meterRegistry;
 
   @BeforeEach
   void setUp() {
     RestClient.Builder builder = RestClient.builder().baseUrl(BASE_URL);
     server = MockRestServiceServer.bindTo(builder).build();
-    client = new InferenceLlmClient(builder.build(), "test-key", "configured-model");
+    meterRegistry = new SimpleMeterRegistry();
+    client =
+        new InferenceLlmClient(
+            builder.build(),
+            "test-key",
+            "configured-model",
+            new RecommendationMetrics(meterRegistry));
   }
 
   @Test
@@ -62,5 +71,23 @@ class InferenceLlmClientTest {
         .andRespond(withSuccess("{\"choices\":[]}", MediaType.APPLICATION_JSON));
 
     assertThatThrownBy(() -> client.complete("prompt")).isInstanceOf(RestClientException.class);
+  }
+
+  @Test
+  @DisplayName("성공·실패 모두 recommendation.llm 타이머에 기록된다")
+  void complete_recordsLlmTimer() {
+    server
+        .expect(requestTo(BASE_URL + "/chat/completions"))
+        .andRespond(
+            withSuccess(
+                "{\"choices\":[{\"message\":{\"content\":\"{}\"}}]}", MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(BASE_URL + "/chat/completions"))
+        .andRespond(withSuccess("{\"choices\":[]}", MediaType.APPLICATION_JSON));
+
+    client.complete("prompt");
+    assertThatThrownBy(() -> client.complete("prompt")).isInstanceOf(RestClientException.class);
+
+    assertThat(meterRegistry.get("recommendation.llm").timer().count()).isEqualTo(2);
   }
 }

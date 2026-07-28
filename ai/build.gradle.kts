@@ -10,6 +10,8 @@ dependencies {
     implementation("org.springframework.kafka:spring-kafka")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     runtimeOnly("io.micrometer:micrometer-registry-prometheus")
+    // 추천 메트릭이 실제 Prometheus 노출 이름으로 나오는지 검증하는 테스트에서 사용
+    testImplementation("io.micrometer:micrometer-registry-prometheus")
     testImplementation("org.springframework.boot:spring-boot-webmvc-test")
     testImplementation("org.springframework.security:spring-security-test")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")

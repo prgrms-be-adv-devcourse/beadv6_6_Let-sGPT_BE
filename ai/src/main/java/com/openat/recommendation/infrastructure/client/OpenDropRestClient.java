@@ -5,6 +5,7 @@ import static com.openat.recommendation.infrastructure.client.RestClientResponse
 import com.openat.common.response.PageResponse;
 import com.openat.recommendation.application.port.out.OpenDropClient;
 import com.openat.recommendation.domain.model.DropMeta;
+import com.openat.recommendation.domain.model.DropStatus;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -85,7 +86,17 @@ public class OpenDropRestClient implements OpenDropClient {
       Instant closeAt) {
     DropMeta toDomain() {
       return new DropMeta(
-          id, productId, productName, sellerName, dropPrice, thumbnailKey, categoryId, closeAt);
+          id,
+          productId,
+          productName,
+          sellerName,
+          dropPrice,
+          thumbnailKey,
+          categoryId,
+          // 모르는 값·누락을 열림으로 오판하지 않도록 문자열째 받아 UNKNOWN으로 흡수한다.
+          DropStatus.from(status),
+          openAt,
+          closeAt);
     }
   }
 }

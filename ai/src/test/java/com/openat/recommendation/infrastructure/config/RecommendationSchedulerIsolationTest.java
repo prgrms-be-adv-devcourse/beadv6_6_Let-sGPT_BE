@@ -3,7 +3,7 @@ package com.openat.recommendation.infrastructure.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.openat.recommendation.application.service.OpenDropCache;
-import com.openat.recommendation.application.service.PopularProductsCache;
+import com.openat.recommendation.application.service.LastResortProductsCache;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
@@ -21,11 +21,11 @@ class RecommendationSchedulerIsolationTest {
   @Test
   @DisplayName("두 refresh 태스크는 같은 전용 스케줄러를 지정한다")
   void bothRefreshTasksTargetTheDedicatedScheduler() throws Exception {
-    Scheduled popular =
-        PopularProductsCache.class.getMethod("refresh").getAnnotation(Scheduled.class);
+    Scheduled latest =
+        LastResortProductsCache.class.getMethod("refresh").getAnnotation(Scheduled.class);
     Scheduled openDrop = OpenDropCache.class.getMethod("refresh").getAnnotation(Scheduled.class);
 
-    assertThat(popular.scheduler()).isEqualTo("recommendationTaskScheduler");
+    assertThat(latest.scheduler()).isEqualTo("recommendationTaskScheduler");
     assertThat(openDrop.scheduler()).isEqualTo("recommendationTaskScheduler");
   }
 
