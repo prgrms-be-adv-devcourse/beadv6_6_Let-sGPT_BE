@@ -9,6 +9,12 @@ kind: Kustomization
 resources:
   - ../base
 
+# 통합 테스트 컷오버용 재기동 시 초기 시드 재삽입/오염 방지 env 주입.
+# base env는 이름 키 전략적 병합으로 보존되고 아래 항목만 추가된다.
+patches:
+  - path: patch-member-sql-init-mode.yaml
+  - path: patch-product-seed-disabled.yaml
+
 images:
   - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
     newTag: latest
