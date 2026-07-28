@@ -64,6 +64,8 @@ spec:
             - { name: AWS_WEB_IDENTITY_TOKEN_FILE, value: "/var/run/secrets/aws/token" }
             - { name: AWS_REGION, value: "ap-northeast-2" }
             - { name: AWS_STS_REGIONAL_ENDPOINTS, value: "regional" }
+            # 재기동 시 목 시드 재삽입 방지(통합 시드 보호).
+            - { name: APP_SEED_ENABLED, value: "false" }
           volumeMounts:
             - { name: aws-token, mountPath: /var/run/secrets/aws, readOnly: true }
           # 기동 완료까지 최대 300초 유예(2vCPU에서 6개 JVM 동시 부팅 + kubelet/kube 예약 감안, 실측 최악 251s) — 이후 liveness로 전환. k3s_node_coldboot_contention_plan §2-B/§2-A 동시 적용 전제
