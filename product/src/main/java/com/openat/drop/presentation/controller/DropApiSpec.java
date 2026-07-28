@@ -25,11 +25,17 @@ public interface DropApiSpec {
   @ApiErrorResponses
   ResponseEntity<Void> create(UUID sellerId, DropCreateRequest request);
 
-  @Operation(summary = "본인 드롭 목록 조회", description = "판매자가 자신의 상품으로 등록한 드롭을 페이징·검색 조회한다.")
+  @Operation(
+      summary = "본인 드롭 목록 조회",
+      description =
+          "판매자가 자신의 상품으로 등록한 드롭을 페이징·검색 조회한다. "
+              + "정렬은 openAt·dropPrice만 지원하고, 미지정 시 openAt 내림차순이다.")
   @ApiResponse(responseCode = "200", description = "조회 성공")
   @ApiErrorResponses
   ResponseEntity<PageResponse<DropResponse>> searchMyDrops(
-      UUID sellerId, @ParameterObject DropSearchRequest request, Pageable pageable);
+      UUID sellerId,
+      @ParameterObject DropSearchRequest request,
+      @ParameterObject Pageable pageable);
 
   @Operation(
       summary = "드롭 단건 조회",
@@ -40,11 +46,14 @@ public interface DropApiSpec {
 
   @Operation(
       summary = "드롭 목록 조회",
-      description = "드롭을 상태·카테고리·검색어로 페이징 조회한다. status 필터는 생명주기 구간(REGISTERED·OPEN·CLOSE) 기준이다.")
+      description =
+          "드롭을 상태·카테고리·검색어로 페이징 조회한다. "
+              + "status 필터는 생명주기 구간(REGISTERED·OPEN·CLOSE) 기준이며, "
+              + "정렬은 openAt·dropPrice만 지원하고 미지정 시 openAt 내림차순이다.")
   @ApiResponse(responseCode = "200", description = "조회 성공")
   @ApiErrorResponses
   ResponseEntity<PageResponse<DropResponse>> searchDrops(
-      @ParameterObject DropSearchRequest request, Pageable pageable);
+      @ParameterObject DropSearchRequest request, @ParameterObject Pageable pageable);
 
   @Operation(
       summary = "드롭 삭제",

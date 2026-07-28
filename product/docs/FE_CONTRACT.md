@@ -15,7 +15,7 @@
 |---|---|
 | 게이트웨이 / prefix | `http://localhost:8000`, 경로는 `/api/v1/{도메인복수}` |
 | 페이지 응답 | `PageResponse { content[], page, size, totalElements, totalPages }` — FE `pageResponseSchema`와 1:1 일치 (BE `PageResponse.of`와 동일) |
-| 페이지/정렬 파라미터 | `page`, `size`, `sort` 쿼리를 Spring `Pageable`이 파싱한다. 다만 현재 product/drop 조회 어댑터는 요청 정렬을 적용하지 않고 각각 고정 순서를 사용한다 |
+| 페이지/정렬 파라미터 | `page`, `size`, `sort` 쿼리를 Spring `Pageable`이 파싱한다. product는 `createdAt desc` 고정이고, drop은 `openAt`·`dropPrice` 정렬을 지원한다 |
 | 날짜·시각 | ISO-8601 문자열 ↔ `Instant` (예: `2026-06-27T03:00:00Z`) |
 | 인증 헤더 | 보호 엔드포인트에 `Authorization: Bearer <accessToken>` (FE가 자동 주입) |
 | 멱등 계약 | 주문 생성은 body `idempotencyKey`; 지갑 결제·환불·충전은 `Idempotency-Key` 헤더. PG 결제 confirm은 `orderId` 유니크 예약으로 멱등 처리 |
@@ -137,6 +137,9 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey?, image
 | `SOLD_OUT` | 매진 | 재고바(회색) | 구매 불가 |
 
 > BE는 `REGISTERED`/`CLOSE`만 영속, `OPEN`/`SOLD_OUT`은 `openAt`/현재시각 + `remainingQuantity`로 파생해 응답한다는 전제(FE도 동일 가정).
+> 현재 목록의 `status=OPEN`과 `status=SOLD_OUT`은 DB에서 같은 오픈 생명주기 구간을 조회한 뒤
+> Redis 잔여 수량으로 응답 상태를 파생한다. 따라서 두 쿼리는 각각의 파생 상태만 정확히
+> 분리하는 필터가 아니며, 이 동작은 재고 원장 집계 기반 조회를 별도로 설계하기 전까지 유지한다.
 
 ### 2.3 엔드포인트
 
@@ -145,8 +148,9 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey?, image
 - `GET /api/v1/drops/me?status&categoryId&keyword&sort&page&size` → `PageResponse<DropResponse>` (**구현 완료** — `DropController.searchMyDrops`, 판매자 콘솔)
 - 쓰기 바디: `DropCreateBody { productId, dropPrice, totalQuantity, limitPerUser?, openAt, closeAt? }`
 
-목록의 `page`·`size`는 적용되지만 `DropRepositoryAdaptor`가 `openAt desc`를 고정하므로
-현재 `sort` 값은 결과 순서에 반영되지 않는다.
+목록의 `page`·`size`를 적용하고, `sort`는 `openAt`·`dropPrice` 필드만 허용한다.
+정렬 미지정 또는 미지원 필드만 전달되면 `openAt desc`를 사용하며, 같은 정렬값의 페이지
+경계를 안정화하기 위해 `id desc`를 마지막 보조 정렬로 적용한다.
 
 ### 2.4 mock 응답 예시
 
@@ -225,4 +229,4 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey?, image
 4. **조회 API 현황** — `/drops`·`/drops/{id}`·`/drops/me`·`/products/me`·`/categories`·`/wallet` 모두 구현 완료다.
 5. **`sellerId` = 스토어 `sellerInfoId`** — 상품/드롭 write·`/me` 소유 필터와 `ProductResponse.sellerId`는 게이트웨이가 판매자 scoped JWT에서 주입한 `sellerInfoId` 기준이다.
 6. **FE 스키마 확인** — `ProductResponse.imageKeys`, `DropResponse.limitPerUser`, 주문 생성 응답 `created`를 FE zod 스키마가 허용하는지 실제 연동에서 확인한다.
-7. **정렬 파라미터** — FE가 보내는 `sort`는 현재 product/drop 결과 순서에 반영되지 않는다. 통합 테스트에서는 상품 `createdAt desc`, 드롭 `openAt desc` 고정 순서를 기준으로 확인한다.
+7. **정렬 파라미터** — product는 `createdAt desc` 고정이다. drop은 `openAt`·`dropPrice`만 요청 정렬에 반영하고, 미지정 시 `openAt desc`를 사용한다.

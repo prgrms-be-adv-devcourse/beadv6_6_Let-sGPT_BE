@@ -92,7 +92,7 @@ com.openat
   - **검색 조건**: 포트는 도메인 질의 명세(`~SearchCondition` @ `domain.repository`)를 받는다(application DTO를 포트로 넘기지 않음). presentation `~SearchRequest.toCondition()`으로 변환.
   - **동적 where**: `BooleanBuilder` + `if`로 메서드 본문에서 조립한다(null/blank 조건은 추가하지 않음). content·count 쿼리가 같은 `where`를 공유.
   - **N+1·페이징**: **ToOne 연관만 `fetchJoin`**(컬렉션은 페이징이 깨지므로 금지 → batch 안전망 사용). count는 fetchJoin 없이 분리하고 `PageableExecutionUtils.getPage`로 감싼다.
-  - **정렬**: 실제 요구가 있을 때만 도입한다(현재 상품 목록은 최신순 `createdAt desc` 고정). 사용자 선택 정렬이 필요해지면 허용 필드 화이트리스트로 변환한다.
+  - **정렬**: 실제 요구가 있을 때만 도입한다. 상품 목록은 최신순 `createdAt desc` 고정이다. 드롭 목록은 `openAt`·`dropPrice`만 화이트리스트로 변환하며, 미지정·미지원 정렬은 `openAt desc`를 사용한다. 오프셋 페이지 경계가 흔들리지 않도록 드롭 id 내림차순을 마지막 보조 정렬로 항상 적용한다.
   - **테스트**: 영속 슬라이스는 `@Import`에 `QueryDslConfig`를 포함한다(`@DataJpaTest`는 `@Configuration`을 스캔하지 않아 `JPAQueryFactory` 빈이 없음).
 
 ---
