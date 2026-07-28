@@ -59,7 +59,7 @@ class RecommendationSeedServiceTest {
         .thenAnswer(
             invocation ->
                 seedWeightsCache
-                    .find(invocation.getArgument(0))
+                    .find(invocation.getArgument(0, UUID.class))
                     .map(weights -> new CachedWeights(weights, "cached-json")));
     lenient()
         .when(seedWeightsCache.saveIfUnchanged(any(), any(), any(), any()))
@@ -324,6 +324,25 @@ class RecommendationSeedServiceTest {
     assertThat(result).isEqualTo(concurrentlySaved);
     verify(seedWeightsCache, never()).save(eq(memberId), any(), any());
     assertThat(salvageCounter("superseded")).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("스냅샷 직전에 들어온 완전 엔트리는 부분 저장보다 우선한다")
+  void refreshWeightsCache_whenSnapshotAlreadyContainsNewerCompleteEntry_keepsIt() {
+    UUID memberId = UUID.randomUUID();
+    List<Seed> completeSeeds = List.of(new Seed(UUID.randomUUID(), 0.5, true));
+    when(orderSignalClient.getPurchaseSignals(memberId)).thenThrow(new RuntimeException("order"));
+    when(wishlistSignalClient.getWishlistProductIds(memberId)).thenReturn(List.of(UUID.randomUUID()));
+    when(seedWeightsCache.find(memberId))
+        .thenReturn(Optional.of(SeedWeights.full(completeSeeds, Instant.now().plusSeconds(1))));
+
+    assertThat(service().refreshWeightsCache(memberId)).isEqualTo(completeSeeds);
+
+    verify(seedWeightsCache, never()).saveIfUnchanged(any(), any(), any(), any());
+    assertThat(salvageCounter("superseded")).isEqualTo(1);
+    assertThat(salvageCounter("none")).isZero();
+    assertThat(salvageCounter("merged")).isZero();
+    assertThat(salvageCounter("expired")).isZero();
   }
 
   @Test

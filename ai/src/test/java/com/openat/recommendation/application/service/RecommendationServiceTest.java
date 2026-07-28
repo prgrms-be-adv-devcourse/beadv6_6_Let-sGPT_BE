@@ -1623,7 +1623,7 @@ class RecommendationServiceTest {
 
     // 셰딩 시점: 표본은 아직 하나도 완료되지 않았고, 셰딩은 overloaded로만 센다.
     assertThat(pipelineCount("detail")).isZero();
-    assertThat(meterRegistry.get("recommendation.overloaded").counter().count()).isEqualTo(1);
+    assertThat(counterCount("recommendation.overloaded", "source", "request")).isEqualTo(1);
     release.countDown();
     holder.get(3, TimeUnit.SECONDS);
     // 실제로 슬롯을 잡고 돈 요청만 표본에 남는다.
@@ -1637,7 +1637,7 @@ class RecommendationServiceTest {
 
     saturated.recommend(null);
 
-    assertThat(meterRegistry.get("recommendation.overloaded").counter().count()).isEqualTo(1);
+    assertThat(counterCount("recommendation.overloaded", "source", "request")).isEqualTo(1);
     assertThat(counterCount("recommendation.fallback", "mode", "home", "reason", "overloaded"))
         .isEqualTo(1);
     assertThat(pipelineCount("home")).isZero();
@@ -1665,7 +1665,7 @@ class RecommendationServiceTest {
 
     saturated.recommend(UUID.randomUUID());
 
-    assertThat(meterRegistry.get("recommendation.overloaded").counter().count()).isEqualTo(1);
+    assertThat(counterCount("recommendation.overloaded", "source", "request")).isEqualTo(1);
     assertThat(counterCount("recommendation.fallback", "mode", "detail", "reason", "overloaded"))
         .isEqualTo(1);
     assertThat(counterCount("recommendation.last-resort", "mode", "detail", "reason", "overloaded"))
@@ -1699,7 +1699,7 @@ class RecommendationServiceTest {
             counterCount(
                 "recommendation.last-resort", "mode", "detail", "reason", "overloaded-background"))
         .isEqualTo(1);
-    assertThat(meterRegistry.get("recommendation.overloaded").counter().count()).isEqualTo(1);
+    assertThat(counterCount("recommendation.overloaded", "source", "background")).isEqualTo(1);
     // 응답 조립은 요청 경로와 동일한 최후 폴백 단계를 그대로 탄다.
     verify(lastResortProductsCache).get();
     assertThat(pipelineCount("detail")).isZero();

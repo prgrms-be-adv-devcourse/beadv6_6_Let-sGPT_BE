@@ -102,12 +102,17 @@ public class RecommendationSeedService {
     // 그대로 반환하면 방금 받은 변경(예: 새 찜)이 FULL_TTL 동안 묻힌다.
     boolean purchaseSucceeded = purchaseSignals.isPresent();
     metrics.seedRefresh(purchaseSucceeded ? "wishlist-missing" : "order-missing");
+    // CAS는 find 이후의 변경을 막는다. 이 검사는 find 직전에 이미 들어온 완전 결과도 보호한다.
+    if (cached.filter(weights -> weights.complete() && weights.collectedAt().isAfter(startedAt)).isPresent()) {
+      metrics.seedSalvage("superseded");
+      return cached.orElseThrow().seeds();
+    }
     // 살려 온 절반을 계속 물려주면 실패가 이어지는 동안 그 시드의 수명이 무한 연장된다. 상한을
     // 넘으면 실패한 쪽을 버리고 방금 받은 쪽만 남긴다.
     Optional<SeedWeights> salvageable = cached.filter(weights -> canSalvage(weights, startedAt));
     List<Seed> salvagedSeeds =
         salvageable.map(weights -> salvage(weights, purchaseSucceeded)).orElse(List.of());
-    metrics.seedSalvage(salvageOutcome(cached, salvageable, salvagedSeeds));
+    String salvageOutcome = salvageOutcome(cached, salvageable, salvagedSeeds);
     List<Seed> mergedSeeds =
         purchaseSucceeded ? merge(freshSeeds, salvagedSeeds) : merge(salvagedSeeds, freshSeeds);
     // 살려 온 절반은 낡았을 수 있으므로 완전 데이터인 척 FULL_TTL 동안 남기지 않고, 그 절반을
@@ -119,6 +124,7 @@ public class RecommendationSeedService {
         seedWeightsCache.saveIfUnchanged(
             memberId, cachedSnapshot.map(CachedWeights::serialized).orElse(null), partial, partialTtl);
     if (saved) {
+      metrics.seedSalvage(salvageOutcome);
       return mergedSeeds;
     }
     // find와 save 사이에 다른 요청이 갱신했다. 특히 완전 결과를 부분 결과로 덮지 않도록, CAS에
