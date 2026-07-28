@@ -35,6 +35,8 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>OPEN/SOLD_OUT 드롭의 잔여는 재고이력(원장) DEDUCT로 선반영한다 — 기동 워밍({@code DropCacheWarmer})이 {@code 총량 +
  * 원장합계}로 잔여를 계산하므로, 캐시를 직접 워밍하면 부트스트랩에 덮인다. {@code DropBootstrapRunner}보다 먼저 실행(@Order)해 시드된 드롭/원장을
  * 부트스트랩 워밍이 읽도록 한다.
+ *
+ * <p>배포 환경에서는 {@code APP_SEED_ENABLED=false}로 비활성화된다 — 재기동 시 데모 시드가 통합 시드 위에 재삽입되는 오염을 막는다.
  */
 @Slf4j
 @Component
