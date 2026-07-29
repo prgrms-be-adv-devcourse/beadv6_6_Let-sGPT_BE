@@ -30,6 +30,13 @@ dependencies {
     // 2.x가 Spring Boot 4 라인(자동설정이 boot 4의 org.springframework.boot.jdbc.autoconfigure 패키지를
     // 참조) — 1.x는 Boot 3용이라 Boot 4.1에서 자동설정이 붙지 않는다. Boot BOM이 관리하지 않아 버전 명시.
     implementation("net.ttddyy.observation:datasource-micrometer-spring-boot:2.2.1")
+
+    // 리포지토리 JPQL 통합 테스트용 — TTL 스캐너 커서 쿼리는 실제 Postgres에서만 재현되는 회귀(42P18)라
+    // H2가 아닌 Testcontainers Postgres로 검증한다(order 모듈과 동일 관례).
+    testImplementation("org.springframework.boot:spring-boot-data-jpa-test")
+    testImplementation("org.springframework.boot:spring-boot-testcontainers")
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+    testImplementation("org.testcontainers:testcontainers-postgresql")
 }
 
 tasks.withType<Test> {
