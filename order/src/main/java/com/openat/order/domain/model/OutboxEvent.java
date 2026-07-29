@@ -32,6 +32,11 @@ public class OutboxEvent {
     @Column(name = "payload", nullable = false, columnDefinition = "TEXT", updatable = false)
     private String payload;
 
+    // 적재 시점의 원 요청 W3C traceparent. 폴링 발행 시 이 값으로 문맥을 복원해 producer 스팬을
+    // 원 요청 트레이스에 잇는다. nullable — 트레이스 비활성 경로/기존 행은 종전대로 발행된다.
+    @Column(name = "trace_parent", length = 64, updatable = false)
+    private String traceParent;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private OutboxEventStatus status;
@@ -44,9 +49,10 @@ public class OutboxEvent {
     private Instant publishedAt;
 
     @Builder(builderMethodName = "create")
-    private OutboxEvent(String topic, String payload) {
+    private OutboxEvent(String topic, String payload, String traceParent) {
         this.topic = topic;
         this.payload = payload;
+        this.traceParent = traceParent;
         this.status = OutboxEventStatus.PENDING;
     }
 

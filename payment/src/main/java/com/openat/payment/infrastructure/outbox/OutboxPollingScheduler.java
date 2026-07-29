@@ -73,7 +73,7 @@ public class OutboxPollingScheduler {
                         PageRequest.of(0, BATCH_SIZE))
                 .stream()
                 .map(event -> new PendingEvent(event.getId(), event.getTopic(),
-                        event.getAggregateId().toString(), event.getPayload()))
+                        event.getAggregateId().toString(), event.getPayload(), event.getTraceParent()))
                 .toList();
     }
 
@@ -83,8 +83,13 @@ public class OutboxPollingScheduler {
         List<InFlight> inFlight = new ArrayList<>(pending.size());
         for (PendingEvent event : pending) {
             try {
-                inFlight.add(new InFlight(event,
-                        kafkaTemplate.send(event.topic(), event.key(), event.payload())));
+                // 적재 시점에 저장한 traceparent로 문맥을 복원한 스코프 안에서 send를 호출한다. 그래야
+                // KafkaTemplate Observation이 만드는 producer 스팬이 폴링 tick이 아니라 원 요청
+                // 트레이스의 자식이 되고, 레코드에 주입되는 traceparent 헤더도 원 요청 것으로 나간다.
+                try (var ignored = OutboxTracePropagation.restore(event.traceParent())) {
+                    inFlight.add(new InFlight(event,
+                            kafkaTemplate.send(event.topic(), event.key(), event.payload())));
+                }
             } catch (Exception e) {
                 log.error("[OutboxPollingScheduler] 발행 요청 실패, 다음 주기에 재시도: topic={}, aggregateId={}",
                         event.topic(), event.key(), e);
@@ -132,7 +137,7 @@ public class OutboxPollingScheduler {
         }
     }
 
-    private record PendingEvent(UUID id, String topic, String key, String payload) {
+    private record PendingEvent(UUID id, String topic, String key, String payload, String traceParent) {
     }
 
     private record InFlight(PendingEvent event, CompletableFuture<SendResult<String, String>> future) {
