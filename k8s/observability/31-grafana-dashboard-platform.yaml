@@ -1542,6 +1542,18 @@ data:
           },
           "fieldConfig": {
             "defaults": {
+              "links": [
+                {
+                  "title": "느린 결제 트레이스 (Tempo, >2s)",
+                  "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22payment-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+                  "targetBlank": true
+                },
+                {
+                  "title": "느린 주문 트레이스 (Tempo, >2s)",
+                  "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22order-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+                  "targetBlank": true
+                }
+              ],
               "unit": "ops",
               "custom": {
                 "drawStyle": "line",
@@ -2801,6 +2813,18 @@ data:
           "id": 38,
           "type": "timeseries",
           "title": "평균 커넥션 점유 시간 (서비스별)",
+          "links": [
+            {
+              "title": "느린 결제 트레이스 (Tempo, >2s)",
+              "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22payment-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+              "targetBlank": true
+            },
+            {
+              "title": "느린 주문 트레이스 (Tempo, >2s)",
+              "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22order-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+              "targetBlank": true
+            }
+          ],
           "description": "커넥션을 풀에서 받아 반납할 때까지 쥐고 있던 시간의 평균 — `usage_seconds_sum / usage_seconds_count`.\n\n옆의 '평균 커넥션 획득 대기'와 혼동하지 말 것. 획득 대기는 풀이 빌 때까지 '기다린' 시간이고, 점유는 받은 뒤 '쥐고 있던' 시간이다. 획득 대기가 크면 풀이 모자라거나 남들이 오래 쥐는 것이고, 점유가 크면 그 서비스 자신이 오래 쥔다.\n\n이 지표는 '얼마나 오래 쥐었나'까지만 말한다. 왜 오래 쥐었는지는 담기지 않는다 — 쿼리 자체가 느림, 트랜잭션 안에서 DB가 아닌 작업(외부 HTTP 호출, 메시지 발행 등)을 기다림, 커넥션을 연 채 애플리케이션 로직이 길게 돎, 반납 누락 등이 모두 같은 모양으로 나타난다.\n\n좁히려면 교차확인한다. (1) 상단 '커넥션 상태 분해 (state별)'에서 idle in transaction이 같이 올랐는지 — 올랐다면 트랜잭션은 열려 있는데 서버는 명령을 받지 못한 구간이 있었다는 뜻이다. (2) 'Tuples fetched / returned'로 DB 작업량 자체가 늘었는지. (3) Tempo 트레이스로 해당 트랜잭션 스팬 안의 자식 스팬을 본다 — 원인을 지목할 수 있는 건 사실상 트레이스뿐이다.\n\n실측(목 결제사 지연 800ms, 결제 풀 4, 동시 사용자 5→40): 결제는 무부하 161ms에서 부하 중 450ms→780ms로 올랐고, 같은 시각 order는 평균 7ms였다. 특정 서비스만 수백 ms대로 튀면 그 서비스의 트랜잭션 경계를 의심할 근거가 된다.",
           "datasource": {
             "type": "prometheus",
@@ -2857,6 +2881,18 @@ data:
           "id": 39,
           "type": "timeseries",
           "title": "평균 커넥션 획득 대기 (서비스별)",
+          "links": [
+            {
+              "title": "느린 결제 트레이스 (Tempo, >2s)",
+              "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22payment-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+              "targetBlank": true
+            },
+            {
+              "title": "느린 주문 트레이스 (Tempo, >2s)",
+              "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22order-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+              "targetBlank": true
+            }
+          ],
           "description": "풀에 커넥션을 요청하고 실제로 받기까지 기다린 시간의 평균 — `acquire_seconds_sum / acquire_seconds_count`. 이 구간 동안 요청 스레드는 아직 커넥션을 못 받고 멈춰 있으므로, 이 시간은 사용자 응답 지연에 그대로 더해진다.\n\n옆의 '평균 커넥션 점유 시간'과 다르다. 여기는 '기다린' 시간, 저기는 '쥐고 있던' 시간이다.\n\n이 지표는 '기다렸다'까지만 말한다. 내 서비스가 느려서인지 같은 풀을 쓰는 다른 경로가 오래 쥐어서인지는 구분되지 않는다. 점유가 길면서 대기도 길면 오래 쥐는 쪽이 유력하고, 점유는 짧은데 대기만 길면 동시 요청 수 대비 풀이 작은 쪽이 유력하다 — 같은 행의 'Pending threads (서비스별)'로 대기 큐가 실제로 쌓였는지 확인한다.\n\n한계선은 Hikari의 획득 타임아웃(`connection-timeout`)이다. 평균이 타임아웃에 다가가고 있으면 분포의 꼬리는 이미 넘고 있으므로, 같은 행의 'Timeouts (5m rate)'가 0인지 반드시 같이 본다.\n\n실측(목 결제사 지연 800ms, 결제 풀 4, 동시 사용자 5→40): 결제 평균 대기가 1.21초에서 4.06초로 올랐고, 획득 타임아웃 5초를 꼬리가 넘겨 획득 실패 212건이 발생했다. 평균이 아직 한계선 아래여도 실패는 이미 나고 있었다.",
           "datasource": {
             "type": "prometheus",
@@ -2913,6 +2949,18 @@ data:
           "id": 40,
           "type": "timeseries",
           "title": "최대 커넥션 점유·획득 시간 (서비스별)",
+          "links": [
+            {
+              "title": "느린 결제 트레이스 (Tempo, >2s)",
+              "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22payment-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+              "targetBlank": true
+            },
+            {
+              "title": "느린 주문 트레이스 (Tempo, >2s)",
+              "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22order-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+              "targetBlank": true
+            }
+          ],
           "description": "평균이 숨기는 꼬리를 본다. 위 두 패널이 평균이라면 여기는 같은 구간의 최댓값이다.\n\nMicrometer의 `_max`는 프로세스 시작 이후 누적 최댓값이 아니라 최근 슬라이딩 윈도우 안의 최댓값이라, 사건이 지나가면 다시 내려간다. 값이 낮다고 '한 번도 없었다'가 아니라 '최근 구간에는 없었다'는 뜻이며, 조회 구간을 넓게 잡으면 지나간 스파이크도 그래프에 남는다.\n\n평균과 최대의 간격 자체가 정보다. 평균은 낮은데 최대만 튀면 소수의 요청만 오래 쥔 것이고(특정 엔드포인트, 배치, 재시도 등이 후보), 평균과 최대가 같이 올라가면 그 서비스의 부하 전반이 느려진 것이다. 어느 쪽인지는 이 패널만으로 확정되지 않으니 Tempo 트레이스에서 느린 스팬을 직접 집는다.\n\n서비스 간 비교가 원인 범위를 좁혀준다. 모든 서비스가 같이 오르면 DB·노드 같은 공통 자원을 의심하고(아래 '노드 압력 (PSI)' 행과 상단 PostgreSQL 패널 교차확인), 한 서비스만 오르면 그 서비스 고유의 경로를 먼저 본다.\n\n실측(목 결제사 지연 800ms, 결제 풀 4, 동시 사용자 5→40): 결제의 최대 점유가 5.176초였고 같은 시각 order의 최대는 96ms였다. 두 자릿수 배 차이라 공통 원인보다 결제 고유 경로를 먼저 본 근거가 됐다.",
           "datasource": {
             "type": "prometheus",
@@ -3004,6 +3052,13 @@ data:
           },
           "fieldConfig": {
             "defaults": {
+              "links": [
+                {
+                  "title": "느린 결제 트레이스 (Tempo, >2s)",
+                  "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22payment-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+                  "targetBlank": true
+                }
+              ],
               "unit": "short",
               "custom": {
                 "drawStyle": "line",
@@ -3060,6 +3115,18 @@ data:
           },
           "fieldConfig": {
             "defaults": {
+              "links": [
+                {
+                  "title": "느린 결제 트레이스 (Tempo, >2s)",
+                  "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22payment-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+                  "targetBlank": true
+                },
+                {
+                  "title": "느린 주문 트레이스 (Tempo, >2s)",
+                  "url": "/explore?schemaVersion=1&panes=%7B%22trc%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7Bresource.service.name%3D%5C%22order-service%5C%22%20%26%26%20duration%3E2s%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D%7D&orgId=1",
+                  "targetBlank": true
+                }
+              ],
               "unit": "ops",
               "custom": {
                 "drawStyle": "line",
