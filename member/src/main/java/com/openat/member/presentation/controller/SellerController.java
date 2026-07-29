@@ -99,6 +99,9 @@ public class SellerController {
      *
      * <p>scoped 토큰은 수명이 짧으므로(기본 120초) 만료 시 이 엔드포인트를 다시 호출해 재발급한다.
      * refresh 토큰 없이 회원 JWT가 갱신 수단을 겸한다.
+     *
+     * <p>{@code request.audience()}로 대상 서비스를 지정한다({@code openat-product} | {@code openat-settlement}).
+     * 생략하면 기존 product 동작을 유지한다.
      */
     @PostMapping("/token")
     public ResponseEntity<SellerTokenResponse> issueSellerToken(
@@ -106,7 +109,8 @@ public class SellerController {
             @RequestBody SellerTokenRequest request
     ) {
         UUID memberId = UUID.fromString(userContext.userId());
-        return ResponseEntity.ok(tokenExchangeUseCase.issueSellerToken(memberId, request.sellerInfoId()));
+        return ResponseEntity.ok(
+                tokenExchangeUseCase.issueSellerToken(memberId, request.sellerInfoId(), request.audience()));
     }
 
     // -----------------------------------------------------------------------

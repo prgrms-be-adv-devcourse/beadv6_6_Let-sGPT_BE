@@ -141,6 +141,94 @@ class WaitingQueueRedisRepositoryTest {
     }
 
     @Test
+    @DisplayName(
+        "같은 사용자가 진짜 동시에 즉시입장을 두 번 요청해도 outstanding이 중복 가산되지 않는다" +
+            "(앱 레벨 admittedQuantityOf 가드와 이 스크립트 호출 사이의 좁은 레이스 방어)"
+    )
+    fun enqueueOrFastAdmit_sameUserConcurrentRequests_neverDoubleCountsOutstanding() {
+        // QueueService.enter()는 호출 전 admittedQuantityOf로 이미 입장권을 보유했는지 먼저
+        // 확인하지만, 그 GET과 이 스크립트 호출 사이엔 왕복(round trip)이 있어 완전한 원자성이
+        // 아니다 - 실제로 같은 순간 도착한 두 요청은 둘 다 "아직 없음"을 보고 여기까지 올 수
+        // 있다. 이 리포지토리 테스트는 그 앱 레벨 가드를 건너뛰고 같은 사용자로 동시에 스크립트를
+        // 직접 두 번 호출해, 스크립트 자체(Redis의 단일 스레드 직렬 실행 + 이 안의 ZSCORE 가드)가
+        // 그 레이스를 닫는지 검증한다.
+        val dropId = newDropId()
+        val userId = "racer"
+        seedRemaining(dropId, 10)
+        val executor = Executors.newFixedThreadPool(2)
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val done = CountDownLatch(2)
+        val results = java.util.Collections.synchronizedList(mutableListOf<AdmittedEntry?>())
+
+        repeat(2) {
+            executor.submit {
+                ready.countDown()
+                start.await()
+                try {
+                    results.add(runBlocking { repository.enqueueOrFastAdmit(dropId, userId, 1, TTL_SECONDS) })
+                } finally {
+                    done.countDown()
+                }
+            }
+        }
+        ready.await()
+        start.countDown()
+        done.await()
+        executor.shutdown()
+
+        // 둘 다 도착은 했지만, 발급은 정확히 한 번만 이뤄져야 한다 - 두 번째 호출은 이미
+        // admitted ZSET에 있는 걸 보고 fast admit을 재부여하지 않고, 대기열에도 등록하지
+        // 않은 채 그대로 반환한다(아래 좀비 대기열 항목 회귀 테스트 참고 - 대기열에 등록하는
+        // 폴백은 "지연된 이중 입장" 결함으로 이어져 폐기했다).
+        assertThat(results.count { it != null }).isEqualTo(1)
+        runBlocking {
+            assertThat(repository.admittedQuantityOf(dropId, userId)).isEqualTo(1)
+            assertThat(repository.outstandingOf(dropId)).isEqualTo(1L)
+            assertThat(repository.sizeOf(dropId)).isZero()
+            assertThat(repository.ticketOf(dropId, userId)).isNull()
+        }
+    }
+
+    @Test
+    @DisplayName(
+        "이미 입장권을 보유한 사용자의 중복 요청은 대기열에 좀비 항목을 남기지 않는다" +
+            "(남기면 원래 티켓을 소비한 뒤 admit.lua가 그 항목을 재입장시켜 지연된 이중 입장이 된다)"
+    )
+    fun enqueueOrFastAdmit_secondCallForAlreadyAdmittedUser_neverResultsInDelayedReAdmission() = runBlocking<Unit> {
+        val dropId = newDropId()
+        val userId = "double-clicker"
+        seedRemaining(dropId, 5)
+
+        // 1번째 요청: 정상적으로 즉시 입장한다(대기열이 비어 있고 재고 충분).
+        val first = repository.enqueueOrFastAdmit(dropId, userId, 1, TTL_SECONDS)
+        assertThat(first).isNotNull
+
+        // 2번째 요청(같은 사용자 - 더블클릭/중복 탭 등으로 재전송됐다고 가정): 이미 입장권을
+        // 보유 중이므로 아무 효과가 없어야 한다 - 특히 대기열에 좀비 항목을 남기면 안 된다.
+        val second = repository.enqueueOrFastAdmit(dropId, userId, 1, TTL_SECONDS)
+        assertThat(second).isNull()
+        assertThat(repository.sizeOf(dropId)).isZero()
+        assertThat(repository.ticketOf(dropId, userId)).isNull()
+
+        // 1번째 티켓을 "소비"한 상태를 흉내낸다(실제로는 게이트웨이의 GETDEL +
+        // release-admitted-tracking.lua가 주문 성공 응답 시점에 admitted 추적만 즉시 정리하고,
+        // outstanding은 이후 order의 CREATED 이벤트 컨슘 시점에 별도로 차감된다 - 이 테스트는
+        // admitted 추적 정리만으로 재현에 충분하므로 outstanding도 함께 맞춰 정리한다).
+        redisTemplate.delete(RedisKeys.admission(dropId, userId))
+        redisTemplate.opsForZSet().remove(RedisKeys.admitted(dropId), userId)
+        redisTemplate.opsForHash<String, String>().delete(RedisKeys.admittedQuantity(dropId), userId)
+        redisTemplate.opsForValue().decrement(RedisKeys.outstanding(dropId), 1)
+        assertThat(repository.admittedQuantityOf(dropId, userId)).isNull()
+
+        // 다음 admit tick: 대기열에 좀비 항목이 없으므로 이 사용자에게 재고를 또 내주지 않는다.
+        val admitted = repository.admitBatch(dropId, MAX_SCAN, TTL_SECONDS)
+
+        assertThat(admitted).isEmpty()
+        assertThat(repository.admittedQuantityOf(dropId, userId)).isNull()
+    }
+
+    @Test
     @DisplayName("맨 앞사람 몫이 재고로 안 되면, 뒷사람 몫이 재고로 충분해도 새치기 입장시키지 않는다(엄격한 FIFO)")
     fun admitBatch_frontCandidateBlocked_neverAdmitsSmallerCandidateBehind() = runBlocking<Unit> {
         val dropId = newDropId()

@@ -32,13 +32,17 @@ public interface RefundJpaRepository extends JpaRepository<RefundJpaEntity, UUID
     int tryTransitionFromPending(@Param("id") UUID id, @Param("newStatus") Refund.Status newStatus,
             @Param("pgRefundKey") String pgRefundKey, @Param("completedAt") LocalDateTime completedAt);
 
-    // TTL 스캐너 — PENDING 상태이고 threshold 이전에 생성된 Refund 조회.
-    // Pageable로 사이클당 상한을 걸고 오래된 순으로 가져온다(정렬·크기는 호출측이 지정).
-    // (createdAt, id) 복합 커서가 있으면 그보다 큰 것만(null이면 처음부터) — 취지는 PaymentJpaRepository.findStalePending과 동일.
+    // TTL 스캐너 — PENDING 상태이고 threshold 이전에 생성된 Refund 조회. Pageable로 사이클당 상한을 걸고
+    // 오래된 순으로 가져온다. 첫 페이지/후속 페이지 분리 — 취지·이유는 PaymentJpaRepository.findStalePendingFirst와 동일
+    // (단일 쿼리의 `:cursor IS NULL` null 바인드가 Postgres 42P18 타입추론 불가를 일으키므로 분리한다).
+    @Query("SELECT r FROM RefundJpaEntity r WHERE r.status = 'PENDING' AND r.createdAt < :threshold")
+    List<RefundJpaEntity> findStalePendingFirst(@Param("threshold") LocalDateTime threshold, Pageable pageable);
+
+    // 후속 페이지 — (createdAt, id) 복합 커서 이후만(커서는 절대 null 아님). 취지는 PaymentJpaRepository.findStalePendingAfter와 동일.
     @Query("SELECT r FROM RefundJpaEntity r WHERE r.status = 'PENDING' AND r.createdAt < :threshold "
-            + "AND (:cursorCreatedAt IS NULL OR r.createdAt > :cursorCreatedAt "
+            + "AND (r.createdAt > :cursorCreatedAt "
             + "OR (r.createdAt = :cursorCreatedAt AND r.id > :cursorId))")
-    List<RefundJpaEntity> findStalePending(@Param("threshold") LocalDateTime threshold,
+    List<RefundJpaEntity> findStalePendingAfter(@Param("threshold") LocalDateTime threshold,
             @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt, @Param("cursorId") UUID cursorId,
             Pageable pageable);
 
