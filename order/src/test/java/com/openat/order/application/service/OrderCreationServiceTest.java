@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.openat.common.exception.BusinessException;
@@ -16,6 +17,7 @@ import com.openat.order.application.dto.CreateOrderResult;
 import com.openat.order.application.dto.OrderSnapshotInfo;
 import com.openat.order.application.dto.StockDecreaseCommand;
 import com.openat.order.application.dto.StockRestoreCommand;
+import com.openat.order.application.port.DropNotFoundException;
 import com.openat.order.application.port.ProductIntegrationPort;
 import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.exception.OrderErrorCode;
@@ -85,6 +87,25 @@ class OrderCreationServiceTest {
     assertThat(stockCommand.getValue().buyerId()).isEqualTo(memberId);
     assertThat(stockCommand.getValue().quantity()).isEqualTo(command.quantity());
     verify(orderSagaRecorder).recordStockDecreased(order.getId());
+  }
+
+  @Test
+  @DisplayName("드롭이 없어 스냅샷 조회가 실패하면 주문을 만들지 않고 드롭 없음 예외를 전파한다")
+  void createOrder_whenDropIsMissing_propagatesDropNotFound() {
+    UUID memberId = UUID.randomUUID();
+    CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
+
+    when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
+        .thenReturn(Optional.empty());
+    when(productIntegrationPort.fetchOrderSnapshot(command.dropId()))
+        .thenThrow(
+            new DropNotFoundException(
+                OrderFailCode.PRODUCT_INTEGRATION_FAILED, "존재하지 않는 드롭입니다.", null));
+
+    assertThrows(DropNotFoundException.class, () -> orderCreationService.create(memberId, command));
+
+    verify(pendingOrderCreator, never()).create(any(), any(), any(), any());
+    verifyNoInteractions(orderFailureRecorder);
   }
 
   @Test

@@ -42,10 +42,14 @@ import org.springframework.web.bind.annotation.RequestParam;
 public interface OrderApiSpec {
 
   @Operation(summary = "주문 생성", description = "드롭 상품 주문을 생성하고 결제 대기 상태로 전환한다.")
-  @ApiResponse(
-      responseCode = "201",
-      description = "생성 성공",
-      headers = @Header(name = "Location", description = "생성된 주문 URI"))
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "201",
+        description = "생성 성공",
+        headers = @Header(name = "Location", description = "생성된 주문 URI")),
+    @ApiResponse(responseCode = "404", description = "DROP_NOT_FOUND — 존재하지 않는 드롭"),
+    @ApiResponse(responseCode = "502", description = "ORDER_EXTERNAL_API_ERROR — 상품 연동 실패")
+  })
   ResponseEntity<CreateOrderResponse> createOrder(
       @CurrentUser UserContext userContext, @Valid CreateOrderRequest request);
 

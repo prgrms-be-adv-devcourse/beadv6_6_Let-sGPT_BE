@@ -15,6 +15,7 @@ import com.openat.order.application.dto.StockDecreaseCommand;
 import com.openat.order.application.dto.StockRestoreCommand;
 import com.openat.order.application.event.StockAdjustment;
 import com.openat.order.application.event.StockAdjustmentReason;
+import com.openat.order.application.port.DropNotFoundException;
 import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.model.OrderFailCode;
 import com.openat.order.infrastructure.client.ProductPortDtos.OrderSnapshotResponse;
@@ -191,6 +192,47 @@ class ProductIntegrationClientTest {
 
     verify(productInternalApiClient).fetchOrderSnapshot(any());
     verify(retrySleeper, never()).sleep(anyLong());
+  }
+
+  @Test
+  @DisplayName("존재하지 않는 드롭(404)은 재시도 없이 드롭 없음 예외로 실패한다")
+  void should_not_retry_snapshot_lookup_when_drop_is_missing() throws InterruptedException {
+    ProductApiException exception =
+        new ProductApiException(
+            HttpStatus.NOT_FOUND,
+            new ProductErrorResponse(null, "DROP_NOT_FOUND", "존재하지 않는 드롭입니다."),
+            "product error");
+    doThrow(exception).when(productInternalApiClient).fetchOrderSnapshot(any());
+
+    assertThatThrownBy(() -> productIntegrationClient.fetchOrderSnapshot(UUID.randomUUID()))
+        .isInstanceOfSatisfying(
+            DropNotFoundException.class,
+            failure ->
+                assertThat(failure.getFailCode())
+                    .isEqualTo(OrderFailCode.PRODUCT_INTEGRATION_FAILED));
+
+    verify(productInternalApiClient).fetchOrderSnapshot(any());
+    verify(retrySleeper, never()).sleep(anyLong());
+  }
+
+  @Test
+  @DisplayName("상품 서버 오류(500)는 일시 장애로 보고 재시도한다")
+  void should_retry_snapshot_lookup_when_product_returns_server_error()
+      throws InterruptedException {
+    ProductApiException exception =
+        new ProductApiException(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            new ProductErrorResponse(null, "INTERNAL_ERROR", "서버 내부 오류가 발생했습니다."),
+            "product error");
+    doThrow(exception).when(productInternalApiClient).fetchOrderSnapshot(any());
+
+    assertThatThrownBy(() -> productIntegrationClient.fetchOrderSnapshot(UUID.randomUUID()))
+        .isInstanceOf(ProductPortException.class)
+        .isNotInstanceOf(DropNotFoundException.class);
+
+    verify(productInternalApiClient, times(3)).fetchOrderSnapshot(any());
+    verify(retrySleeper).sleep(500L);
+    verify(retrySleeper).sleep(1_000L);
   }
 
   @Test
