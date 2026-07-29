@@ -157,7 +157,13 @@ public class SecurityConfig {
 
                         // 정산 관리자 전용
                         .pathMatchers(HttpMethod.GET, "/api/v1/settlements/admin/*").hasRole("ADMIN")
-                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/seller/*").hasRole("SELLER")
+
+                        // 정산 판매자 조회 — scoped 토큰(typ=scoped, aud=openat-settlement)만 허용.
+                        // access 토큰(ROLE_SELLER)은 더 이상 통과하지 못한다 — settlement 쪽 IDOR(다른 판매자
+                        // sellerId를 파라미터로 넘겨 조회) 수정과 짝이다. scoped 토큰의 sub(sellerInfoId)를
+                        // X-Seller-Id로 내려주면 settlement가 그 값을 신뢰해 본인 것만 조회하도록 바뀐다.
+                        // scoped 토큰엔 roles 클레임이 없어 admin 경로로는 새지 않는다.
+                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/seller/**").access(scopedFor("openat-settlement"))
 
 //                        // 판매자만
 //                        .pathMatchers(
