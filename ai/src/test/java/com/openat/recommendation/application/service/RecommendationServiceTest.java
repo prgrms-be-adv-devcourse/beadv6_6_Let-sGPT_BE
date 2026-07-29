@@ -721,18 +721,94 @@ class RecommendationServiceTest {
         .isEqualTo(1);
   }
 
+  /**
+   * 상세는 후보가 전부 마감이어도 상품을 보여 준다. 그 카테고리에도 열린 드롭이 없을 가능성이 높아
+   * 카테고리 드롭 단계는 건너뛰고 최후 폴백 상품으로 직행한다.
+   */
   @Test
-  void recommend_forDetailWhenNoOpenCandidates_countsEmptyResponse() {
+  void recommend_forDetailWhenAllCandidatesClosed_servesLastResortSkippingCategoryDrops() {
     UUID currentId = UUID.randomUUID();
+    UUID closedId = UUID.randomUUID();
     when(productDetailClient.getProduct(currentId))
         .thenReturn(product(currentId, UUID.randomUUID()));
-    when(searchClient.recommend(any())).thenReturn(List.of());
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
+
+    assertThat(service.recommend(currentId).sections())
+        .singleElement()
+        .satisfies(
+            section -> {
+              assertThat(section.title()).isEqualTo("이런 상품은 어떠세요?");
+              // 드롭 무관 상품이므로 dropId는 null — 프런트는 상품 페이지로 보낸다.
+              assertThat(section.products())
+                  .singleElement()
+                  .extracting(RecommendationResponse.Product::dropId)
+                  .isNull();
+            });
+    verify(openDropCache, never()).findByCategory(any(), anyInt());
+    // 상세 파이프라인 진입 시의 1회 말고 폴백을 위한 추가 상품 조회는 없다.
+    verify(productDetailClient, times(1)).getProduct(currentId);
+    verify(llmClient, never()).complete(any());
+  }
+
+  @Test
+  void recommend_forDetailWhenAllCandidatesClosed_countsFallbackAndLastResortNotEmpty() {
+    UUID currentId = UUID.randomUUID();
+    UUID closedId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId))
+        .thenReturn(product(currentId, UUID.randomUUID()));
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
+
+    service.recommend(currentId);
+
+    assertThat(counterCount("recommendation.fallback", "mode", "detail", "reason", "no-candidates"))
+        .isEqualTo(1);
+    assertThat(
+            counterCount("recommendation.last-resort", "mode", "detail", "reason", "no-candidates"))
+        .isEqualTo(1);
+    // 빈 응답이 아니므로 empty는 세지 않는다.
+    assertThat(
+            counterCountOrZero("recommendation.empty", "mode", "detail", "reason", "no-candidates"))
+        .isZero();
+  }
+
+  /** 최후 폴백 캐시까지 비어 있을 때만 빈 응답이 되고, 그때만 empty를 센다. */
+  @Test
+  void recommend_forDetailWhenAllCandidatesClosedAndLastResortEmpty_countsEmptyResponse() {
+    UUID currentId = UUID.randomUUID();
+    UUID closedId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId))
+        .thenReturn(product(currentId, UUID.randomUUID()));
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(lastResortProductsCache.get()).thenReturn(List.of());
 
     assertThat(service.recommend(currentId).sections()).isEmpty();
 
     assertThat(counterCount("recommendation.empty", "mode", "detail", "reason", "no-candidates"))
         .isEqualTo(1);
-    verify(llmClient, never()).complete(any());
+  }
+
+  /** 홈은 열린 드롭이 없으면 상품으로 채우지 않는다(정책). 상세 변경이 홈에 번지지 않게 못 박는다. */
+  @Test
+  void recommend_forHomeWhenAllCandidatesClosed_returnsEmptyAndSkipsLastResort() {
+    UUID closedId = UUID.randomUUID();
+    when(seedService.collect()).thenReturn(seeds());
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(openDropCache.findGeneral(3)).thenReturn(List.of());
+
+    assertThat(service.recommend(null).sections()).isEmpty();
+
+    verify(lastResortProductsCache, never()).get();
+    assertThat(
+            counterCount("recommendation.fallback", "mode", "home", "reason", "no-open-candidates"))
+        .isEqualTo(1);
+    assertThat(counterCount("recommendation.empty", "mode", "home", "reason", "no-open-candidates"))
+        .isEqualTo(1);
   }
 
   @Test

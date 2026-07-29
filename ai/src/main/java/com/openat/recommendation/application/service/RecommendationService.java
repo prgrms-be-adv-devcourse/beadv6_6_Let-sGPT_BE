@@ -497,9 +497,10 @@ public class RecommendationService {
       if (mode.isHome()) {
         return fallback(mode, productId, currentProduct, "no-open-candidates");
       }
-      metrics.empty(RecommendationMode.DETAIL, "no-candidates");
-      log.debug("recommendation empty: home=false, reason=no-candidates");
-      return RecommendationResponse.empty();
+      // 상세는 드롭이 없어도 상품을 보여 준다. 후보가 전부 마감이면 그 카테고리에도 열린 드롭이
+      // 없을 가능성이 높으므로, 셰딩과 같은 방식으로 categoryId=null을 넘겨 카테고리 드롭 단계를
+      // 건너뛰고 최후 폴백 상품으로 직행한다.
+      return detailFallback(productId, null, "no-candidates");
     }
 
     List<SelectedSection> selected;
