@@ -59,9 +59,10 @@ class AdmissionScheduler(
                     queueMetricsConfig.ensureRegistered(dropId)
                     val admitted = admitWaitersUseCase.admitBatch(dropId)
                     if (admitted.isNotEmpty()) {
-                        // 입장 처리된 각 사용자의 원 enqueue 트레이스로 링크를 건 admit 스팬을 남긴다.
-                        // 저장된 traceparent가 없으면(비활성/이미 소진) 조용히 지나간다.
-                        admitted.forEach { queueTraceBridge.linkAdmit(dropId, it.userId) }
+                        // 입장 처리된 사용자들의 원 enqueue 트레이스로 링크를 건 admit 스팬을 남긴다.
+                        // HMGET/HDEL 각 1회로 배치 처리한다(사용자 수에 비례한 왕복 방지). 저장된
+                        // traceparent가 없으면(비활성/이미 소진) 조용히 지나간다.
+                        queueTraceBridge.linkAdmitBatch(dropId, admitted.map { it.userId })
                         val totalQuantity = admitted.sumOf { it.quantity }
                         log.info(
                             "[queue-admit] dropId={} userCount={} totalQuantity={} entries={}",

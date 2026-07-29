@@ -65,6 +65,11 @@ class WaitingQueueRedisRepository(
         quantity: Int,
         ttlSeconds: Long,
     ): AdmittedEntry? {
+        // enqueue-or-admit Lua는 재고가 있으면 이 자리에서 즉시 입장시키고, 대기로 가더라도 admit
+        // 스케줄러가 곧바로 다음 tick에 입장시킬 수 있다. 따라서 traceparent 저장은 반드시 Lua "이전"에
+        // await로 완료해야 admit 측 조회가 저장을 앞지르지 않는다. 즉시 입장으로 링크되지 않는 고아
+        // 항목은 해시 TTL이 청소하므로 무해하다.
+        queueTraceBridge.captureEnqueue(dropId, userId)
         val result = redisTemplate.execute(
             enqueueOrAdmitScript,
             listOf(
@@ -83,11 +88,6 @@ class WaitingQueueRedisRepository(
         ).awaitFirstOrNull() ?: return null
         val admitted = result.getOrNull(0)?.toIntOrNull() ?: 0
         val grantedQuantity = result.getOrNull(1)?.toIntOrNull() ?: 0
-        if (admitted != 1) {
-            // 즉시 입장(fast-admit)이 아니라 실제로 대기열에 들어간 경우에만, 이 요청의 traceparent를
-            // 저장해 둔다. 나중에 admit tick이 이 사용자를 입장시킬 때 그 원 요청 트레이스로 링크를 건다.
-            queueTraceBridge.captureEnqueue(dropId, userId)
-        }
         return if (admitted == 1) AdmittedEntry(userId = userId, quantity = grantedQuantity) else null
     }
 
