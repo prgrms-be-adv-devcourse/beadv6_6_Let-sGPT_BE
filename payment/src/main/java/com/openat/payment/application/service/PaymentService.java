@@ -174,11 +174,16 @@ public class PaymentService implements PaymentUseCase {
   }
 
   @Override
-  public PaymentResult getPayment(UUID paymentId) {
+  public PaymentResult getPayment(UUID paymentId, UUID memberId) {
     Payment payment =
         paymentRepository
             .findById(paymentId)
             .orElseThrow(() -> new BusinessException(CommonErrorCode.NOT_FOUND));
+
+    // 소유자 검증 — 인증만 통과하면 ID로 남의 결제를 볼 수 있던 결함을 막는다(환불 요청과 동일한 403 컨벤션).
+    if (!Objects.equals(payment.getMemberId(), memberId)) {
+      throw new BusinessException(PaymentErrorCode.FORBIDDEN);
+    }
     return PaymentResult.of(payment.getId(), payment.getStatus().name(), payment.getAmount());
   }
 

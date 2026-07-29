@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -48,5 +49,18 @@ class PaymentControllerTest {
     ResponseEntity<?> response = controller.create(userContext, "idem-1", request);
 
     assertThat(response.getStatusCode().value()).isEqualTo(201);
+  }
+
+  // 단건 조회가 인증된 회원 ID를 유스케이스로 그대로 넘겨야 소유자 검증이 동작한다(IDOR 회귀 방지).
+  @Test
+  void get은_인증된_회원_ID를_함께_넘겨_조회한다() {
+    UUID paymentId = UUID.randomUUID();
+    when(paymentUseCase.getPayment(any(), any()))
+        .thenReturn(PaymentResult.of(paymentId, "APPROVED", 10_000L));
+
+    ResponseEntity<?> response = controller.get(userContext, paymentId);
+
+    assertThat(response.getStatusCode().value()).isEqualTo(200);
+    verify(paymentUseCase).getPayment(paymentId, UUID.fromString(userContext.userId()));
   }
 }

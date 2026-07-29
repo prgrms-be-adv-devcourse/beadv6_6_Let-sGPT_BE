@@ -56,13 +56,11 @@ enum RecommendationMode {
     return this == HOME;
   }
 
-  /** 메트릭 태그 값. */
   String tag() {
     return name().toLowerCase(Locale.ROOT);
   }
 
-  // 캐시 키 분기를 모드로 일원화한다. 홈은 CurrentMember로 회원 id를 구하되, 잘못된 id는
-  // 익명으로 강등돼 Optional.empty가 되고(캐시만 건너뜀), 상세는 상품 id로 공유 키를 만든다.
+  // 잘못된 회원 id는 익명으로 강등돼 empty가 된다 — 캐시만 건너뛰고 파이프라인은 그대로 돈다.
   Optional<String> cacheKey(RecommendationResultCache resultCache, UUID productId) {
     return switch (this) {
       case HOME -> CurrentMember.id().map(memberId -> resultCache.cacheKey(null, memberId));

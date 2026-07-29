@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.openat.common.error.CommonErrorCode;
 import com.openat.common.exception.BusinessException;
 import com.openat.payment.application.client.OrderValidationClient;
 import com.openat.payment.application.client.OrderValidationResult;
@@ -240,6 +241,53 @@ class PaymentServiceTest {
     paymentService.backfillSellerAndProduct(orderId, sellerId, productId);
 
     verify(eventPublisher, never()).publish(any(), any(), any(), any());
+  }
+
+  // ---------- getPayment ----------
+
+  @Test
+  void getPayment_소유자가_일치하면_정상_조회한다() {
+    UUID paymentId = UUID.randomUUID();
+    when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(approvedPayment(paymentId)));
+
+    PaymentResult result = paymentService.getPayment(paymentId, memberId);
+
+    assertThat(result.paymentId()).isEqualTo(paymentId);
+    assertThat(result.status()).isEqualTo("APPROVED");
+  }
+
+  @Test
+  void getPayment_소유자가_다르면_FORBIDDEN_예외가_발생한다() {
+    UUID paymentId = UUID.randomUUID();
+    when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(approvedPayment(paymentId)));
+
+    assertThatThrownBy(() -> paymentService.getPayment(paymentId, UUID.randomUUID()))
+        .isInstanceOf(BusinessException.class)
+        .extracting(e -> ((BusinessException) e).getErrorCode())
+        .isEqualTo(PaymentErrorCode.FORBIDDEN);
+  }
+
+  @Test
+  void getPayment_대상이_없으면_NOT_FOUND_예외가_발생한다() {
+    UUID paymentId = UUID.randomUUID();
+    when(paymentRepository.findById(paymentId)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> paymentService.getPayment(paymentId, memberId))
+        .isInstanceOf(BusinessException.class)
+        .extracting(e -> ((BusinessException) e).getErrorCode())
+        .isEqualTo(CommonErrorCode.NOT_FOUND);
+  }
+
+  private Payment approvedPayment(UUID paymentId) {
+    return Payment.builder()
+        .id(paymentId)
+        .orderId(orderId)
+        .memberId(memberId)
+        .amount(amount)
+        .method(Payment.Method.WALLET)
+        .status(Payment.Status.APPROVED)
+        .refundedAmount(0L)
+        .build();
   }
 
   // record가 PaymentService 내부 private이라 리플렉션으로 필드값을 읽는다.

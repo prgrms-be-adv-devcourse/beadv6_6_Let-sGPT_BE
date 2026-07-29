@@ -99,28 +99,25 @@ public class RecommendationSeedService {
       return freshSeeds;
     }
 
-    // 한쪽만 실패: 새로 받은 쪽은 즉시 반영하고, 실패한 쪽은 기존 캐시에서 살려 온다. 기존 캐시를
-    // 그대로 반환하면 방금 받은 변경(예: 새 찜)이 FULL_TTL 동안 묻힌다.
+    // 한쪽만 실패. 기존 캐시를 그대로 반환하면 방금 받은 변경이 FULL_TTL 동안 묻힌다.
     boolean purchaseSucceeded = purchaseSignals.isPresent();
     metrics.seedRefresh(purchaseSucceeded ? "wishlist-missing" : "order-missing");
-    // Redis 세대 번호는 모든 인스턴스가 공유한다. 로컬 wall clock 비교 대신, 신호 조회가 시작된
-    // 뒤 완전 저장된 엔트리를 판정해 clock skew가 있어도 부분 결과로 덮지 않는다.
+    // 로컬 wall clock 대신 모든 인스턴스가 공유하는 Redis 세대 번호로 판정해 clock skew를 피한다.
     if (cachedSnapshot
-        .filter(snapshot -> snapshot.weights().complete() && snapshot.generation() > generationAtStart)
+        .filter(
+            snapshot -> snapshot.weights().complete() && snapshot.generation() > generationAtStart)
         .isPresent()) {
       metrics.seedSalvage("superseded");
       return cached.orElseThrow().seeds();
     }
-    // 살려 온 절반을 계속 물려주면 실패가 이어지는 동안 그 시드의 수명이 무한 연장된다. 상한을
-    // 넘으면 실패한 쪽을 버리고 방금 받은 쪽만 남긴다.
+    // 살려 온 절반을 계속 물려주면 그 시드의 수명이 무한 연장되므로, 상한을 넘으면 버린다.
     Optional<SeedWeights> salvageable = cached.filter(weights -> canSalvage(weights, startedAt));
     List<Seed> salvagedSeeds =
         salvageable.map(weights -> salvage(weights, purchaseSucceeded)).orElse(List.of());
     String salvageOutcome = salvageOutcome(cached, salvageable, salvagedSeeds);
     List<Seed> mergedSeeds =
         purchaseSucceeded ? merge(freshSeeds, salvagedSeeds) : merge(salvagedSeeds, freshSeeds);
-    // 살려 온 절반은 낡았을 수 있으므로 완전 데이터인 척 FULL_TTL 동안 남기지 않고, 그 절반을
-    // 처음 모은 시각을 물려줘 다음 부분 저장이 수명을 더 늘리지 못하게 한다.
+    // 살려 온 절반의 수집 시각을 물려줘 부분 저장이 반복돼도 수명이 늘지 않게 한다.
     Instant collectedAt =
         salvagedSeeds.isEmpty() ? startedAt : salvageable.orElseThrow().collectedAt();
     SeedWeights partial = SeedWeights.partial(mergedSeeds, collectedAt);
@@ -135,9 +132,7 @@ public class RecommendationSeedService {
       metrics.seedSalvage(salvageOutcome);
       return mergedSeeds;
     }
-    // find와 save 사이에 다른 요청이 갱신했다. 특히 완전 결과를 부분 결과로 덮지 않도록, CAS에
-    // 실패하면 현재 값을 다시 읽어 그 값을 반환한다. 읽기마저 실패한 경우에만 이번 부분 결과를
-    // 응답으로 쓰되 Redis에는 저장하지 않는다.
+    // CAS 실패는 그 사이 갱신됐다는 뜻. 완전 결과를 부분 결과로 덮지 않으려 현재 값을 다시 읽는다.
     metrics.seedSalvage("superseded");
     return seedWeightsCache.find(memberId).map(SeedWeights::seeds).orElse(mergedSeeds);
   }

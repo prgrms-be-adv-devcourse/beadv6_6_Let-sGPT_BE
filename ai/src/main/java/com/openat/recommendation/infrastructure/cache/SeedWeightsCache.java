@@ -42,7 +42,9 @@ public class SeedWeightsCache {
             serialized -> {
               try {
                 return toSeedWeights(objectMapper.readTree(serialized))
-                    .map(weights -> new CachedWeights(weights, serialized, jsonRedisStore.generation(key)));
+                    .map(
+                        weights ->
+                            new CachedWeights(weights, serialized, jsonRedisStore.generation(key)));
               } catch (Exception exception) {
                 log.warn("Failed to parse cached seed weights; treating as miss", exception);
                 return Optional.empty();
@@ -54,10 +56,7 @@ public class SeedWeightsCache {
     jsonRedisStore.writeFull(key(memberId), weights, ttl);
   }
 
-  /**
-   * 부분 결과는 읽은 캐시가 그대로일 때만 저장한다. 그 사이 완전 결과가 들어오면 false를 반환해
-   * 호출자가 새 완전 결과를 보존·반환하게 한다.
-   */
+  /** 읽은 캐시가 그대로일 때만 저장한다. 완전 결과가 먼저 들어왔으면 false로 알려 준다. */
   public boolean saveIfUnchanged(
       UUID memberId,
       String expectedSerialized,
@@ -90,12 +89,7 @@ public class SeedWeightsCache {
     return jsonRedisStore.generation(key(memberId));
   }
 
-  /**
-   * 가중치 캐시 엔트리. {@code complete}는 이 엔트리를 만들 때 모든 신호 조회가 성공했는지,
-   * {@code collectedAt}은 엔트리에 담긴 가장 오래된 시드를 언제 모았는지다. 한쪽 신호가 실패해
-   * 기존 엔트리에서 절반을 살려 오면 그 시각을 물려받으므로, 부분 저장이 반복돼도 시드의 실제
-   * 수명은 늘어나지 않는다.
-   */
+  /** {@code collectedAt}은 담긴 가장 오래된 시드를 모은 시각 — 살려 오면 물려받아 수명이 늘지 않는다. */
   public record SeedWeights(List<Seed> seeds, boolean complete, Instant collectedAt) {
 
     public SeedWeights {
@@ -111,11 +105,7 @@ public class SeedWeightsCache {
       return new SeedWeights(seeds, false, collectedAt);
     }
 
-    /**
-     * 메타데이터가 없던 구버전 엔트리(시드 배열만 저장). 완전성과 수집 시각을 알 수 없으므로
-     * 가장 보수적으로 읽는다 — 불완전하고 무한히 오래된 것으로 본다. 시드 자체는 그대로 쓰되
-     * salvage 재료나 덮어쓰기 보호 대상으로는 쓰지 않는다.
-     */
+    /** 메타데이터가 없던 구버전 엔트리. 불완전·무한히 오래된 것으로 보아 salvage 재료로 쓰지 않는다. */
     public static SeedWeights unknownOrigin(List<Seed> seeds) {
       return new SeedWeights(seeds, false, Instant.EPOCH);
     }

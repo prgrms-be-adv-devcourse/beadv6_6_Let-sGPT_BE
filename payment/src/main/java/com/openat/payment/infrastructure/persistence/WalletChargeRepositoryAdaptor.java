@@ -2,12 +2,15 @@ package com.openat.payment.infrastructure.persistence;
 
 import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.domain.model.WalletCharge;
+import com.openat.payment.domain.repository.ScanCursor;
 import com.openat.payment.domain.repository.WalletChargeRepository;
 import com.openat.payment.infrastructure.persistence.entity.WalletChargeJpaEntity;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -53,8 +56,15 @@ public class WalletChargeRepositoryAdaptor implements WalletChargeRepository {
     }
 
     @Override
-    public List<WalletCharge> findStalePending(LocalDateTime threshold) {
-        return walletChargeJpaRepository.findStalePending(threshold).stream()
+    public List<WalletCharge> findStalePending(LocalDateTime threshold, ScanCursor cursor, int limit) {
+        // 오래된 순 + 상한 — PaymentRepositoryAdaptor.findStalePending과 동일한 취지((createdAt, id) 복합 커서·정렬).
+        LocalDateTime cursorCreatedAt = cursor == null ? null : cursor.createdAt();
+        UUID cursorId = cursor == null ? null : cursor.id();
+        return walletChargeJpaRepository
+                .findStalePending(threshold, cursorCreatedAt, cursorId,
+                        PageRequest.of(0, limit,
+                                Sort.by(Sort.Order.asc("createdAt"), Sort.Order.asc("id"))))
+                .stream()
                 .map(WalletChargeJpaEntity::toDomain)
                 .toList();
     }

@@ -18,7 +18,7 @@ final class CurrentMember {
     if (context == null) {
       return Optional.empty();
     }
-    // X-User-Id가 UUID가 아니면 익명으로 강등한다(요청을 깨뜨리는 대신 폴백 경로로).
+    // X-User-Id가 UUID가 아니면 요청을 깨뜨리는 대신 익명으로 강등한다.
     try {
       return Optional.of(UUID.fromString(context.userId()));
     } catch (IllegalArgumentException exception) {

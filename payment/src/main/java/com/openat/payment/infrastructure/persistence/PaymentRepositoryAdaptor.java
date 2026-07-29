@@ -4,12 +4,15 @@ import com.openat.payment.application.support.RequestHasher;
 import com.openat.payment.domain.model.Payment;
 import com.openat.payment.domain.model.PgReconStatus;
 import com.openat.payment.domain.repository.PaymentRepository;
+import com.openat.payment.domain.repository.ScanCursor;
 import com.openat.payment.infrastructure.persistence.entity.PaymentJpaEntity;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -76,8 +79,16 @@ public class PaymentRepositoryAdaptor implements PaymentRepository {
     }
 
     @Override
-    public List<Payment> findStalePending(LocalDateTime threshold) {
-        return paymentJpaRepository.findByStatusAndCreatedAtBefore(Payment.Status.PAYMENT_PENDING, threshold)
+    public List<Payment> findStalePending(LocalDateTime threshold, ScanCursor cursor, int limit) {
+        // 오래된 순 + 상한 — 정체가 쌓여도 한 사이클이 유한 시간에 끝나고, 가장 오래 굳은 건부터 회수된다.
+        // (createdAt, id) 복합 커서 이후만 조회·복합 정렬해 동일 시각 행이 페이지 경계에 몰려도 건너뛰지 않고,
+        // 종결불가 행이 선두를 점유해도 그 뒤 행에 도달할 수 있게 한다(cursor null이면 처음부터).
+        LocalDateTime cursorCreatedAt = cursor == null ? null : cursor.createdAt();
+        UUID cursorId = cursor == null ? null : cursor.id();
+        return paymentJpaRepository
+                .findStalePending(threshold, cursorCreatedAt, cursorId,
+                        PageRequest.of(0, limit,
+                                Sort.by(Sort.Order.asc("createdAt"), Sort.Order.asc("id"))))
                 .stream().map(PaymentJpaEntity::toDomain).toList();
     }
 

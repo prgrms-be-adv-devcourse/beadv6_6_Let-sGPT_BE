@@ -1,10 +1,6 @@
 package com.openat.recommendation.domain.model;
 
-/**
- * product의 드롭 상태를 추천 도메인이 자체적으로 표현한 값. product 모듈 enum에 컴파일
- * 의존하지 않기 위해 값만 복제하고, 모르는 값은 {@link #UNKNOWN}으로 받아 "열림"으로 오판하지
- * 않는다.
- */
+/** product enum에 컴파일 의존하지 않으려 값만 복제한다. 모르는 값은 {@link #UNKNOWN}이 받는다. */
 public enum DropStatus {
   REGISTERED,
   OPEN,

@@ -34,7 +34,8 @@ public class PaymentExpiryTransitionService {
 
   @Transactional
   public Optional<StockRollbackTarget> expireAlreadySettled(UUID orderId, String message) {
-    return failPendingOrder(orderId, OrderFailCode.PAYMENT_ALREADY_REFUNDED, message, "PAYMENT_ALREADY_REFUNDED");
+    return failPendingOrder(
+        orderId, OrderFailCode.PAYMENT_ALREADY_REFUNDED, message, "PAYMENT_ALREADY_REFUNDED");
   }
 
   @Transactional
@@ -60,14 +61,6 @@ public class PaymentExpiryTransitionService {
                 orderId,
                 failures));
     return target;
-  }
-
-  @Transactional
-  public void resetLookupFailures(UUID orderId) {
-    Order order = getOrder(orderId);
-    if (order.getStatus() == OrderStatus.PAYMENT_PENDING) {
-      order.resetPaymentStatusCheckFailures();
-    }
   }
 
   @Transactional

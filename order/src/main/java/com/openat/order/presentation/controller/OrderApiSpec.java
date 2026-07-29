@@ -42,10 +42,14 @@ import org.springframework.web.bind.annotation.RequestParam;
 public interface OrderApiSpec {
 
   @Operation(summary = "주문 생성", description = "드롭 상품 주문을 생성하고 결제 대기 상태로 전환한다.")
-  @ApiResponse(
-      responseCode = "201",
-      description = "생성 성공",
-      headers = @Header(name = "Location", description = "생성된 주문 URI"))
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "201",
+        description = "생성 성공",
+        headers = @Header(name = "Location", description = "생성된 주문 URI")),
+    @ApiResponse(responseCode = "404", description = "DROP_NOT_FOUND — 존재하지 않는 드롭"),
+    @ApiResponse(responseCode = "502", description = "ORDER_EXTERNAL_API_ERROR — 상품 연동 실패")
+  })
   ResponseEntity<CreateOrderResponse> createOrder(
       @CurrentUser UserContext userContext, @Valid CreateOrderRequest request);
 
@@ -53,7 +57,9 @@ public interface OrderApiSpec {
   @ApiResponse(responseCode = "200", description = "조회 성공")
   ResponseEntity<OrderResponse> getOrder(@CurrentUser UserContext userContext, UUID orderId);
 
-  @Operation(summary = "내 주문 목록 조회", description = "로그인 사용자의 주문 목록을 페이징 조회한다.")
+  @Operation(
+      summary = "내 주문 목록 조회",
+      description = "로그인 사용자의 주문 목록을 최신순(createdAt·id 내림차순)으로 페이징 조회한다. sort 파라미터는 무시한다.")
   @ApiResponse(responseCode = "200", description = "조회 성공")
   ResponseEntity<PageResponse<OrderSummaryResponse>> getMyOrders(
       @CurrentUser UserContext userContext,
@@ -63,7 +69,9 @@ public interface OrderApiSpec {
   @Operation(summary = "주문 취소", description = "결제 대기 주문만 취소한다. 결제 완료 주문은 환불 요청 API를 사용한다.")
   @ApiResponses({
     @ApiResponse(responseCode = "200", description = "요청 성공"),
-    @ApiResponse(responseCode = "409", description = "ORDER_PAYMENT_IN_PROGRESS — 결제 확인 중, 잠시 후 재시도 필요")
+    @ApiResponse(
+        responseCode = "409",
+        description = "ORDER_PAYMENT_IN_PROGRESS — 결제 확인 중, 잠시 후 재시도 필요")
   })
   ResponseEntity<OrderCancelResponse> cancelOrder(
       @CurrentUser UserContext userContext, UUID orderId);

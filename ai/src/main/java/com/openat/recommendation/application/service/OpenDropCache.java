@@ -92,19 +92,13 @@ public class OpenDropCache {
   }
 
   public List<DropMeta> findGeneral(int limit) {
-    return cache.get().values().stream()
-        .filter(this::isStillOpen)
-        .limit(limit)
-        .toList();
+    return cache.get().values().stream().filter(this::isStillOpen).limit(limit).toList();
   }
 
   /**
-   * 지금 살 수 있는 드롭인지 판정한다. 갱신 주기(기본 5분) 사이의 변화를 캐시에 담긴 값만으로
-   * 재검증하는 것이 목적이라, 판정은 조회 시점보다 느슨해질 수 없고 오직 더 엄격해질 뿐이다.
+   * 갱신 주기 사이의 변화를 캐시 값만으로 재검증한다 — 판정은 조회 시점보다 느슨해질 수 없다.
    *
-   * <p>{@code closeAt == null}은 product 계약상 "매진까지"라는 정당한 무기한 드롭이므로 마감으로
-   * 보지 않는다. 대신 {@code status}로 보강해, 상태가 OPEN이 아닌 것(REGISTERED·CLOSE·SOLD_OUT,
-   * 그리고 알 수 없는 값)은 마감 시각 유무와 무관하게 제외한다.
+   * <p>{@code closeAt == null}은 product 계약상 "매진까지"인 정당한 무기한 드롭이라 마감이 아니다.
    */
   private boolean isStillOpen(DropMeta drop) {
     Instant now = Instant.now();

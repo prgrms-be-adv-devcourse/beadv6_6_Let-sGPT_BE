@@ -59,15 +59,18 @@ public class RefundController {
         return ResponseEntity.status(HttpStatus.CREATED).body(body);
     }
 
-    @Operation(summary = "환불 단건 조회")
+    @Operation(summary = "환불 단건 조회", description = "본인 결제의 환불만 조회할 수 있다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "FORBIDDEN(본인 결제가 아님)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "NOT_FOUND")
     })
     @GetMapping("/{id}")
     public ResponseEntity<RefundResponse> get(
+            @Parameter(description = "인증된 회원 정보(게이트웨이 주입)", required = true)
+            @CurrentUser UserContext userContext,
             @Parameter(description = "환불 ID") @PathVariable UUID id) {
-        RefundResult result = refundUseCase.getRefund(id);
+        RefundResult result = refundUseCase.getRefund(id, UUID.fromString(userContext.userId()));
         return ResponseEntity.ok(toResponse(result));
     }
 

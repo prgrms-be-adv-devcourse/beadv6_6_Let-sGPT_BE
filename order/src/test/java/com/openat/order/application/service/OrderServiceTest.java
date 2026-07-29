@@ -9,6 +9,7 @@ import com.openat.common.exception.BusinessException;
 import com.openat.order.application.dto.OrderSnapshotInfo;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
+import com.openat.order.domain.model.OrderFailCode;
 import com.openat.order.domain.model.OrderStatus;
 import com.openat.order.domain.model.PurchaseSignal;
 import com.openat.order.domain.repository.OrderRepository;
@@ -22,7 +23,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -59,9 +63,7 @@ class OrderServiceTest {
     when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
 
     BusinessException exception =
-        assertThrows(
-            BusinessException.class,
-            () -> orderService.getPaymentValidationInfo(orderId));
+        assertThrows(BusinessException.class, () -> orderService.getPaymentValidationInfo(orderId));
 
     assertThat(exception.getErrorCode()).isEqualTo(OrderErrorCode.NOT_FOUND);
   }
@@ -91,6 +93,35 @@ class OrderServiceTest {
     assertThat(result.get(1).productId()).isEqualTo(olderProductId);
     verify(orderRepository)
         .findPurchaseSignals(memberId, OrderStatus.COMPLETED, PageRequest.of(0, 2));
+  }
+
+  @Test
+  @DisplayName("주문 목록은 클라이언트가 보낸 sort를 무시하고 createdAt·id 내림차순으로 조회한다")
+  void getMyOrders_ignoresClientSortAndFixesOrdering() {
+    UUID memberId = UUID.randomUUID();
+    Pageable expected = PageRequest.of(2, 10, Sort.by(Sort.Direction.DESC, "createdAt", "id"));
+    when(orderRepository.findByMemberId(memberId, null, expected)).thenReturn(Page.empty());
+
+    orderService.getMyOrders(
+        memberId, null, PageRequest.of(2, 10, Sort.by(Sort.Direction.ASC, "totalPrice")));
+
+    verify(orderRepository).findByMemberId(memberId, null, expected);
+  }
+
+  @Test
+  @DisplayName("환불 접수 미확정 주문의 상세 조회는 실패 사유를 노출하지 않는다")
+  void getMyOrder_whenRefundRequestUnconfirmed_hidesFailCode() {
+    UUID memberId = UUID.randomUUID();
+    Order order = createOrder(memberId);
+    order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:01:00Z"));
+    order.requestRefund(Instant.parse("2026-06-26T00:02:00Z"));
+    order.recordFailure(OrderFailCode.REFUND_REQUEST_FAILED, "환불 요청 접수 미확인");
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+
+    var detail = orderService.getMyOrder(memberId, order.getId());
+
+    assertThat(detail.status()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
+    assertThat(detail.failCode()).isNull();
   }
 
   private Order createOrder(UUID memberId) {

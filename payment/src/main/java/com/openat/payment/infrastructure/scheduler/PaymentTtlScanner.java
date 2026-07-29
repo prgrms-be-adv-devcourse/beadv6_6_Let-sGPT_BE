@@ -10,11 +10,15 @@ import com.openat.payment.domain.model.Refund;
 import com.openat.payment.domain.model.WalletCharge;
 import com.openat.payment.domain.repository.PaymentRepository;
 import com.openat.payment.domain.repository.RefundRepository;
+import com.openat.payment.domain.repository.ScanCursor;
 import com.openat.payment.domain.repository.WalletChargeRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
+import java.util.function.Function;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -30,6 +34,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class PaymentTtlScanner {
 
+  // 사이클 예산을 나눠 갖는 도메인 수(결제/지갑충전/환불).
+  private static final int DOMAIN_COUNT = 3;
+
   private final PaymentRepository paymentRepository;
   private final WalletChargeRepository walletChargeRepository;
   private final RefundRepository refundRepository;
@@ -38,6 +45,12 @@ public class PaymentTtlScanner {
   private final WalletChargeFinalizer chargeFinalizer;
   private final RefundFinalizer refundFinalizer;
   private final Counter expiredCounter;
+
+  // 종결불가(poison) 행 백오프 — 도메인별로 독립. 오래된 순 선두를 매 주기 재점유하는 행을 건너뛰어
+  // 뒤의 확정 가능 행에 자리를 내준다(TtlBackoffRegistry 참조, 인메모리·재시작 시 리셋 허용).
+  private final TtlBackoffRegistry paymentBackoff = new TtlBackoffRegistry();
+  private final TtlBackoffRegistry chargeBackoff = new TtlBackoffRegistry();
+  private final TtlBackoffRegistry refundBackoff = new TtlBackoffRegistry();
 
   // N분 — pgPaymentKey가 NULL인 row(handleMissingKey) 기준. 운영 기본값 10분, 시연/테스트 시 application-local.yml에서
   // 짧게 오버라이드.
@@ -54,6 +67,19 @@ public class PaymentTtlScanner {
   // 결정적 응답이면 즉시 확정, 조회 자체가 실패(예외/타임아웃)하면 재시도·유예 없이 즉시 FAILED(FORCED_TIMEOUT).
   @Value("${payment.ttl-scanner.finalize-deadline-minutes:8}")
   private long finalizeDeadlineMinutes;
+
+  // 사이클당 조회 상한(종류별). 이 스캐너는 행마다 PG를 동기 재조회(read timeout 5s)하므로 정체 건을 전량
+  // 물면 한 사이클이 수십 분까지 늘어난다. 실제로 그 사이 아웃박스 발행기가 100분간 못 돌아 미발행이
+  // 13,210건까지 쌓였다. 상한을 넘긴 건은 유실이 아니라 다음 주기로 넘어간다(오래된 순 조회라 굶지 않는다).
+  @Value("${payment.ttl-scanner.max-per-cycle:100}")
+  private int maxPerCycle;
+
+  // 사이클 시간 예산. 상한 안이어도 PG가 느리면 한 사이클이 길어질 수 있어(100건 × 5s = 500s) 시간으로도
+  // 끊는다. 이 예산은 도메인 수(3)로 균등 분할해 도메인당 독립 예산으로 부여한다 — 선행 도메인(결제)이
+  // 예산을 독식해 뒤 도메인(충전/환불)이 매 주기 굶는 것을 막는다. 도메인이 자기 몫을 넘기면 남은 건을
+  // 다음 주기로 미루고 경고 로그를 남긴다.
+  @Value("${payment.ttl-scanner.cycle-budget-seconds:30}")
+  private long cycleBudgetSeconds;
 
   public PaymentTtlScanner(
       PaymentRepository paymentRepository,
@@ -78,79 +104,248 @@ public class PaymentTtlScanner {
   // 종결은 전부 상태 조건부 UPDATE(WHERE status='PENDING'/'PAYMENT_PENDING')라 한쪽만 이기고 나머지는 0-row로 무시돼
   // 정합성이 유지된다(complete/fail/finalizePending 모두 동일 구조). fail의 환불액 원복도 전이에 이긴 경우에만 수행되므로
   // 이중 원복이 없다. 지금은 replicas=1이라 실경합이 없고, 스케일아웃 시점에 중복 조회 낭비를 없애려면 ShedLock을 이 지점에 도입.
+  //
+  // 스케줄러 스레드 풀을 4로 늘려(spring.task.scheduling.pool.size) 이 스캔이 다른 스케줄드 작업과 같은 시각에 돌 수 있게
+  // 됐지만, 한 인스턴스 안에서도 위와 같은 이유로 안전하다 — fixedDelay라 이 메서드가 자기 자신과 겹치지 않고, 아웃박스
+  // 작업들은 다른 테이블(outbox_event)만 건드리며, PG 대사 배치는 이미 확정된 행의 대사 컬럼만 갱신한다(PENDING 행을
+  // 다루는 이 스캐너와 대상이 겹치지 않는다).
   @Scheduled(fixedDelay = 60_000)
   public void scan() {
+    long startNanos = System.nanoTime();
+    // 도메인당 독립 예산 — 전체 예산을 도메인 수로 균등 분할. 각 processStale이 자기 시작 시점부터 자기 몫만
+    // 쓰므로 선행 도메인이 늦어져도 뒤 도메인이 자기 예산을 온전히 받는다(총합이 전체 예산을 다소 넘어도 무방 —
+    // 스케줄러 스레드가 분리돼 다른 스케줄드 작업을 막지 않는다).
+    long perDomainBudgetNanos = Duration.ofSeconds(cycleBudgetSeconds).toNanos() / DOMAIN_COUNT;
+    CycleStats stats = new CycleStats();
+
     // D9 — 키 있는 row(마지노선)/키 없는 row(pending-timeout) 중 더 이른 임계값으로 한 번에 가져온 뒤,
     // 각 핸들러가 자기 기준(마지노선 vs pending-timeout+grace)으로 재판단한다.
     long fetchThresholdMinutes = Math.min(finalizeDeadlineMinutes, pendingTimeoutMinutes);
     LocalDateTime threshold = LocalDateTime.now().minusMinutes(fetchThresholdMinutes);
 
-    List<Payment> stale = paymentRepository.findStalePending(threshold);
-    for (Payment payment : stale) {
-      try {
-        if (payment.getPgPaymentKey() == null) {
-          handleMissingKey(payment);
-        } else {
-          handleWithKey(payment);
-        }
-      } catch (Exception e) {
-        log.error("[PaymentTtlScanner] 처리 실패, 다음 주기에 재시도: paymentId={}", payment.getId(), e);
-      }
-    }
+    processStale(
+        "Payment",
+        paymentBackoff,
+        threshold,
+        perDomainBudgetNanos,
+        paymentRepository::findStalePending,
+        Payment::getId,
+        Payment::getCreatedAt,
+        payment ->
+            payment.getPgPaymentKey() == null ? handleMissingKey(payment) : handleWithKey(payment),
+        stats);
 
     // §5 하자드#10 — WalletCharge(PENDING)도 동일한 주기로 스캔. Payment와 동일한 3단계 로직 적용.
-    List<WalletCharge> staleCharges = walletChargeRepository.findStalePending(threshold);
-    for (WalletCharge charge : staleCharges) {
-      try {
-        if (charge.getPgPaymentKey() == null) {
-          handleChargeMissingKey(charge);
-        } else {
-          handleChargeWithKey(charge);
-        }
-      } catch (Exception e) {
-        log.error(
-            "[PaymentTtlScanner] WalletCharge 처리 실패, 다음 주기에 재시도: chargeId={}", charge.getId(), e);
-      }
-    }
+    processStale(
+        "WalletCharge",
+        chargeBackoff,
+        threshold,
+        perDomainBudgetNanos,
+        walletChargeRepository::findStalePending,
+        WalletCharge::getId,
+        WalletCharge::getCreatedAt,
+        charge ->
+            charge.getPgPaymentKey() == null
+                ? handleChargeMissingKey(charge)
+                : handleChargeWithKey(charge),
+        stats);
 
     // 환불 PG 호출이 타임아웃(UNKNOWN)돼 PENDING으로 굳은 건도 같은 주기로 회수. 환불은 항상 PG 결제 대상이라
     // (WALLET 환불은 접수 TX에서 즉시 완료됨) pgPaymentKey가 있어 재조회로만 판정 — Payment의 handleWithKey와 동형.
-    List<Refund> staleRefunds = refundRepository.findStalePending(threshold);
-    for (Refund refund : staleRefunds) {
-      try {
-        handleStaleRefund(refund);
-      } catch (Exception e) {
-        log.error(
-            "[PaymentTtlScanner] Refund 처리 실패, 다음 주기에 재시도: refundId={}", refund.getId(), e);
+    processStale(
+        "Refund",
+        refundBackoff,
+        threshold,
+        perDomainBudgetNanos,
+        refundRepository::findStalePending,
+        Refund::getId,
+        Refund::getCreatedAt,
+        this::handleStaleRefund,
+        stats);
+
+    // 사이클 요약 — 조회했는데 확정이 계속 0에 수렴하면 같은 집합을 매 주기 다시 긁고만 있다는 뜻이다.
+    // '건너뜀'은 백오프로 미룬 종결불가 행의 수 — 이 값이 크면 poison 행이 쌓이고 있다는 신호다.
+    log.info(
+        "[PaymentTtlScanner] 사이클 요약: 조회 {}건, 확정 {}건, 건너뜀 {}건, 이월 {}건, 상한도달 {}, 소요 {}ms",
+        stats.fetched,
+        stats.finalized,
+        stats.skipped,
+        stats.deferred,
+        stats.capped,
+        Duration.ofNanos(System.nanoTime() - startNanos).toMillis());
+  }
+
+  // 한 종류(Payment/WalletCharge/Refund)의 정체 건을 처리한다. created_at 커서로 다음 배치를 반복 조회하며,
+  // 백오프 중인(종결불가로 미뤄둔) 행은 건너뛰되 커서는 전진시켜 그 뒤 행에 도달한다. 자기 몫 시간 예산을
+  // 넘기거나 상한(maxPerCycle)만큼 시도했으면 남은 건을 다음 주기로 미룬다(상태를 바꾸지 않으므로 유실이 없다).
+  private <T> void processStale(
+      String kind,
+      TtlBackoffRegistry backoff,
+      LocalDateTime threshold,
+      long budgetNanos,
+      StaleFetcher<T> fetcher,
+      Function<T, UUID> idExtractor,
+      Function<T, LocalDateTime> createdAtExtractor,
+      StaleHandler<T> handler,
+      CycleStats stats) {
+    long deadlineNanos = System.nanoTime() + budgetNanos;
+    // 사이클 시작 시 커서는 항상 처음(오래된 것)부터 — 종결불가 행 건너뛰기는 백오프가 담당한다.
+    ScanCursor cursor = null;
+    int attempted = 0; // PG를 실제로 조회·확정 시도한 건수(백오프로 건너뛴 건은 제외).
+    // 전부 백오프 중이어도 무한정 읽지 않도록 조회량 상한(상한의 배수). 스키마 컬럼 없이 SQL에서 poison을
+    // 제외할 수 없는 데 따른 완화의 한계 — 근본 수정은 별도 안건(TtlBackoffRegistry 참조).
+    int scanCap = Math.max(maxPerCycle, 1) * 10;
+    int scanned = 0;
+
+    while (attempted < maxPerCycle && scanned < scanCap) {
+      if (System.nanoTime() >= deadlineNanos) {
+        log.warn(
+            "[PaymentTtlScanner] 사이클 시간 예산(도메인당 {}초) 초과 — {} 조회 중단, 다음 주기로 이월",
+            cycleBudgetSeconds / (double) DOMAIN_COUNT,
+            kind);
+        break;
+      }
+      List<T> batch = fetcher.fetch(threshold, cursor, maxPerCycle);
+      if (batch.isEmpty()) {
+        break;
+      }
+      stats.fetched += batch.size();
+      scanned += batch.size();
+
+      boolean budgetExceeded = false;
+      for (T row : batch) {
+        // 커서는 처리·건너뜀과 무관하게 전진시켜 다음 배치가 이 행 뒤로 넘어가게 한다.
+        // (createdAt, id) 복합 커서 — 동일 createdAt 행이 페이지 경계에 몰려도 id로 동률을 깨서
+        // 후속 행을 건너뛰지 않는다.
+        UUID id = idExtractor.apply(row);
+        cursor = new ScanCursor(createdAtExtractor.apply(row), id);
+        LocalDateTime now = LocalDateTime.now();
+
+        if (backoff.shouldSkip(id, now)) {
+          stats.skipped++;
+          continue;
+        }
+        if (System.nanoTime() >= deadlineNanos) {
+          budgetExceeded = true;
+          break;
+        }
+
+        attempted++;
+        HandleResult result;
+        try {
+          result = handler.handle(row);
+        } catch (Exception e) {
+          log.error(
+              "[PaymentTtlScanner] {} 처리 실패, 다음 주기에 재시도: id={}", kind, id, e);
+          backoff.recordUnresolved(id, now); // 예외도 미종결로 취급해 백오프(선두 재점유 방지)
+          if (attempted >= maxPerCycle) {
+            break;
+          }
+          continue;
+        }
+
+        switch (result) {
+          case FINALIZED -> {
+            stats.finalized++; // 실제 상태 전이에 이긴 경우만 집계(lost-race는 제외)
+            backoff.recordResolved(id);
+          }
+          case LOST_RACE ->
+              // 다른 경로가 이미 확정 — 더는 PENDING이 아니라 재점유하지 않는다. 집계엔 넣지 않는다.
+              backoff.recordResolved(id);
+          case UNRESOLVED ->
+              // 처리했지만 여전히 PENDING(poison) — 백오프로 미뤄 뒤 행에 자리를 내준다.
+              backoff.recordUnresolved(id, now);
+          case NOT_DUE -> {
+            // 아직 마지노선 전(가장 최근 행) — 손대지 않았고 백오프 대상도 아니다. 시도로도 세지 않는다.
+            attempted--;
+          }
+        }
+
+        if (attempted >= maxPerCycle) {
+          break;
+        }
+      }
+
+      if (budgetExceeded) {
+        stats.deferred++;
+        break;
+      }
+      if (batch.size() < maxPerCycle) {
+        break; // 마지막 페이지 — 더 조회할 것이 없다.
       }
     }
+
+    if (attempted >= maxPerCycle) {
+      stats.capped = true;
+    }
+  }
+
+  // 다음 배치를 커서 이후로 조회한다((createdAt, id) 복합 커서, null이면 처음부터).
+  @FunctionalInterface
+  private interface StaleFetcher<T> {
+    List<T> fetch(LocalDateTime threshold, ScanCursor cursor, int limit);
+  }
+
+  // 한 행의 처리 결과 — 백오프·집계 판단의 근거.
+  //  FINALIZED : 우리가 조건부 UPDATE에 이겨 실제로 확정했다(집계 대상).
+  //  LOST_RACE : 다른 경로가 먼저 확정해 우리 UPDATE가 0건이었다(더는 PENDING 아님, 집계 제외).
+  //  UNRESOLVED: 처리했지만 여전히 PENDING(poison) — 백오프로 미룬다.
+  //  NOT_DUE   : 아직 임계값 전이라 손대지 않았다.
+  private enum HandleResult {
+    FINALIZED,
+    LOST_RACE,
+    UNRESOLVED,
+    NOT_DUE
+  }
+
+  @FunctionalInterface
+  private interface StaleHandler<T> {
+    HandleResult handle(T row);
+  }
+
+  private static final class CycleStats {
+    private int fetched;
+    private int finalized;
+    private int skipped;
+    private int deferred;
+    private boolean capped;
   }
 
   // confirm을 한 번도 호출한 적이 없는 row(결제창 이탈/포기) — PG에 물어볼 키가 없으므로 시간만으로 확정.
-  private void handleMissingKey(Payment payment) {
+  private HandleResult handleMissingKey(Payment payment) {
     LocalDateTime graceThreshold =
         LocalDateTime.now().minusMinutes(pendingTimeoutMinutes + nullKeyGraceMinutes);
     if (payment.getCreatedAt().isAfter(graceThreshold)) {
-      return; // 그레이스 기간 안 지남 — 다음 회차에 재시도
+      return HandleResult.NOT_DUE; // 그레이스 기간 안 지남 — 다음 회차에 재시도
     }
-    expiredCounter.increment();
-    finalizer.finalizePending(payment.getId(), Payment.Status.FAILED, null, "EXPIRED");
+    boolean won =
+        finalizer
+            .finalizePending(payment.getId(), Payment.Status.FAILED, null, "EXPIRED")
+            .isPresent();
+    if (won) {
+      expiredCounter.increment();
+    }
+    return won ? HandleResult.FINALIZED : HandleResult.LOST_RACE;
   }
 
-  private void handleChargeMissingKey(WalletCharge charge) {
+  private HandleResult handleChargeMissingKey(WalletCharge charge) {
     LocalDateTime graceThreshold =
         LocalDateTime.now().minusMinutes(pendingTimeoutMinutes + nullKeyGraceMinutes);
     if (charge.getCreatedAt().isAfter(graceThreshold)) {
-      return;
+      return HandleResult.NOT_DUE;
     }
-    expiredCounter.increment();
-    chargeFinalizer.finalizePending(charge.getId(), WalletCharge.Status.FAILED, null);
+    boolean won =
+        chargeFinalizer.finalizePending(charge.getId(), WalletCharge.Status.FAILED, null).isPresent();
+    if (won) {
+      expiredCounter.increment();
+    }
+    return won ? HandleResult.FINALIZED : HandleResult.LOST_RACE;
   }
 
-  private void handleChargeWithKey(WalletCharge charge) {
+  private HandleResult handleChargeWithKey(WalletCharge charge) {
     LocalDateTime deadlineThreshold = LocalDateTime.now().minusMinutes(finalizeDeadlineMinutes);
     if (charge.getCreatedAt().isAfter(deadlineThreshold)) {
-      return; // 마지노선 전 — 조회하지 않음, 다음 주기에 재확인(D9)
+      return HandleResult.NOT_DUE; // 마지노선 전 — 조회하지 않음, 다음 주기에 재확인(D9)
     }
     TossQueryResult result;
     try {
@@ -162,26 +357,35 @@ public class PaymentTtlScanner {
           finalizeDeadlineMinutes,
           charge.getId(),
           e);
-      expiredCounter.increment();
-      chargeFinalizer.finalizePending(charge.getId(), WalletCharge.Status.FAILED, null);
-      return;
+      boolean won =
+          chargeFinalizer
+              .finalizePending(charge.getId(), WalletCharge.Status.FAILED, null)
+              .isPresent();
+      if (won) {
+        expiredCounter.increment();
+      }
+      return won ? HandleResult.FINALIZED : HandleResult.LOST_RACE;
     }
-    switch (result.status()) {
-      case APPROVED ->
-          chargeFinalizer.finalizePending(
-              charge.getId(), WalletCharge.Status.APPROVED, result.pgTxId());
-      case FAILED, NOT_FOUND ->
-          chargeFinalizer.finalizePending(
-              charge.getId(), WalletCharge.Status.FAILED, result.pgTxId());
-    }
+    boolean won =
+        switch (result.status()) {
+          case APPROVED ->
+              chargeFinalizer
+                  .finalizePending(charge.getId(), WalletCharge.Status.APPROVED, result.pgTxId())
+                  .isPresent();
+          case FAILED, NOT_FOUND ->
+              chargeFinalizer
+                  .finalizePending(charge.getId(), WalletCharge.Status.FAILED, result.pgTxId())
+                  .isPresent();
+        };
+    return won ? HandleResult.FINALIZED : HandleResult.LOST_RACE;
   }
 
   // 신-하자드9 — confirm이 PG호출까지는 갔는데 우리 쪽 조건부 UPDATE가 끊긴 좁은 케이스. 키로 PG에 직접 물어 회복.
   // D9 — 마지노선 도달 전엔 조회하지 않고(건별 타이머 없이 created_at 기준), 도달하면 1회 조회 후 재시도 없이 종결.
-  private void handleWithKey(Payment payment) {
+  private HandleResult handleWithKey(Payment payment) {
     LocalDateTime deadlineThreshold = LocalDateTime.now().minusMinutes(finalizeDeadlineMinutes);
     if (payment.getCreatedAt().isAfter(deadlineThreshold)) {
-      return; // 마지노선 전 — 조회하지 않음, 다음 주기에 재확인
+      return HandleResult.NOT_DUE; // 마지노선 전 — 조회하지 않음, 다음 주기에 재확인
     }
     TossQueryResult result;
     try {
@@ -193,36 +397,53 @@ public class PaymentTtlScanner {
           finalizeDeadlineMinutes,
           payment.getId(),
           e);
-      expiredCounter.increment();
-      finalizer.finalizePending(payment.getId(), Payment.Status.FAILED, null, "FORCED_TIMEOUT");
-      return;
-    }
-    switch (result.status()) {
-      case APPROVED ->
-          finalizer.finalizePending(
-              payment.getId(), Payment.Status.APPROVED, result.pgTxId(), null);
-      case FAILED ->
-          finalizer.finalizePending(
-              payment.getId(), Payment.Status.FAILED, result.pgTxId(), "PG_REJECTED");
-      case NOT_FOUND -> {
+      boolean won =
+          finalizer
+              .finalizePending(payment.getId(), Payment.Status.FAILED, null, "FORCED_TIMEOUT")
+              .isPresent();
+      if (won) {
         expiredCounter.increment();
-        finalizer.finalizePending(
-            payment.getId(), Payment.Status.FAILED, result.pgTxId(), "EXPIRED");
       }
+      return won ? HandleResult.FINALIZED : HandleResult.LOST_RACE;
     }
+    boolean won =
+        switch (result.status()) {
+          case APPROVED ->
+              finalizer
+                  .finalizePending(payment.getId(), Payment.Status.APPROVED, result.pgTxId(), null)
+                  .isPresent();
+          case FAILED ->
+              finalizer
+                  .finalizePending(
+                      payment.getId(), Payment.Status.FAILED, result.pgTxId(), "PG_REJECTED")
+                  .isPresent();
+          case NOT_FOUND -> {
+            boolean w =
+                finalizer
+                    .finalizePending(
+                        payment.getId(), Payment.Status.FAILED, result.pgTxId(), "EXPIRED")
+                    .isPresent();
+            if (w) {
+              expiredCounter.increment();
+            }
+            yield w;
+          }
+        };
+    return won ? HandleResult.FINALIZED : HandleResult.LOST_RACE;
   }
 
   // 환불 PG 응답을 못 받아 굳은 PENDING Refund 회수 — 마지노선 도달 전엔 조회하지 않고(created_at 기준),
   // 도달하면 토스에 1회 조회해 확정한다. RefundWebhookHandler.applyConditionalUpdate와 동일한 판정 로직.
-  private void handleStaleRefund(Refund refund) {
+  private HandleResult handleStaleRefund(Refund refund) {
     LocalDateTime deadlineThreshold = LocalDateTime.now().minusMinutes(finalizeDeadlineMinutes);
     if (refund.getCreatedAt().isAfter(deadlineThreshold)) {
-      return; // 마지노선 전 — 조회하지 않음, 다음 주기에 재확인(그 사이 보조 웹훅이 확정할 수도 있다).
+      return HandleResult.NOT_DUE; // 마지노선 전 — 조회하지 않음, 다음 주기에 재확인(그 사이 보조 웹훅이 확정할 수도 있다).
     }
     Payment payment = paymentRepository.findById(refund.getPaymentId()).orElse(null);
     if (payment == null) {
+      // 원 Payment가 없어 영영 종결 불가한 poison — 백오프로 미뤄 선두 재점유를 막는다.
       log.warn("[PaymentTtlScanner] Refund의 Payment 없음, 다음 주기에 재시도: refundId={}", refund.getId());
-      return;
+      return HandleResult.UNRESOLVED;
     }
     TossQueryResult result;
     try {
@@ -232,22 +453,29 @@ public class PaymentTtlScanner {
               payment.getPgPaymentKey(), refund.getPgRefundKey(), refund.getAmount());
     } catch (Exception e) {
       // Payment/충전과 달리 강제 종결하지 않는다 — 환불을 임의 FAILED로 닫으면 환불액 원복이 일어나는데, 실제로는
-      // PG에서 환불이 성사됐을 수 있어 이중 환불 창이 열린다. PENDING 유지 후 다음 주기·야간 대사에 위임.
+      // PG에서 환불이 성사됐을 수 있어 이중 환불 창이 열린다. PENDING 유지 후 다음 주기·야간 대사에 위임(백오프로 미룸).
       log.warn("[PaymentTtlScanner] 환불 재조회 실패, PENDING 유지: refundId={}", refund.getId(), e);
-      return;
+      return HandleResult.UNRESOLVED;
     }
-    switch (result.status()) {
-      case APPROVED -> refundFinalizer.complete(refund.getId(), payment, result.pgTxId());
+    return switch (result.status()) {
+      case APPROVED ->
+          refundFinalizer.complete(refund.getId(), payment, result.pgTxId()).isPresent()
+              ? HandleResult.FINALIZED
+              : HandleResult.LOST_RACE;
       case FAILED ->
           // PG가 환불을 명시적으로 거절했음. fail이 환불액 원복(tryDecreaseRefundedAmount)까지 수행.
-          refundFinalizer.fail(refund.getId(), payment, "PG_REJECTED");
-      case NOT_FOUND ->
-          // NOT_FOUND는 '확정 실패'가 아니라 '조회 불확실'(pgRefundKey null로 amount 폴백 매칭이 빗나갔거나 PG 반영 지연).
-          // 여기서 fail로 강제 종결하면 환불액 원복이 일어나는데 실제로 PG 환불이 성사돼 있으면 이중 환불 창이 열린다 —
-          // 위 조회 실패 catch 절과 동일 원칙(불확실은 강제 종결하지 않는다). PENDING 유지 후 다음 주기·야간 대사에 위임.
-          log.warn(
-              "[PaymentTtlScanner] 환불 조회 불확실(NOT_FOUND), PENDING 유지 — 야간 대사에 위임: refundId={}",
-              refund.getId());
-    }
+          refundFinalizer.fail(refund.getId(), payment, "PG_REJECTED").isPresent()
+              ? HandleResult.FINALIZED
+              : HandleResult.LOST_RACE;
+      case NOT_FOUND -> {
+        // NOT_FOUND는 '확정 실패'가 아니라 '조회 불확실'(pgRefundKey null로 amount 폴백 매칭이 빗나갔거나 PG 반영 지연).
+        // 여기서 fail로 강제 종결하면 환불액 원복이 일어나는데 실제로 PG 환불이 성사돼 있으면 이중 환불 창이 열린다 —
+        // 위 조회 실패 catch 절과 동일 원칙(불확실은 강제 종결하지 않는다). PENDING 유지 후 다음 주기·야간 대사에 위임(백오프로 미룸).
+        log.warn(
+            "[PaymentTtlScanner] 환불 조회 불확실(NOT_FOUND), PENDING 유지 — 야간 대사에 위임: refundId={}",
+            refund.getId());
+        yield HandleResult.UNRESOLVED;
+      }
+    };
   }
 }

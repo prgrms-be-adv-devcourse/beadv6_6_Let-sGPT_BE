@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -36,6 +37,12 @@ public interface WalletChargeJpaRepository extends JpaRepository<WalletChargeJpa
             @Param("pgTxId") String pgTxId);
 
     // TTL 스캐너 — PENDING 상태이고 threshold 이전에 생성된 row 조회.
-    @Query("SELECT c FROM WalletChargeJpaEntity c WHERE c.status = 'PENDING' AND c.createdAt < :threshold")
-    List<WalletChargeJpaEntity> findStalePending(@Param("threshold") LocalDateTime threshold);
+    // Pageable로 사이클당 상한을 걸고 오래된 순으로 가져온다(정렬·크기는 호출측이 지정).
+    // (createdAt, id) 복합 커서가 있으면 그보다 큰 것만(null이면 처음부터) — 취지는 PaymentJpaRepository.findStalePending과 동일.
+    @Query("SELECT c FROM WalletChargeJpaEntity c WHERE c.status = 'PENDING' AND c.createdAt < :threshold "
+            + "AND (:cursorCreatedAt IS NULL OR c.createdAt > :cursorCreatedAt "
+            + "OR (c.createdAt = :cursorCreatedAt AND c.id > :cursorId))")
+    List<WalletChargeJpaEntity> findStalePending(@Param("threshold") LocalDateTime threshold,
+            @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt, @Param("cursorId") UUID cursorId,
+            Pageable pageable);
 }

@@ -7,13 +7,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
-/**
- * 기동 시 추론(LLM) 설정을 한 번 찍어 준다.
- *
- * <p>키가 비어 있으면 LLM 호출이 401로 실패하고 전 요청이 폴백으로 떨어지는데, 폴백은 200 OK라
- * 헬스체크·메트릭 어디에도 안 잡힌다. 화면에는 "추천할 상품이 없습니다"만 뜬다. 그래서 기동
- * 로그에서 놓칠 수 없게 배너로 남긴다. 키 값 자체는 절대 찍지 않는다.
- */
+/** 키가 비면 전 요청이 폴백인데 폴백은 200 OK라 어디에도 안 잡혀 배너로 남긴다. 키 값은 찍지 않는다. */
 @Component
 public class InferenceConfigCheck {
 
