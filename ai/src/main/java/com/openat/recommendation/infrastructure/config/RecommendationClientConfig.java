@@ -13,6 +13,10 @@ public class RecommendationClientConfig {
 
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
 
+  // 커넥션 풀 공유 — 읽기 타임아웃은 requestFactory에 붙어 서비스별로 유지
+  private final HttpClient httpClient =
+      HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+
   @Bean
   RestClient orderRestClient(
       RestClient.Builder builder,
@@ -54,7 +58,6 @@ public class RecommendationClientConfig {
   }
 
   private RestClient restClient(RestClient.Builder builder, String baseUrl, Duration readTimeout) {
-    HttpClient httpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
     JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
     requestFactory.setReadTimeout(readTimeout);
     return builder.baseUrl(baseUrl).requestFactory(requestFactory).build();

@@ -5,6 +5,7 @@ import com.openat.order.application.dto.StockDecreaseCommand;
 import com.openat.order.application.dto.StockRestoreCommand;
 import com.openat.order.application.event.StockAdjustment;
 import com.openat.order.application.event.StockAdjustmentReason;
+import com.openat.order.application.port.DropNotFoundException;
 import com.openat.order.application.port.ProductIntegrationPort;
 import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.model.OrderFailCode;
@@ -64,7 +65,9 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
             OrderFailCode.PRODUCT_INTEGRATION_FAILED, "Product circuit breaker is open", exception);
       } catch (ProductPortException exception) {
         lastFailure = exception;
-        if (isBusinessFailure(exception) || attempt == BACKOFF_MILLIS.length) {
+        if (isBusinessFailure(exception)
+            || exception instanceof DropNotFoundException
+            || attempt == BACKOFF_MILLIS.length) {
           throw exception;
         }
         sleep(BACKOFF_MILLIS[attempt], OperationType.FETCH_ORDER_SNAPSHOT, exception);
@@ -166,6 +169,9 @@ public class ProductIntegrationClient implements ProductIntegrationPort {
       ProductErrorResponse errorResponse = productApiException.getErrorResponse();
       String message =
           errorResponse.message() != null ? errorResponse.message() : exception.getMessage();
+      if (productApiException.isNotFound()) {
+        return new DropNotFoundException(fallbackFailCode(operationType), message, exception);
+      }
       return new ProductPortException(
           toOrderFailCode(operationType, errorResponse.failCode()), message, exception);
     }

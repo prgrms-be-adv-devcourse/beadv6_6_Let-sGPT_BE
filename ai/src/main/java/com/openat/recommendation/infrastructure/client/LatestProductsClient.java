@@ -9,10 +9,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
-/**
- * 드롭 상태와 무관한 "최신 상품" 목록. 존재하고 항상 동작하는 {@code GET /api/v1/products} 를
- * 쓴다. 최후 폴백(홈이 절대 비지 않도록)의 소스이며, 스케줄로 미리 채워 요청당 지연이 없다.
- */
+/** 드롭 상태와 무관한 "최신 상품" 목록 — 최후 폴백의 소스이며 스케줄로 미리 채운다. */
 @Component
 public class LatestProductsClient {
 

@@ -74,4 +74,17 @@ class RecommendationMetricsTest {
         .contains("recommendation_overloaded_total{source=\"request\"} 1.0")
         .contains("recommendation_overloaded_total{source=\"background\"} 1.0");
   }
+
+  @Test
+  @DisplayName("빈 응답 카운터는 mode·reason 태그와 함께 노출된다")
+  void empty_isExposedWithModeAndReasonTags() {
+    metrics.empty(RecommendationMode.HOME, "no-seeds");
+    metrics.empty(RecommendationMode.DETAIL, "no-candidates");
+
+    String scrape = registry.scrape();
+
+    assertThat(scrape)
+        .contains("recommendation_empty_total{mode=\"home\",reason=\"no-seeds\"} 1.0")
+        .contains("recommendation_empty_total{mode=\"detail\",reason=\"no-candidates\"} 1.0");
+  }
 }

@@ -56,7 +56,7 @@ spec:
             failureThreshold: 5  # 3→5, kill 유예 30s→50s
           resources:
             limits: { memory: "320Mi" }   # gate2 A-3: 실사용 237Mi 초과·재기동 종식 (MaxRAMPercentage 힙 여유)
-            requests: { cpu: "50m", memory: "256Mi" }   # gate2 A-3: 실사용 237Mi 초과·재기동 종식 (MaxRAMPercentage 힙 여유)
+            requests: { cpu: "300m", memory: "256Mi" }   # cpu 50m→300m: 노드 CPU 포화 시 CFS 지분 부족으로 liveness 응답 못 해 킬당하는 문제 완화(memory는 gate2 A-3 유지)
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }

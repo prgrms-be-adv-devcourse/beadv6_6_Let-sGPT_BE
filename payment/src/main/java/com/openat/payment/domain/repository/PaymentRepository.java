@@ -31,8 +31,13 @@ public interface PaymentRepository {
     // 웹훅 처리(#10) — WHERE status='PAYMENT_PENDING' 조건부 UPDATE, affected rows=0이면 이미 처리됐거나 대상 없음.
     int tryTransitionFromPending(UUID id, Payment.Status newStatus, String pgTxId, LocalDateTime approvedAt);
 
-    // TTL 스캐너(§3) — 생성 후 threshold 이전인 PAYMENT_PENDING row 전체(pgPaymentKey null/有 둘 다 포함, 분기는 호출 측이 처리).
-    List<Payment> findStalePending(LocalDateTime threshold);
+    // TTL 스캐너(§3) — 생성 후 threshold 이전인 PAYMENT_PENDING row(pgPaymentKey null/有 둘 다 포함, 분기는 호출 측이 처리).
+    // limit — 한 사이클에 가져올 최대 건수(오래된 순). 정체 건 전량을 한 사이클에 물고 PG를 건별 동기 조회하면
+    // 사이클이 수십 분까지 늘어나 같은 스케줄러 스레드의 다른 작업(아웃박스 발행)이 굶으므로 상한을 둔다.
+    // cursor — (createdAt, id) 복합 커서(이 값보다 큰 것만, null이면 처음부터). 동일 createdAt 행이 페이지 경계에
+    // 몰려도 id로 동률을 깨서 후속 행을 건너뛰지 않는다. 종결불가 행이 선두를 점유해도 그 뒤 행에
+    // 도달할 수 있도록 스캐너가 커서를 전진시키며 반복 조회한다.
+    List<Payment> findStalePending(LocalDateTime threshold, ScanCursor cursor, int limit);
 
     // 환불가능액 원자 검증(#13) — WHERE refundedAmount + amount <= amount, affected=0이면 한도초과.
     int tryIncreaseRefundedAmount(UUID paymentId, Long amount);

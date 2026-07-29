@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.openat.common.exception.BusinessException;
@@ -16,6 +17,7 @@ import com.openat.order.application.dto.CreateOrderResult;
 import com.openat.order.application.dto.OrderSnapshotInfo;
 import com.openat.order.application.dto.StockDecreaseCommand;
 import com.openat.order.application.dto.StockRestoreCommand;
+import com.openat.order.application.port.DropNotFoundException;
 import com.openat.order.application.port.ProductIntegrationPort;
 import com.openat.order.application.port.ProductPortException;
 import com.openat.order.domain.exception.OrderErrorCode;
@@ -62,10 +64,9 @@ class OrderCreationServiceTest {
   @Test
   @DisplayName("주문 생성 시 상품 재고 감소 요청에 주문 식별자와 구매자 식별자를 전달한다")
   void createOrder_decreasesStockWithOrderIdAndBuyerId() {
-    // given
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 2, "idem-001", "테스트 상품");
-    OrderSnapshotInfo snapshot = snapshot(command.dropId());
+    OrderSnapshotInfo snapshot = snapshot();
     Order order =
         createOrder(
             memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
@@ -75,10 +76,8 @@ class OrderCreationServiceTest {
     when(productIntegrationPort.fetchOrderSnapshot(command.dropId())).thenReturn(snapshot);
     when(pendingOrderCreator.create(any(), any(), any(), any())).thenReturn(order);
 
-    // when
     CreateOrderResult result = orderCreationService.create(memberId, command);
 
-    // then
     assertThat(result.orderId()).isEqualTo(order.getId());
     assertThat(result.created()).isTrue();
     ArgumentCaptor<StockDecreaseCommand> stockCommand =
@@ -91,26 +90,38 @@ class OrderCreationServiceTest {
   }
 
   @Test
+  @DisplayName("드롭이 없어 스냅샷 조회가 실패하면 주문을 만들지 않고 드롭 없음 예외를 전파한다")
+  void createOrder_whenDropIsMissing_propagatesDropNotFound() {
+    UUID memberId = UUID.randomUUID();
+    CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
+
+    when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
+        .thenReturn(Optional.empty());
+    when(productIntegrationPort.fetchOrderSnapshot(command.dropId()))
+        .thenThrow(
+            new DropNotFoundException(
+                OrderFailCode.PRODUCT_INTEGRATION_FAILED, "존재하지 않는 드롭입니다.", null));
+
+    assertThrows(DropNotFoundException.class, () -> orderCreationService.create(memberId, command));
+
+    verify(pendingOrderCreator, never()).create(any(), any(), any(), any());
+    verifyNoInteractions(orderFailureRecorder);
+  }
+
+  @Test
   @DisplayName("같은 멱등키의 기존 주문이 있으면 상품 API를 다시 호출하지 않는다")
   void createOrder_whenExistingIdempotencyKey_returnExistingOrder() {
-    // given
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
     Order existing =
         createOrder(
-            memberId,
-            command.dropId(),
-            snapshot(command.dropId()),
-            command.quantity(),
-            command.idempotencyKey());
+            memberId, command.dropId(), snapshot(), command.quantity(), command.idempotencyKey());
 
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
         .thenReturn(Optional.of(existing));
 
-    // when
     CreateOrderResult result = orderCreationService.create(memberId, command);
 
-    // then
     assertThat(result.orderId()).isEqualTo(existing.getId());
     assertThat(result.created()).isFalse();
     verify(productIntegrationPort, never()).fetchOrderSnapshot(any());
@@ -120,26 +131,19 @@ class OrderCreationServiceTest {
   @Test
   @DisplayName("같은 멱등키의 기존 주문과 요청 내용이 다르면 충돌을 반환한다")
   void createOrder_whenExistingIdempotencyKeyWithDifferentBody_throwsConflict() {
-    // given
     UUID memberId = UUID.randomUUID();
     UUID originalDropId = UUID.randomUUID();
     CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
     Order existing =
         createOrder(
-            memberId,
-            originalDropId,
-            snapshot(originalDropId),
-            command.quantity(),
-            command.idempotencyKey());
+            memberId, originalDropId, snapshot(), command.quantity(), command.idempotencyKey());
 
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
         .thenReturn(Optional.of(existing));
 
-    // when
     BusinessException ex =
         assertThrows(BusinessException.class, () -> orderCreationService.create(memberId, command));
 
-    // then
     assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.IDEMPOTENCY_CONFLICT);
     verify(productIntegrationPort, never()).fetchOrderSnapshot(any());
     verify(productIntegrationPort, never()).decreaseStock(any(), any());
@@ -148,26 +152,19 @@ class OrderCreationServiceTest {
   @Test
   @DisplayName("같은 멱등키의 기존 주문이 실패 상태면 성공 재응답 대신 원래 실패 에러를 반환한다")
   void createOrder_whenExistingOrderFailed_throwsOriginalFailure() {
-    // given
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
     Order existing =
         createOrder(
-            memberId,
-            command.dropId(),
-            snapshot(command.dropId()),
-            command.quantity(),
-            command.idempotencyKey());
+            memberId, command.dropId(), snapshot(), command.quantity(), command.idempotencyKey());
     existing.fail(OrderFailCode.SOLD_OUT, "재고가 없습니다.", Instant.parse("2026-06-26T00:01:00Z"));
 
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
         .thenReturn(Optional.of(existing));
 
-    // when
     BusinessException ex =
         assertThrows(BusinessException.class, () -> orderCreationService.create(memberId, command));
 
-    // then
     assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.SOLD_OUT);
     verify(productIntegrationPort, never()).fetchOrderSnapshot(any());
     verify(productIntegrationPort, never()).decreaseStock(any(), any());
@@ -176,10 +173,9 @@ class OrderCreationServiceTest {
   @Test
   @DisplayName("동시 주문 생성으로 멱등키 유니크 충돌이 발생하면 기존 주문을 반환하고 재고를 다시 차감하지 않는다")
   void createOrder_whenConcurrentSameIdempotencyKey_returnExistingOrderWithoutStockDecrease() {
-    // given
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
-    OrderSnapshotInfo snapshot = snapshot(command.dropId());
+    OrderSnapshotInfo snapshot = snapshot();
     Order existing =
         createOrder(
             memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
@@ -191,10 +187,8 @@ class OrderCreationServiceTest {
     when(pendingOrderCreator.create(eq(memberId), eq(command), eq(snapshot), any()))
         .thenThrow(new DataIntegrityViolationException("duplicate idempotency key"));
 
-    // when
     CreateOrderResult result = orderCreationService.create(memberId, command);
 
-    // then
     assertThat(result.orderId()).isEqualTo(existing.getId());
     assertThat(result.created()).isFalse();
     verify(productIntegrationPort, never()).decreaseStock(any(), any());
@@ -203,10 +197,9 @@ class OrderCreationServiceTest {
   @Test
   @DisplayName("재고 감소 실패 시 주문 실패 이력을 기록하고 주문 오류로 변환한다")
   void createOrder_whenStockDecreaseFails_recordsFailureAndThrowsOrderError() {
-    // given
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
-    OrderSnapshotInfo snapshot = snapshot(command.dropId());
+    OrderSnapshotInfo snapshot = snapshot();
     Order order =
         createOrder(
             memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
@@ -219,11 +212,9 @@ class OrderCreationServiceTest {
         .when(productIntegrationPort)
         .decreaseStock(any(), any());
 
-    // when
     BusinessException ex =
         assertThrows(BusinessException.class, () -> orderCreationService.create(memberId, command));
 
-    // then
     assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.SOLD_OUT);
     verify(orderFailureRecorder).recordCreateFailure(any(), any(), any(), any());
     verify(orderSagaRecorder, never()).recordStockDecreased(any());
@@ -233,10 +224,9 @@ class OrderCreationServiceTest {
   @Test
   @DisplayName("드롭 종료로 재고 감소가 실패하면 닫힌 드롭 오류로 변환한다")
   void createOrder_whenDropClosed_throwsDropClosedError() {
-    // given
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "idem-001", "테스트 상품");
-    OrderSnapshotInfo snapshot = snapshot(command.dropId());
+    OrderSnapshotInfo snapshot = snapshot();
     Order order =
         createOrder(
             memberId, command.dropId(), snapshot, command.quantity(), command.idempotencyKey());
@@ -249,11 +239,9 @@ class OrderCreationServiceTest {
         .when(productIntegrationPort)
         .decreaseStock(any(), any());
 
-    // when
     BusinessException ex =
         assertThrows(BusinessException.class, () -> orderCreationService.create(memberId, command));
 
-    // then
     assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.DROP_CLOSED);
     verify(orderFailureRecorder).recordCreateFailure(any(), any(), any(), any());
     verify(productIntegrationPort, never()).restoreStock(any(), any());
@@ -264,7 +252,7 @@ class OrderCreationServiceTest {
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command =
         new CreateOrderCommand(UUID.randomUUID(), 1, "idem-tech", "테스트 상품");
-    OrderSnapshotInfo snapshot = snapshot(command.dropId());
+    OrderSnapshotInfo snapshot = snapshot();
     Order order = createOrder(memberId, command.dropId(), snapshot, 1, command.idempotencyKey());
     stubNewOrder(memberId, command, snapshot, order);
     doThrow(new ProductPortException(OrderFailCode.PRODUCT_INTEGRATION_FAILED, "timeout"))
@@ -304,7 +292,7 @@ class OrderCreationServiceTest {
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command =
         new CreateOrderCommand(UUID.randomUUID(), 1, "idem-rollback", "테스트 상품");
-    OrderSnapshotInfo snapshot = snapshot(command.dropId());
+    OrderSnapshotInfo snapshot = snapshot();
     Order order = createOrder(memberId, command.dropId(), snapshot, 1, command.idempotencyKey());
     stubNewOrder(memberId, command, snapshot, order);
     doThrow(new ProductPortException(OrderFailCode.PRODUCT_INTEGRATION_FAILED, "timeout"))
@@ -335,9 +323,7 @@ class OrderCreationServiceTest {
   void should_return_legacy_pending_replay_when_saga_missing() {
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "legacy", "테스트 상품");
-    Order order =
-        createOrder(
-            memberId, command.dropId(), snapshot(command.dropId()), 1, command.idempotencyKey());
+    Order order = createOrder(memberId, command.dropId(), snapshot(), 1, command.idempotencyKey());
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
         .thenReturn(Optional.of(order));
     when(orderSagaStateRepository.findByOrderId(order.getId())).thenReturn(Optional.empty());
@@ -352,9 +338,7 @@ class OrderCreationServiceTest {
   void should_retry_stock_when_pending_replay_is_at_order_created() {
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 1, "replay", "테스트 상품");
-    Order order =
-        createOrder(
-            memberId, command.dropId(), snapshot(command.dropId()), 1, command.idempotencyKey());
+    Order order = createOrder(memberId, command.dropId(), snapshot(), 1, command.idempotencyKey());
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
         .thenReturn(Optional.of(order));
     when(orderSagaStateRepository.findByOrderId(order.getId()))
@@ -372,9 +356,7 @@ class OrderCreationServiceTest {
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command =
         new CreateOrderCommand(UUID.randomUUID(), 1, "replay-race", "테스트 상품");
-    Order order =
-        createOrder(
-            memberId, command.dropId(), snapshot(command.dropId()), 1, command.idempotencyKey());
+    Order order = createOrder(memberId, command.dropId(), snapshot(), 1, command.idempotencyKey());
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
         .thenReturn(Optional.of(order));
     when(orderSagaStateRepository.findByOrderId(order.getId()))
@@ -403,9 +385,7 @@ class OrderCreationServiceTest {
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command =
         new CreateOrderCommand(UUID.randomUUID(), 1, "replay-race-fail", "테스트 상품");
-    Order order =
-        createOrder(
-            memberId, command.dropId(), snapshot(command.dropId()), 1, command.idempotencyKey());
+    Order order = createOrder(memberId, command.dropId(), snapshot(), 1, command.idempotencyKey());
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
         .thenReturn(Optional.of(order));
     when(orderSagaStateRepository.findByOrderId(order.getId()))
@@ -437,9 +417,7 @@ class OrderCreationServiceTest {
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command =
         new CreateOrderCommand(UUID.randomUUID(), 1, "replay-business", "테스트 상품");
-    Order order =
-        createOrder(
-            memberId, command.dropId(), snapshot(command.dropId()), 1, command.idempotencyKey());
+    Order order = createOrder(memberId, command.dropId(), snapshot(), 1, command.idempotencyKey());
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
         .thenReturn(Optional.of(order));
     when(orderSagaStateRepository.findByOrderId(order.getId()))
@@ -462,9 +440,7 @@ class OrderCreationServiceTest {
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command =
         new CreateOrderCommand(UUID.randomUUID(), 1, "replay-tech", "테스트 상품");
-    Order order =
-        createOrder(
-            memberId, command.dropId(), snapshot(command.dropId()), 1, command.idempotencyKey());
+    Order order = createOrder(memberId, command.dropId(), snapshot(), 1, command.idempotencyKey());
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
         .thenReturn(Optional.of(order));
     when(orderSagaStateRepository.findByOrderId(order.getId()))
@@ -487,9 +463,7 @@ class OrderCreationServiceTest {
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command =
         new CreateOrderCommand(UUID.randomUUID(), 1, "decreased", "테스트 상품");
-    Order order =
-        createOrder(
-            memberId, command.dropId(), snapshot(command.dropId()), 1, command.idempotencyKey());
+    Order order = createOrder(memberId, command.dropId(), snapshot(), 1, command.idempotencyKey());
     OrderSagaState saga = saga(order);
     saga.advanceTo(OrderSagaStep.STOCK_DECREASED);
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
@@ -505,12 +479,7 @@ class OrderCreationServiceTest {
   @Test
   void should_reject_payment_validation_at_order_created_without_side_effects() {
     Order order =
-        createOrder(
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            snapshot(UUID.randomUUID()),
-            1,
-            "validation-retry");
+        createOrder(UUID.randomUUID(), UUID.randomUUID(), snapshot(), 1, "validation-retry");
     when(orderSagaStateRepository.findByOrderId(order.getId()))
         .thenReturn(Optional.of(saga(order)));
 
@@ -527,12 +496,7 @@ class OrderCreationServiceTest {
   @Test
   void should_skip_stock_decrease_for_payment_validation_after_stock_decreased() {
     Order order =
-        createOrder(
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            snapshot(UUID.randomUUID()),
-            1,
-            "validation-ready");
+        createOrder(UUID.randomUUID(), UUID.randomUUID(), snapshot(), 1, "validation-ready");
     OrderSagaState saga = saga(order);
     saga.advanceTo(OrderSagaStep.STOCK_DECREASED);
     when(orderSagaStateRepository.findByOrderId(order.getId())).thenReturn(Optional.of(saga));
@@ -546,12 +510,7 @@ class OrderCreationServiceTest {
   @Test
   void should_allow_legacy_payment_validation_without_saga() {
     Order order =
-        createOrder(
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            snapshot(UUID.randomUUID()),
-            1,
-            "validation-legacy");
+        createOrder(UUID.randomUUID(), UUID.randomUUID(), snapshot(), 1, "validation-legacy");
     when(orderSagaStateRepository.findByOrderId(order.getId())).thenReturn(Optional.empty());
 
     orderCreationService.rejectUnstockedOrderForPaymentValidation(order);
@@ -565,9 +524,7 @@ class OrderCreationServiceTest {
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command =
         new CreateOrderCommand(UUID.randomUUID(), 1, "completed", "테스트 상품");
-    Order order =
-        createOrder(
-            memberId, command.dropId(), snapshot(command.dropId()), 1, command.idempotencyKey());
+    Order order = createOrder(memberId, command.dropId(), snapshot(), 1, command.idempotencyKey());
     order.complete(UUID.randomUUID(), Instant.now());
     when(orderRepository.findByMemberIdAndIdempotencyKey(memberId, command.idempotencyKey()))
         .thenReturn(Optional.of(order));
@@ -590,7 +547,7 @@ class OrderCreationServiceTest {
     return OrderSagaState.create().orderId(order.getId()).sagaId(order.getId().toString()).build();
   }
 
-  private OrderSnapshotInfo snapshot(UUID dropId) {
+  private OrderSnapshotInfo snapshot() {
     return new OrderSnapshotInfo(UUID.randomUUID(), UUID.randomUUID(), 10_000L, "스냅샷 상품");
   }
 

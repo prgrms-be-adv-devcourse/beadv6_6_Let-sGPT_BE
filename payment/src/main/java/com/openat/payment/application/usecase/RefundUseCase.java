@@ -9,7 +9,8 @@ public interface RefundUseCase {
 
     RefundResult requestRefund(RefundCommand command);
 
-    RefundResult getRefund(UUID refundId);
+    // memberId는 소유자 검증용 — Refund에 memberId가 없어 Payment를 조인해 대조한다(403).
+    RefundResult getRefund(UUID refundId, UUID memberId);
 
     RefundHistoryResult getRefundHistories(UUID memberId, int page, int size);
 }

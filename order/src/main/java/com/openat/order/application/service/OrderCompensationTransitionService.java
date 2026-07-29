@@ -35,9 +35,7 @@ public class OrderCompensationTransitionService {
   public int prepareRefundRetry(UUID orderId) {
     Order order = getOrder(orderId);
     boolean retryable =
-        order.getStatus() == OrderStatus.REFUND_FAILED
-            || (order.getStatus() == OrderStatus.CANCEL_REQUESTED
-                && order.getFailCode() == OrderFailCode.REFUND_REQUEST_FAILED);
+        order.getStatus() == OrderStatus.REFUND_FAILED || order.isRefundRequestUnconfirmed();
     if (!retryable) {
       throw new BusinessException(OrderErrorCode.INVALID_STATUS);
     }

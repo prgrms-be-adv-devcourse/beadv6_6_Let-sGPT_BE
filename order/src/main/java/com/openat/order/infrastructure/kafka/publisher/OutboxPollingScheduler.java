@@ -11,20 +11,18 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class OutboxPollingScheduler {
 
-    private static final int BATCH_SIZE = 100;
+  private static final int BATCH_SIZE = 100;
 
-    private final OutboxEventRepository outboxEventRepository;
-    private final OutboxEventPublisher outboxEventPublisher;
+  private final OutboxEventRepository outboxEventRepository;
+  private final OutboxEventPublisher outboxEventPublisher;
 
-    @Scheduled(fixedDelay = 3_000)
-    public void publishPendingEvents() {
-        try {
-            // Single-replica assumption: findPending has no FOR UPDATE SKIP LOCKED / distributed
-            // lock, so multiple replicas would poll the same PENDING rows and duplicate-send.
-            // Running >1 replica requires SKIP LOCKED or a distributed lock here.
-            outboxEventPublisher.publishAll(outboxEventRepository.findPending(BATCH_SIZE));
-        } catch (RuntimeException exception) {
-            log.error("Unexpected Outbox batch publishing failure.", exception);
-        }
+  @Scheduled(fixedDelay = 3_000)
+  public void publishPendingEvents() {
+    try {
+      // 단일 레플리카 전제 — findPending에 SKIP LOCKED·분산 락이 없어 레플리카를 늘리면 중복 발행된다
+      outboxEventPublisher.publishAll(outboxEventRepository.findPending(BATCH_SIZE));
+    } catch (RuntimeException exception) {
+      log.error("Unexpected Outbox batch publishing failure.", exception);
     }
+  }
 }

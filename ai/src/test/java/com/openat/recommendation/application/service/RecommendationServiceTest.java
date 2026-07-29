@@ -267,9 +267,9 @@ class RecommendationServiceTest {
     ProductDetailResponse selected = product(candidateId, "선택", 200L);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
-    when(openDropCache.filterOpenProductIds(List.of(candidateId)))
-        .thenReturn(List.of(candidateId));
-    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId)))).thenReturn("prompt");
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
+        .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId)))
         .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
@@ -303,15 +303,13 @@ class RecommendationServiceTest {
     ProductDetailResponse current = product(currentId, "현재", 100L);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
-    when(openDropCache.filterOpenProductIds(List.of(candidateId)))
-        .thenReturn(List.of(candidateId));
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
     when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
         .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId)))
         .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
-    when(productDetailClient.getProduct(candidateId))
-        .thenReturn(product(candidateId, "선택", 200L));
+    when(productDetailClient.getProduct(candidateId)).thenReturn(product(candidateId, "선택", 200L));
     when(openDropCache.findByProductId(candidateId)).thenReturn(Optional.of(openDrop));
 
     var response = service.recommend(currentId);
@@ -329,15 +327,13 @@ class RecommendationServiceTest {
     ProductDetailResponse current = product(currentId, "현재", 100L);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
-    when(openDropCache.filterOpenProductIds(List.of(candidateId)))
-        .thenReturn(List.of(candidateId));
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
     when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
         .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId)))
         .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
-    when(productDetailClient.getProduct(candidateId))
-        .thenReturn(product(candidateId, "선택", 200L));
+    when(productDetailClient.getProduct(candidateId)).thenReturn(product(candidateId, "선택", 200L));
     when(openDropCache.findByProductId(candidateId)).thenReturn(Optional.empty());
 
     var response = service.recommend(currentId);
@@ -362,7 +358,8 @@ class RecommendationServiceTest {
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId)))
         .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
-    when(productDetailClient.getProduct(candidateId)).thenReturn(product(candidateId, "선택", 2_000L));
+    when(productDetailClient.getProduct(candidateId))
+        .thenReturn(product(candidateId, "선택", 2_000L));
     when(openDropCache.findByProductId(candidateId)).thenReturn(Optional.of(openDrop));
 
     var response = service.recommend(currentId);
@@ -415,7 +412,8 @@ class RecommendationServiceTest {
         .thenReturn(List.of(candidate(firstId), candidate(secondId)));
     when(openDropCache.filterOpenProductIds(List.of(firstId, secondId)))
         .thenReturn(List.of(firstId, secondId));
-    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(firstId), candidate(secondId))))
+    when(promptBuilder.build(
+            RecommendationMode.DETAIL, current, List.of(candidate(firstId), candidate(secondId))))
         .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(firstId, secondId)))
@@ -459,7 +457,8 @@ class RecommendationServiceTest {
         .thenReturn(List.of(candidate(currentId), candidate(otherId)));
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
     when(openDropCache.filterOpenProductIds(List.of(otherId))).thenReturn(List.of(otherId));
-    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(otherId)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(otherId))))
+        .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(otherId))).thenReturn(List.of());
 
@@ -477,9 +476,9 @@ class RecommendationServiceTest {
     ProductDetailResponse selected = product(purchasedId, "선택", 200L);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(purchasedId)));
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
-    when(openDropCache.filterOpenProductIds(List.of(purchasedId)))
-        .thenReturn(List.of(purchasedId));
-    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(purchasedId)))).thenReturn("prompt");
+    when(openDropCache.filterOpenProductIds(List.of(purchasedId))).thenReturn(List.of(purchasedId));
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(purchasedId))))
+        .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(purchasedId)))
         .thenReturn(List.of(new SelectedSection("연관", List.of(purchasedId))));
@@ -487,7 +486,8 @@ class RecommendationServiceTest {
 
     var response = service.recommend(currentId);
 
-    verify(promptBuilder).build(RecommendationMode.DETAIL, current, List.of(candidate(purchasedId)));
+    verify(promptBuilder)
+        .build(RecommendationMode.DETAIL, current, List.of(candidate(purchasedId)));
     verify(postProcessor).process("raw", List.of(purchasedId));
     verify(seedService, never()).collect();
     assertThat(response.sections())
@@ -504,11 +504,8 @@ class RecommendationServiceTest {
     ProductDetailResponse current = product(currentId, "현재", 100L);
     ProductDetailResponse selected = product(openId, "열림", 200L);
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
-    when(searchClient.recommend(any()))
-        .thenReturn(List.of(candidate(openId), candidate(closedId)));
-    // 마감된 드롭(closedId)은 열린 상품 집합에서 빠진다 → 상세 후보에서도 제외되어야 한다.
-    when(openDropCache.filterOpenProductIds(List.of(openId, closedId)))
-        .thenReturn(List.of(openId));
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(openId), candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(openId, closedId))).thenReturn(List.of(openId));
     when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(openId))))
         .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
@@ -518,7 +515,6 @@ class RecommendationServiceTest {
 
     var response = service.recommend(currentId);
 
-    // 마감 후보는 LLM 프롬프트에도, 최종 추천에도 들어가지 않는다.
     verify(promptBuilder).build(RecommendationMode.DETAIL, current, List.of(candidate(openId)));
     assertThat(response.sections())
         .flatExtracting(RecommendationResponse.Section::products)
@@ -596,7 +592,8 @@ class RecommendationServiceTest {
     when(searchClient.recommend(seeds))
         .thenReturn(List.of(candidate(purchasedId), candidate(candidateId)));
     when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
-    when(promptBuilder.build(RecommendationMode.HOME, null, List.of(candidate(candidateId)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.HOME, null, List.of(candidate(candidateId))))
+        .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId))).thenReturn(List.of());
 
@@ -626,9 +623,9 @@ class RecommendationServiceTest {
     ProductDetailResponse current = product(currentId, categoryId);
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
-    when(openDropCache.filterOpenProductIds(List.of(candidateId)))
-        .thenReturn(List.of(candidateId));
-    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId)))).thenReturn("prompt");
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
+        .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenThrow(new RuntimeException("llm"));
     when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of(fallback));
 
@@ -687,7 +684,6 @@ class RecommendationServiceTest {
         .satisfies(
             section -> {
               assertThat(section.title()).isEqualTo("이런 상품은 어떠세요?");
-              // 드롭 무관 상품이므로 dropId는 null — 프런트는 상품 페이지로 보낸다.
               assertThat(section.products())
                   .singleElement()
                   .extracting(RecommendationResponse.Product::dropId)
@@ -715,8 +711,108 @@ class RecommendationServiceTest {
     when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
     when(lastResortProductsCache.get()).thenReturn(List.of());
 
-    // 최후 폴백 캐시는 스케줄로 채워진다. 기동 직후엔 비어 있어 빈 응답이 될 수밖에 없다.
     assertThat(service.recommend(currentId).sections()).isEmpty();
+    assertThat(counterCount("recommendation.empty", "mode", "detail", "reason", "search-failed"))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void recommend_forDetailWhenAllCandidatesClosed_servesLastResortWhenCategoryHasNoOpenDrops() {
+    UUID currentId = UUID.randomUUID();
+    UUID closedId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of());
+    when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
+
+    assertThat(service.recommend(currentId).sections())
+        .singleElement()
+        .satisfies(
+            section -> {
+              assertThat(section.title()).isEqualTo("이런 상품은 어떠세요?");
+              assertThat(section.products())
+                  .singleElement()
+                  .extracting(RecommendationResponse.Product::dropId)
+                  .isNull();
+            });
+    verify(openDropCache).findByCategory(categoryId, 4);
+    // 상세 파이프라인 진입 시의 1회 말고 폴백을 위한 추가 상품 조회는 없다.
+    verify(productDetailClient, times(1)).getProduct(currentId);
+    verify(llmClient, never()).complete(any());
+  }
+
+  @Test
+  void recommend_forDetailWhenAllCandidatesClosed_servesCategoryFallbackWhenCategoryHasOpenDrop() {
+    UUID currentId = UUID.randomUUID();
+    UUID closedId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    DropMeta fallback = drop(UUID.randomUUID(), categoryId);
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of(fallback));
+
+    assertFallback(service.recommend(currentId), "이 카테고리의 다른 드롭", fallback.productId());
+    verify(lastResortProductsCache, never()).get();
+  }
+
+  @Test
+  void recommend_forDetailWhenAllCandidatesClosed_countsFallbackAndLastResortNotEmpty() {
+    UUID currentId = UUID.randomUUID();
+    UUID closedId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId))
+        .thenReturn(product(currentId, UUID.randomUUID()));
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
+
+    service.recommend(currentId);
+
+    assertThat(counterCount("recommendation.fallback", "mode", "detail", "reason", "no-candidates"))
+        .isEqualTo(1);
+    assertThat(
+            counterCount("recommendation.last-resort", "mode", "detail", "reason", "no-candidates"))
+        .isEqualTo(1);
+    assertThat(
+            counterCountOrZero("recommendation.empty", "mode", "detail", "reason", "no-candidates"))
+        .isZero();
+  }
+
+  @Test
+  void recommend_forDetailWhenAllCandidatesClosedAndLastResortEmpty_countsEmptyResponse() {
+    UUID currentId = UUID.randomUUID();
+    UUID closedId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId))
+        .thenReturn(product(currentId, UUID.randomUUID()));
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(lastResortProductsCache.get()).thenReturn(List.of());
+
+    assertThat(service.recommend(currentId).sections()).isEmpty();
+
+    assertThat(counterCount("recommendation.empty", "mode", "detail", "reason", "no-candidates"))
+        .isEqualTo(1);
+  }
+
+  /** 홈은 열린 드롭이 없으면 상품으로 채우지 않는다 — 상세 변경이 홈에 번지지 않게 못 박는다. */
+  @Test
+  void recommend_forHomeWhenAllCandidatesClosed_returnsEmptyAndSkipsLastResort() {
+    UUID closedId = UUID.randomUUID();
+    when(seedService.collect()).thenReturn(seeds());
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(openDropCache.findGeneral(3)).thenReturn(List.of());
+
+    assertThat(service.recommend(null).sections()).isEmpty();
+
+    verify(lastResortProductsCache, never()).get();
+    assertThat(
+            counterCount("recommendation.fallback", "mode", "home", "reason", "no-open-candidates"))
+        .isEqualTo(1);
+    assertThat(counterCount("recommendation.empty", "mode", "home", "reason", "no-open-candidates"))
+        .isEqualTo(1);
   }
 
   @Test
@@ -772,7 +868,7 @@ class RecommendationServiceTest {
     DropMeta third = drop(UUID.randomUUID(), categoryId);
     when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
     when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
-    // 현재 상품이 마감 임박 상위에 들어 있다. 상한(3)만 가져와 제외하면 2개로 언더필된다.
+    // 현재 상품이 상위에 들어 있다. 상한 3만 가져와 제외하면 2개로 언더필된다.
     when(openDropCache.findByCategory(categoryId, 4))
         .thenReturn(List.of(drop(currentId, categoryId), first, second, third));
 
@@ -827,9 +923,9 @@ class RecommendationServiceTest {
     when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
     when(lastResortProductsCache.get())
         .thenReturn(
-            List.of(new RecommendationResponse.Product(currentId, null, "현재", "판매자", 100L, "thumb")));
+            List.of(
+                new RecommendationResponse.Product(currentId, null, "현재", "판매자", 100L, "thumb")));
 
-    // 제외 후 남는 상품이 없으면 빈 섹션을 내보내지 않고 빈 응답이 된다.
     assertThat(service.recommend(currentId).sections()).isEmpty();
   }
 
@@ -895,22 +991,19 @@ class RecommendationServiceTest {
                             currentId, UUID.randomUUID(), "현재", "판매자", 100L, "thumb")))));
     ProductDetailResponse current = product(currentId, categoryId);
     when(resultCache.find(key)).thenReturn(Optional.of(cached));
-    // 캐시에 남은 유일한 상품이 현재 상품이다. 드롭 자체는 아직 열려 있어 마감 필터로는 걸러지지
-    // 않으므로, 열화 판정이 "현재 상품"을 반영하지 않으면 배경 재계산이 아예 시작되지 않는다.
+    // 드롭은 아직 열려 있어, 열화 판정이 "현재 상품"을 반영하지 않으면 재계산이 시작되지 않는다.
     when(openDropCache.filterOpenProductIds(List.of(currentId))).thenReturn(List.of(currentId));
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
     when(openDropCache.findByCategory(categoryId, 4))
         .thenReturn(List.of(drop(UUID.randomUUID(), categoryId)));
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
-    when(openDropCache.filterOpenProductIds(List.of(candidateId)))
-        .thenReturn(List.of(candidateId));
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
     when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
         .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId)))
         .thenReturn(List.of(new SelectedSection("연관", List.of(candidateId))));
-    when(productDetailClient.getProduct(candidateId))
-        .thenReturn(product(candidateId, "선택", 200L));
+    when(productDetailClient.getProduct(candidateId)).thenReturn(product(candidateId, "선택", 200L));
 
     service.recommend(currentId);
 
@@ -928,7 +1021,7 @@ class RecommendationServiceTest {
     when(searchClient.recommend(any())).thenThrow(new RuntimeException("search"));
     when(openDropCache.findGeneral(3)).thenReturn(List.of(fallback));
 
-    // 홈에는 "현재 상품" 개념이 없으므로 제외가 적용되지 않는다.
+    // 홈에는 "현재 상품" 개념이 없어 제외가 적용되지 않는다.
     assertFallback(service.recommend(null), "이런 드롭은 어떠세요?", candidateId);
   }
 
@@ -941,9 +1034,9 @@ class RecommendationServiceTest {
     ProductDetailResponse current = product(currentId, categoryId);
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
-    when(openDropCache.filterOpenProductIds(List.of(candidateId)))
-        .thenReturn(List.of(candidateId));
-    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId)))).thenReturn("prompt");
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
+    when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
+        .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(candidateId))).thenReturn(List.of());
     when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of(fallback));
@@ -1072,7 +1165,6 @@ class RecommendationServiceTest {
     when(seedService.collect()).thenReturn(List.of());
     when(openDropCache.findGeneral(3)).thenReturn(List.of());
 
-    // 홈은 드롭 쇼케이스다. 빈 섹션이 프런트에서 "진행중인 드롭이 없습니다"로 보인다.
     assertThat(service.recommend(null).sections()).isEmpty();
     verify(lastResortProductsCache, never()).get();
   }
@@ -1085,6 +1177,18 @@ class RecommendationServiceTest {
     service.recommend(null);
 
     assertThat(counterCount("recommendation.fallback", "mode", "home", "reason", "no-seeds"))
+        .isEqualTo(1);
+  }
+
+  /** 요청당 INFO 로그를 DEBUG로 내린 대신 이 카운터가 "사용자가 아무것도 못 봤다"를 담는다. */
+  @Test
+  void recommend_forHomeWhenNoOpenDrops_countsEmptyResponse() {
+    when(seedService.collect()).thenReturn(List.of());
+    when(openDropCache.findGeneral(3)).thenReturn(List.of());
+
+    service.recommend(null);
+
+    assertThat(counterCount("recommendation.empty", "mode", "home", "reason", "no-seeds"))
         .isEqualTo(1);
   }
 
@@ -1116,7 +1220,8 @@ class RecommendationServiceTest {
               return List.of(candidate(id));
             });
     when(openDropCache.filterOpenProductIds(List.of(id))).thenReturn(List.of(id));
-    when(promptBuilder.build(RecommendationMode.HOME, null, List.of(candidate(id)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.HOME, null, List.of(candidate(id))))
+        .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
     when(postProcessor.process("raw", List.of(id)))
         .thenReturn(List.of(new SelectedSection("추천", List.of(id))));
@@ -1154,12 +1259,10 @@ class RecommendationServiceTest {
   }
 
   @Test
-  void recommend_whenLeaderPipelineThrowsError_releasesWaitersAndClearsInFlight()
-      throws Exception {
+  void recommend_whenLeaderPipelineThrowsError_releasesWaitersAndClearsInFlight() throws Exception {
     UUID memberId = UUID.randomUUID();
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.empty());
-    // 리더가 파이프라인 안에서 RuntimeException이 아닌 Error로 죽는 상황.
-    // recommendHome은 Exception만 잡으므로 Error는 singleFlight까지 전파된다.
+    // 리더가 Error로 죽는 상황 — 파이프라인은 Exception만 잡으므로 singleFlight까지 전파된다.
     when(seedService.collect())
         .thenAnswer(
             invocation -> {
@@ -1182,7 +1285,7 @@ class RecommendationServiceTest {
                 } catch (InterruptedException exception) {
                   throw new RuntimeException(exception);
                 } catch (Error ignored) {
-                  // 리더 스레드는 Error를 그대로 되던진다(정상). 대기자는 빈 응답으로 풀린다.
+                  // 리더 스레드는 Error를 그대로 되던진다. 대기자는 빈 응답으로 풀린다.
                 } finally {
                   UserContextHolder.clear();
                 }
@@ -1242,10 +1345,10 @@ class RecommendationServiceTest {
                     "추천",
                     List.of(
                         new RecommendationResponse.Product(openId, null, "열림", "판매자", 100L, "t"),
-                        new RecommendationResponse.Product(closedId, null, "마감", "판매자", 200L, "t")))));
+                        new RecommendationResponse.Product(
+                            closedId, null, "마감", "판매자", 200L, "t")))));
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
-    when(openDropCache.filterOpenProductIds(List.of(openId, closedId)))
-        .thenReturn(List.of(openId));
+    when(openDropCache.filterOpenProductIds(List.of(openId, closedId))).thenReturn(List.of(openId));
 
     RecommendationResponse response = service.recommend(null);
 
@@ -1256,7 +1359,7 @@ class RecommendationServiceTest {
                 assertThat(section.products())
                     .extracting(RecommendationResponse.Product::productId)
                     .containsExactly(openId));
-    // 히트 경로는 LLM/검색/시드를 절대 부르지 않는다(부분 제거는 재계산도 안 함).
+    // 부분 제거는 재계산하지 않는다 — 히트 경로는 검색·LLM·시드를 부르지 않는다.
     verify(llmClient, never()).complete(any());
     verify(searchClient, never()).recommend(any());
     verify(seedService, never()).collect();
@@ -1274,14 +1377,15 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "마감그룹",
                     List.of(
-                        new RecommendationResponse.Product(closedId, null, "마감", "판매자", 200L, "t"))),
+                        new RecommendationResponse.Product(
+                            closedId, null, "마감", "판매자", 200L, "t"))),
                 new RecommendationResponse.Section(
                     "열린그룹",
                     List.of(
-                        new RecommendationResponse.Product(openId, null, "열림", "판매자", 100L, "t")))));
+                        new RecommendationResponse.Product(
+                            openId, null, "열림", "판매자", 100L, "t")))));
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
-    when(openDropCache.filterOpenProductIds(List.of(closedId, openId)))
-        .thenReturn(List.of(openId));
+    when(openDropCache.filterOpenProductIds(List.of(closedId, openId))).thenReturn(List.of(openId));
 
     RecommendationResponse response = service.recommend(null);
 
@@ -1307,7 +1411,8 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "마감그룹",
                     List.of(
-                        new RecommendationResponse.Product(closedId, null, "마감", "판매자", 200L, "t")))));
+                        new RecommendationResponse.Product(
+                            closedId, null, "마감", "판매자", 200L, "t")))));
     DropMeta fallback = drop(UUID.randomUUID(), UUID.randomUUID());
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
     when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
@@ -1331,14 +1436,15 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "마감그룹",
                     List.of(
-                        new RecommendationResponse.Product(closedId, null, "마감", "판매자", 200L, "t"))),
+                        new RecommendationResponse.Product(
+                            closedId, null, "마감", "판매자", 200L, "t"))),
                 new RecommendationResponse.Section(
                     "열린그룹",
                     List.of(
-                        new RecommendationResponse.Product(openId, null, "열림", "판매자", 100L, "t")))));
+                        new RecommendationResponse.Product(
+                            openId, null, "열림", "판매자", 100L, "t")))));
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
-    when(openDropCache.filterOpenProductIds(List.of(closedId, openId)))
-        .thenReturn(List.of(openId));
+    when(openDropCache.filterOpenProductIds(List.of(closedId, openId))).thenReturn(List.of(openId));
 
     // 배경 재계산(홈 파이프라인)이 LLM에서 블록되도록 해 in-flight 상태를 유지시킨다.
     CountDownLatch llmEntered = new CountDownLatch(1);
@@ -1362,13 +1468,12 @@ class RecommendationServiceTest {
         .when(openDropCache.findByProductId(regenId))
         .thenReturn(Optional.of(drop(regenId, UUID.randomUUID())));
 
-    // 1차 히트: 그룹 소멸 → 즉시 응답(LLM이 아직 안 풀렸어도 반환) + 재계산 예약.
     RecommendationResponse first = service.recommend(null);
     assertThat(first.sections())
         .singleElement()
         .satisfies(section -> assertThat(section.title()).isEqualTo("열린그룹"));
 
-    // 배경 재계산이 LLM까지 진입했는지 확인 — 요청 스레드는 이미 반환됨(블로킹 아님).
+    // 배경 재계산이 LLM까지 왔는지 확인 — 요청 스레드는 이미 반환됐다(블로킹 아님).
     assertThat(llmEntered.await(5, TimeUnit.SECONDS)).isTrue();
 
     // 2차 히트: 같은 키 재계산이 진행 중 → 새 재계산을 시작하지 않는다(dedup).
@@ -1379,7 +1484,6 @@ class RecommendationServiceTest {
 
     releaseLlm.countDown();
 
-    // 재계산은 정확히 한 번(LLM 1회) — dedup 성립.
     verify(llmClient, timeout(5000).times(1)).complete("prompt");
     verify(llmClient, times(1)).complete(any());
   }
@@ -1399,7 +1503,6 @@ class RecommendationServiceTest {
 
     assertThat(service.warmDetail(productId)).isFalse();
 
-    // 신선한 캐시는 파이프라인(상품조회/검색/LLM)을 절대 태우지 않는다.
     verify(productDetailClient, never()).getProduct(any());
     verify(searchClient, never()).recommend(any());
     verify(llmClient, never()).complete(any());
@@ -1412,8 +1515,7 @@ class RecommendationServiceTest {
     UUID candidateId = UUID.randomUUID();
     ProductDetailResponse current = product(currentId, "현재", 100L);
     ProductDetailResponse selected = product(candidateId, "선택", 200L);
-    // 실제 캐시처럼 save가 이후 find에 반영되도록 한다: warmDetail은 저장된 개인화 결과 유무로
-    // true/false를 결정한다.
+    // 실제 캐시처럼 save가 이후 find에 반영되게 한다 — warmDetail은 저장 유무로 결과를 정한다.
     java.util.concurrent.atomic.AtomicReference<RecommendationResponse> saved =
         new java.util.concurrent.atomic.AtomicReference<>();
     when(resultCache.find("rec:detail:" + currentId))
@@ -1427,8 +1529,7 @@ class RecommendationServiceTest {
         .save(eq("rec:detail:" + currentId), any());
     when(productDetailClient.getProduct(currentId)).thenReturn(current);
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(candidateId)));
-    when(openDropCache.filterOpenProductIds(List.of(candidateId)))
-        .thenReturn(List.of(candidateId));
+    when(openDropCache.filterOpenProductIds(List.of(candidateId))).thenReturn(List.of(candidateId));
     when(promptBuilder.build(RecommendationMode.DETAIL, current, List.of(candidate(candidateId))))
         .thenReturn("prompt");
     when(llmClient.complete("prompt")).thenReturn("raw");
@@ -1455,13 +1556,14 @@ class RecommendationServiceTest {
                     "추천",
                     List.of(
                         new RecommendationResponse.Product(null, null, "오염", "판매자", 100L, "t"),
-                        new RecommendationResponse.Product(openId, null, "열림", "판매자", 200L, "t")))));
+                        new RecommendationResponse.Product(
+                            openId, null, "열림", "판매자", 200L, "t")))));
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
     when(openDropCache.filterOpenProductIds(List.of(openId))).thenReturn(List.of(openId));
 
     RecommendationResponse response = service.recommend(null);
 
-    // null id 상품은 걸러지고 열린 상품만 남아 200으로 나간다(NPE→500 회귀 없음).
+    // null id는 걸러지고 열린 상품만 남아 200으로 나간다 — NPE→500 회귀 방지.
     assertThat(response.sections())
         .singleElement()
         .satisfies(
@@ -1482,12 +1584,13 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "추천",
                     List.of(
-                        new RecommendationResponse.Product(openId, null, "열림", "판매자", 100L, "t")))));
+                        new RecommendationResponse.Product(
+                            openId, null, "열림", "판매자", 100L, "t")))));
     when(resultCache.find("rec:" + memberId + ":home")).thenReturn(Optional.of(cached));
     when(openDropCache.filterOpenProductIds(List.of(openId)))
         .thenThrow(new RuntimeException("cache serve boom"));
 
-    // 서빙 중 예외가 컨트롤러로 새지 않고 빈 응답으로 흡수된다(500 회귀 없음).
+    // 서빙 중 예외가 컨트롤러로 새지 않고 빈 응답으로 흡수된다 — 500 회귀 방지.
     assertThat(service.recommend(null).sections()).isEmpty();
   }
 
@@ -1505,14 +1608,16 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Section(
                     "마감그룹",
                     List.of(
-                        new RecommendationResponse.Product(closedId, null, "마감", "판매자", 200L, "t")))));
+                        new RecommendationResponse.Product(
+                            closedId, null, "마감", "판매자", 200L, "t")))));
     RecommendationResponse fresh =
         new RecommendationResponse(
             List.of(
                 new RecommendationResponse.Section(
                     "신선그룹",
                     List.of(
-                        new RecommendationResponse.Product(freshId, null, "신선", "판매자", 100L, "t")))));
+                        new RecommendationResponse.Product(
+                            freshId, null, "신선", "판매자", 100L, "t")))));
     CountDownLatch regenRechecked = new CountDownLatch(1);
     // 1차(요청 스레드 serveCached)는 열화된 캐시, 2차(배경 재계산 재확인)는 신선한 캐시를 본다.
     when(resultCache.find(key))
@@ -1522,17 +1627,14 @@ class RecommendationServiceTest {
               regenRechecked.countDown();
               return Optional.of(fresh);
             });
-    // 요청 스레드: 마감그룹이 통째로 닫힘 → 열화 → 재계산 예약 + 폴백.
     when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
     when(openDropCache.findGeneral(3))
         .thenReturn(List.of(drop(UUID.randomUUID(), UUID.randomUUID())));
-    // 배경 재확인: fresh는 열린 상품을 가져 더 이상 열화가 아니다.
     when(openDropCache.filterOpenProductIds(List.of(freshId))).thenReturn(List.of(freshId));
 
     service.recommend(null);
 
     assertThat(regenRechecked.await(5, TimeUnit.SECONDS)).isTrue();
-    // 재확인에서 신선 판정 → 파이프라인(검색/LLM/저장)을 태우지 않는다.
     verify(searchClient, after(500).never()).recommend(any());
     verify(llmClient, never()).complete(any());
     verify(resultCache, never()).save(any(), any());
@@ -1548,7 +1650,6 @@ class RecommendationServiceTest {
     when(openDropCache.findByCategory(categoryId, 4))
         .thenReturn(List.of(drop(UUID.randomUUID(), categoryId)));
 
-    // 검색 실패 → 카테고리 폴백(저장 없음) → 캐시는 여전히 비어 warmDetail은 false.
     assertThat(service.warmDetail(currentId)).isFalse();
     verify(resultCache, never()).save(any(), any());
   }
@@ -1621,7 +1722,7 @@ class RecommendationServiceTest {
 
     limited.recommend(shedId);
 
-    // 셰딩 시점: 표본은 아직 하나도 완료되지 않았고, 셰딩은 overloaded로만 센다.
+    // 셰딩 시점엔 완료된 표본이 없고, 셰딩은 overloaded로만 센다.
     assertThat(pipelineCount("detail")).isZero();
     assertThat(counterCount("recommendation.overloaded", "source", "request")).isEqualTo(1);
     release.countDown();
@@ -1649,8 +1750,7 @@ class RecommendationServiceTest {
     RecommendationResponse.Product latest = latestProduct();
     when(lastResortProductsCache.get()).thenReturn(List.of(latest));
 
-    assertFallback(
-        saturated.recommend(UUID.randomUUID()), "이런 상품은 어떠세요?", latest.productId());
+    assertFallback(saturated.recommend(UUID.randomUUID()), "이런 상품은 어떠세요?", latest.productId());
     // 셰딩의 목적은 다운스트림 보호다. 인메모리 캐시만 쓰고 상품·검색·LLM은 건드리지 않는다.
     verify(productDetailClient, never()).getProduct(any());
     verify(openDropCache, never()).findByCategory(any(), anyInt());
@@ -1690,7 +1790,6 @@ class RecommendationServiceTest {
             counterCountOrZero(
                 "recommendation.last-resort", "mode", "detail", "reason", "overloaded"))
         .isZero();
-    // 배경 셰딩은 별도 reason과 overloaded 카운터로 여전히 관측된다.
     assertThat(
             counterCount(
                 "recommendation.fallback", "mode", "detail", "reason", "overloaded-background"))
@@ -1700,7 +1799,6 @@ class RecommendationServiceTest {
                 "recommendation.last-resort", "mode", "detail", "reason", "overloaded-background"))
         .isEqualTo(1);
     assertThat(counterCount("recommendation.overloaded", "source", "background")).isEqualTo(1);
-    // 응답 조립은 요청 경로와 동일한 최후 폴백 단계를 그대로 탄다.
     verify(lastResortProductsCache).get();
     assertThat(pipelineCount("detail")).isZero();
   }
@@ -1756,7 +1854,7 @@ class RecommendationServiceTest {
     return meterRegistry.get(name).tags(tags).counter().count();
   }
 
-  /** 아직 만들어지지 않은 시계열도 0으로 본다(증가하지 않았음을 확인할 때). */
+  /** 아직 만들어지지 않은 시계열도 0으로 본다 — 증가하지 않았음을 확인할 때 쓴다. */
   private double counterCountOrZero(String name, String... tags) {
     Counter counter = meterRegistry.find(name).tags(tags).counter();
     return counter == null ? 0 : counter.count();
@@ -1770,7 +1868,8 @@ class RecommendationServiceTest {
     when(seedService.collect()).thenReturn(seeds());
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(id)));
     when(openDropCache.filterOpenProductIds(List.of(id))).thenReturn(List.of(id));
-    when(promptBuilder.build(RecommendationMode.HOME, null, List.of(candidate(id)))).thenReturn("prompt");
+    when(promptBuilder.build(RecommendationMode.HOME, null, List.of(candidate(id))))
+        .thenReturn("prompt");
   }
 
   private List<Seed> seeds() {

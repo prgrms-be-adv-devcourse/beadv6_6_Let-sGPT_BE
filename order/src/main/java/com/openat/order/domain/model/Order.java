@@ -176,6 +176,15 @@ public class Order {
     this.failMessage = null;
   }
 
+  public OrderFailCode getUserVisibleFailCode() {
+    return isRefundRequestUnconfirmed() ? null : failCode;
+  }
+
+  public boolean isRefundRequestUnconfirmed() {
+    return status == OrderStatus.CANCEL_REQUESTED
+        && failCode == OrderFailCode.REFUND_REQUEST_FAILED;
+  }
+
   public boolean complete(UUID paymentId, Instant paidAt) {
     if (status != OrderStatus.PAYMENT_PENDING) {
       return false;

@@ -9,6 +9,14 @@ spring:
     active: local
   application:
     name: payment-service
+  task:
+    scheduling:
+      # @Scheduled 스레드 풀. 미설정 시 1이라 payment의 스케줄드 작업 4개(아웃박스 발행 3초, 아웃박스 지연
+      # 점검 60초, TTL 스캔 60초, PG 대사 일 1회)가 한 스레드를 공유했고, TTL 스캔 한 사이클이 PG 지연으로
+      # 길어지면 그 시간만큼 아웃박스 발행이 통째로 멈췄다(발행 정지 100분 · 미발행 13,210건 적체).
+      # 작업 수만큼 주면 서로를 막지 않는다. 각 작업은 fixedDelay/cron이라 자기 자신과는 겹치지 않는다.
+      pool:
+        size: ${PAYMENT_SCHEDULER_POOL_SIZE:4}
   jpa:
     # OSIV off — 영속성 컨텍스트를 컨트롤러/뷰 구간까지 열어두지 않는다. payment 엔티티는 연관관계가
     # 하나도 없어 지연 로딩이 깨질 경로가 구조적으로 없고, 켜져 있으면 요청이 끝날 때까지 세션이
@@ -56,6 +64,13 @@ jdbc:
 payment:
   encryption:
     key: ${PAYMENT_FIELD_ENCRYPTION_KEY} # pgPaymentKey/pgRefundKey AES-GCM 키(Base64, 32바이트) — .env/docker-compose 쪽 값 추가 필요(dev-infra)
+  # TTL 스캐너 사이클 보호값 — 한 사이클이 무한정 길어지지 않게 조회 건수와 시간 양쪽에 상한을 둔다.
+  # 넘긴 건은 상태를 건드리지 않은 채 다음 주기로 이월되므로 유실이 없다(오래된 순 조회라 굶지도 않는다).
+  ttl-scanner:
+    max-per-cycle: ${PAYMENT_TTL_SCANNER_MAX_PER_CYCLE:100} # 종류별(결제/지갑충전/환불) 사이클당 조회 상한
+    # 사이클 시간 예산. 종류(3) 균등 분할해 도메인당 독립 예산으로 부여한다(30초면 종류당 10초) — 선행 도메인이
+    # 예산을 독식해 뒤 도메인이 굶는 것을 막는다. 도메인이 자기 몫을 넘기면 남은 건은 다음 주기로 이월.
+    cycle-budget-seconds: ${PAYMENT_TTL_SCANNER_CYCLE_BUDGET_SECONDS:30}
 pg:
   secret-key: ${PG_SECRET_KEY} # 토스 API Basic Auth용 시크릿 키(TossClientConfig) — 웹훅 서명검증은 2026-06-24 제거됨
   # 부하테스트 전용 오버라이드. 프로덕션은 미설정(기본값 = 실 토스)이 정상이며 ENV_SECRETS에 넣지 않는다.
