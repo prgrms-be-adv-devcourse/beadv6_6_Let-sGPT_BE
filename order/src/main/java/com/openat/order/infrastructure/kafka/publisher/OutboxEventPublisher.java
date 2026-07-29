@@ -64,8 +64,14 @@ public class OutboxEventPublisher {
         continue;
       }
       try {
-        futures.put(
-            event.getId(), kafkaTemplate.send(event.getTopic(), orderId, event.getPayload()));
+        // 적재 시점에 저장한 traceparent로 문맥을 복원한 스코프 안에서 send를 호출한다. 그래야
+        // KafkaTemplate Observation이 만드는 producer 스팬이 폴링 tick이 아니라 원 요청 트레이스의
+        // 자식이 되고, 레코드에 주입되는 traceparent 헤더도 원 요청 것으로 나간다. 스코프는 send
+        // 반환까지만 열려 있으면 되고 이후 future 대기는 문맥과 무관하다.
+        try (var ignored = OutboxTracePropagation.restore(event.getTraceParent())) {
+          futures.put(
+              event.getId(), kafkaTemplate.send(event.getTopic(), orderId, event.getPayload()));
+        }
       } catch (RuntimeException exception) {
         // Synchronous send() failure (buffer full, max.block.ms exceeded, serialization,
         // producer closed) isolates to this event: leave it PENDING for the next poll and

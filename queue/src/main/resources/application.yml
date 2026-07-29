@@ -26,6 +26,11 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         spring.json.trusted.packages: "*"
+    listener:
+      # StockAdjustmentConsumer는 @RetryableTopic + @KafkaListener로 자동구성 리스너 컨테이너
+      # 팩토리를 쓰므로 이 프로퍼티만으로 Observation이 켜져 레코드에 실려온 traceparent를 읽고
+      # 소비 스팬을 producer 트레이스의 자식으로 잇는다(retry/dlt 재발행 흐름도 트레이스에 드러난다).
+      observation-enabled: true
 
 # WebFlux+SSE 전환분: springdoc-openapi-starter-webmvc-ui(루트 build.gradle.kts 전역 적용)는
 # 서블릿 DispatcherServlet 전제라 reactive 모드에서 기동 실패 위험이 있어 그냥 끈다.
@@ -57,6 +62,10 @@ management:
         "[http.server.requests]": 5ms
       maximum-expected-value:
         "[http.server.requests]": 10s
+  tracing:
+    export:
+      otlp:
+        enabled: false   # 로컬/compose 기본 off — Tempo 없으면 export 실패가 반복 로깅됨(k8s ConfigMap에서 true로 override)
 
 # 대기열 튜닝 파라미터 - 전부 외부 설정으로 노출(하드코딩 금지), 재배포 없이 env로 조정 가능.
 # 정적 hot-drops 목록 없음 - 모든 드롭에 균일 적용(WaitingQueueRepository.activeDropIds()로 동적 발견).

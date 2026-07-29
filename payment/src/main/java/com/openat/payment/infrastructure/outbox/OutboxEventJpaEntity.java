@@ -34,6 +34,11 @@ public class OutboxEventJpaEntity {
     @Column(nullable = false, columnDefinition = "text")
     private String payload;
 
+    // 적재 시점의 원 요청 W3C traceparent. 폴링 발행 시 이 값으로 문맥을 복원해 producer 스팬을
+    // 원 요청 트레이스에 잇는다. nullable — 트레이스 비활성 경로/기존 행은 종전대로 발행된다.
+    @Column(name = "trace_parent", length = 64)
+    private String traceParent;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private Status status;
@@ -45,11 +50,17 @@ public class OutboxEventJpaEntity {
     private LocalDateTime publishedAt;
 
     public OutboxEventJpaEntity(UUID id, String aggregateType, UUID aggregateId, String topic, String payload) {
+        this(id, aggregateType, aggregateId, topic, payload, null);
+    }
+
+    public OutboxEventJpaEntity(UUID id, String aggregateType, UUID aggregateId, String topic, String payload,
+            String traceParent) {
         this.id = id;
         this.aggregateType = aggregateType;
         this.aggregateId = aggregateId;
         this.topic = topic;
         this.payload = payload;
+        this.traceParent = traceParent;
         this.status = Status.PENDING;
         this.createdAt = LocalDateTime.now();
     }

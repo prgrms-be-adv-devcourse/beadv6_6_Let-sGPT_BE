@@ -2,8 +2,10 @@ package com.openat.recommendation.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -59,10 +61,10 @@ class RecommendationSeedServiceTest {
         .thenAnswer(
             invocation ->
                 seedWeightsCache
-                    .find(invocation.getArgument(0))
-                    .map(weights -> new CachedWeights(weights, "cached-json")));
+                    .find(invocation.getArgument(0, UUID.class))
+                    .map(weights -> new CachedWeights(weights, "cached-json", 0L)));
     lenient()
-        .when(seedWeightsCache.saveIfUnchanged(any(), any(), any(), any()))
+        .when(seedWeightsCache.saveIfUnchanged(any(), any(), any(), any(), anyLong()))
         .thenReturn(true);
   }
 
@@ -314,7 +316,7 @@ class RecommendationSeedServiceTest {
     when(wishlistSignalClient.getWishlistProductIds(memberId))
         .thenReturn(List.of(UUID.randomUUID()));
     when(seedWeightsCache.findSnapshot(memberId)).thenReturn(Optional.empty());
-    when(seedWeightsCache.saveIfUnchanged(eq(memberId), any(), any(), eq(PARTIAL_TTL)))
+    when(seedWeightsCache.saveIfUnchanged(eq(memberId), any(), any(), eq(PARTIAL_TTL), anyLong()))
         .thenReturn(false);
     when(seedWeightsCache.find(memberId))
         .thenReturn(Optional.of(SeedWeights.full(concurrentlySaved, Instant.now())));
@@ -324,6 +326,29 @@ class RecommendationSeedServiceTest {
     assertThat(result).isEqualTo(concurrentlySaved);
     verify(seedWeightsCache, never()).save(eq(memberId), any(), any());
     assertThat(salvageCounter("superseded")).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("스냅샷 직전에 들어온 완전 엔트리는 부분 저장보다 우선한다")
+  void refreshWeightsCache_whenSnapshotAlreadyContainsNewerCompleteEntry_keepsIt() {
+    UUID memberId = UUID.randomUUID();
+    List<Seed> completeSeeds = List.of(new Seed(UUID.randomUUID(), 0.5, true));
+    when(orderSignalClient.getPurchaseSignals(memberId)).thenThrow(new RuntimeException("order"));
+    when(wishlistSignalClient.getWishlistProductIds(memberId)).thenReturn(List.of(UUID.randomUUID()));
+    doReturn(
+            Optional.of(
+                new CachedWeights(
+                    SeedWeights.full(completeSeeds, Instant.now().minusSeconds(1)), "complete-json", 1L)))
+        .when(seedWeightsCache)
+        .findSnapshot(memberId);
+
+    assertThat(service().refreshWeightsCache(memberId)).isEqualTo(completeSeeds);
+
+    verify(seedWeightsCache, never()).saveIfUnchanged(any(), any(), any(), any(), anyLong());
+    assertThat(salvageCounter("superseded")).isEqualTo(1);
+    assertThat(salvageCounter("none")).isZero();
+    assertThat(salvageCounter("merged")).isZero();
+    assertThat(salvageCounter("expired")).isZero();
   }
 
   @Test
@@ -404,7 +429,8 @@ class RecommendationSeedServiceTest {
     if (expectedTtl.equals(SeedWeightsCache.FULL_TTL)) {
       verify(seedWeightsCache).save(any(), captor.capture(), eq(expectedTtl));
     } else {
-      verify(seedWeightsCache).saveIfUnchanged(any(), any(), captor.capture(), eq(expectedTtl));
+      verify(seedWeightsCache)
+          .saveIfUnchanged(any(), any(), captor.capture(), eq(expectedTtl), anyLong());
     }
     return captor.getValue();
   }

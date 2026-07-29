@@ -61,15 +61,17 @@ class RecommendationMetricsTest {
   }
 
   @Test
-  @DisplayName("폴백·과부하 카운터는 reason 태그와 함께 노출된다")
+  @DisplayName("폴백·과부하 카운터는 원천 태그와 함께 노출된다")
   void fallbackAndOverloaded_areExposed() {
     metrics.fallback(RecommendationMode.HOME, "llm-failed");
-    metrics.overloaded();
+    metrics.overloaded(true);
+    metrics.overloaded(false);
 
     String scrape = registry.scrape();
 
     assertThat(scrape)
         .contains("recommendation_fallback_total{mode=\"home\",reason=\"llm-failed\"} 1.0")
-        .contains("recommendation_overloaded_total 1.0");
+        .contains("recommendation_overloaded_total{source=\"request\"} 1.0")
+        .contains("recommendation_overloaded_total{source=\"background\"} 1.0");
   }
 }

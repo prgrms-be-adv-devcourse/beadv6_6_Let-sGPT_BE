@@ -126,7 +126,7 @@ com.openat
 - 외부 인증·인가는 게이트웨이가 담당한다. product의 `config.SecurityConfig`는 `csrf` off + `anyRequest().permitAll()`을 유지하며, 서비스 직접 포트는 외부에 노출하지 않는다.
 - 게이트웨이는 클라이언트가 보낸 `X-User-Id`·`X-User-Roles`·`X-Seller-Id`를 모두 제거한 뒤 검증된 토큰에서 신뢰 헤더를 다시 만든다.
 - 상품·드롭 쓰기 경로는 `typ=scoped`, `aud=openat-product` 판매자 JWT만 허용한다. product의 `CurrentUserArgumentResolver`는 `X-Seller-Id`가 없거나 UUID 형식이 아니면 `UNAUTHENTICATED(401)`로 거절한다.
-- 카테고리 GET은 공개다. 카테고리 POST/PATCH/DELETE는 현재 Gateway의 catch-all 정책에 따라 일반 access JWT만 요구하고 역할 제한은 없다. ADMIN 전용이 제품 의도라면 Gateway 정책을 별도로 보강해야 한다.
+- 카테고리 GET은 공개다. 카테고리 POST/PATCH/DELETE는 Gateway에서 ADMIN 역할만 허용한다.
 
 ---
 

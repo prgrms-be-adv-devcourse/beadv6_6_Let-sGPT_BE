@@ -442,7 +442,7 @@ public class RecommendationService {
   private RecommendationResponse guardedPipeline(
       RecommendationMode mode, UUID productId, Optional<String> cacheKey, boolean measured) {
     if (!pipelineLimiter.tryAcquire()) {
-      metrics.overloaded();
+      metrics.overloaded(measured);
       log.warn("recommendation pipeline overloaded, serving fallback: home={}", mode.isHome());
       // 배경 경로(프리배치·재계산)의 셰딩은 사용자가 받은 폴백이 아니므로 reason을 나눠 센다.
       // reason=overloaded는 요청 경로만 남아 "과부하로 폴백을 받은 사용자 수"로 읽을 수 있다.
