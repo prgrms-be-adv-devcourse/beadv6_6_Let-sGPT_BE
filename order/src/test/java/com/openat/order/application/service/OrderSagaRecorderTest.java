@@ -41,15 +41,12 @@ class OrderSagaRecorderTest {
   @Test
   @DisplayName("주문 생성 시 사가 상태를 ORDER_CREATED로 생성하고 주문에 sagaId를 채운다")
   void recordOrderCreated_createsSagaStateAndAssignsSagaId() {
-    // given
     Order order = createOrder();
     UUID orderId = UUID.randomUUID();
     ReflectionTestUtils.setField(order, "id", orderId);
 
-    // when
     orderSagaRecorder.recordOrderCreated(order);
 
-    // then
     assertThat(order.getSagaId()).isEqualTo(orderId.toString());
     ArgumentCaptor<OrderSagaState> captor = ArgumentCaptor.forClass(OrderSagaState.class);
     verify(orderSagaStateRepository).save(captor.capture());
@@ -61,37 +58,30 @@ class OrderSagaRecorderTest {
   @Test
   @DisplayName("재고 차감 성공 후 사가 단계를 STOCK_DECREASED로 갱신한다")
   void recordStockDecreased_whenSagaExists_advancesStep() {
-    // given
     UUID orderId = UUID.randomUUID();
     OrderSagaState sagaState = existingSagaState(orderId);
     when(orderSagaStateRepository.findByOrderId(orderId)).thenReturn(Optional.of(sagaState));
 
-    // when
     orderSagaRecorder.recordStockDecreased(orderId);
 
-    // then
     assertThat(sagaState.getCurrentStep()).isEqualTo(OrderSagaStep.STOCK_DECREASED);
   }
 
   @Test
   @DisplayName("결제 완료 처리 시 사가 단계를 COMPLETED로 갱신한다")
   void recordCompleted_whenSagaExists_advancesStep() {
-    // given
     UUID orderId = UUID.randomUUID();
     OrderSagaState sagaState = existingSagaState(orderId);
     when(orderSagaStateRepository.findByOrderId(orderId)).thenReturn(Optional.of(sagaState));
 
-    // when
     orderSagaRecorder.recordCompleted(orderId);
 
-    // then
     assertThat(sagaState.getCurrentStep()).isEqualTo(OrderSagaStep.COMPLETED);
   }
 
   @Test
   @DisplayName("취소로 보상이 시작되면 사가 단계를 COMPENSATING으로, 롤백 성공 후 COMPENSATION_COMPLETED로 갱신한다")
   void compensationFlow_advancesThroughCompensatingThenCompleted() {
-    // given
     UUID orderId = UUID.randomUUID();
     OrderSagaState sagaState = existingSagaState(orderId);
     when(orderSagaStateRepository.findByOrderId(orderId)).thenReturn(Optional.of(sagaState));
@@ -103,10 +93,8 @@ class OrderSagaRecorderTest {
         .when(orderSagaStateRepository)
         .enterCompensatingUnlessCompleted(eq(orderId), any(Instant.class));
 
-    // when
     orderSagaRecorder.recordCompensating(orderId);
 
-    // then
     assertThat(sagaState.getCurrentStep()).isEqualTo(OrderSagaStep.COMPENSATING);
     assertThat(sagaState.getCompensatingSince()).isNotNull();
     Instant firstCompensatingSince = sagaState.getCompensatingSince();
@@ -114,21 +102,17 @@ class OrderSagaRecorderTest {
     orderSagaRecorder.recordCompensating(orderId);
     assertThat(sagaState.getCompensatingSince()).isEqualTo(firstCompensatingSince);
 
-    // when
     orderSagaRecorder.recordCompensationCompleted(orderId);
 
-    // then
     assertThat(sagaState.getCurrentStep()).isEqualTo(OrderSagaStep.COMPENSATION_COMPLETED);
   }
 
   @Test
   @DisplayName("사가 row가 없는 레거시 주문 이벤트는 예외 없이 스킵하고 정상 진행한다")
   void advance_whenSagaStateMissing_skipsWithoutException() {
-    // given
     UUID orderId = UUID.randomUUID();
     when(orderSagaStateRepository.findByOrderId(orderId)).thenReturn(Optional.empty());
 
-    // when & then
     assertThatCode(
             () -> {
               orderSagaRecorder.recordStockDecreased(orderId);
@@ -169,8 +153,7 @@ class OrderSagaRecorderTest {
     UUID orderId = UUID.randomUUID();
     OrderSagaState sagaState = existingSagaState(orderId);
     sagaState.advanceTo(OrderSagaStep.COMPENSATION_COMPLETED);
-    when(orderSagaStateRepository.enterCompensatingUnlessCompleted(
-            eq(orderId), any(Instant.class)))
+    when(orderSagaStateRepository.enterCompensatingUnlessCompleted(eq(orderId), any(Instant.class)))
         .thenReturn(0);
 
     orderSagaRecorder.recordCompensating(orderId);

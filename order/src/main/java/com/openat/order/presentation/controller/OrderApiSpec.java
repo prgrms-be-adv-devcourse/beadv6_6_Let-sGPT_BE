@@ -65,7 +65,9 @@ public interface OrderApiSpec {
   @Operation(summary = "주문 취소", description = "결제 대기 주문만 취소한다. 결제 완료 주문은 환불 요청 API를 사용한다.")
   @ApiResponses({
     @ApiResponse(responseCode = "200", description = "요청 성공"),
-    @ApiResponse(responseCode = "409", description = "ORDER_PAYMENT_IN_PROGRESS — 결제 확인 중, 잠시 후 재시도 필요")
+    @ApiResponse(
+        responseCode = "409",
+        description = "ORDER_PAYMENT_IN_PROGRESS — 결제 확인 중, 잠시 후 재시도 필요")
   })
   ResponseEntity<OrderCancelResponse> cancelOrder(
       @CurrentUser UserContext userContext, UUID orderId);

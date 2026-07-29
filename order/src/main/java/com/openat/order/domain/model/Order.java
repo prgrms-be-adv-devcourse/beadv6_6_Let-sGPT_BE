@@ -176,10 +176,6 @@ public class Order {
     this.failMessage = null;
   }
 
-  /**
-   * 환불 접수가 확정되지 않은 CANCEL_REQUESTED의 REFUND_REQUEST_FAILED는 운영 보상(환불 재트리거)이 읽는 내부 표식이다. 주문은 여전히 환불
-   * 진행 중이므로 사용자에게 실패로 보여선 안 된다.
-   */
   public OrderFailCode getUserVisibleFailCode() {
     return isRefundRequestUnconfirmed() ? null : failCode;
   }

@@ -27,9 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class OrderService implements OrderUseCase {
 
-  // 목록 정렬은 서버가 고정한다. createdAt이 같은 주문끼리 순서가 흔들리면 LIMIT/OFFSET
-  // 페이지 경계에서 같은 주문이 중복되거나 누락되므로, PK이자 시간순 UUID인 id를
-  // 타이브레이커로 붙여 전순서를 만든다.
+  // createdAt 단독 정렬은 페이지 경계 중복·누락 — id 타이브레이커 필수
   private static final Sort MY_ORDERS_SORT = Sort.by(Sort.Direction.DESC, "createdAt", "id");
 
   private final OrderRepository orderRepository;
@@ -102,7 +100,6 @@ public class OrderService implements OrderUseCase {
         .toList();
   }
 
-  /** 클라이언트가 보낸 sort는 무시한다 — 부분 정렬 키만 오면 다시 페이지 경계가 깨진다. */
   private static Pageable fixSort(Pageable pageable) {
     if (pageable.isUnpaged()) {
       return Pageable.unpaged(MY_ORDERS_SORT);

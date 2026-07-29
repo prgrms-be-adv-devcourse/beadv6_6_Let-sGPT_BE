@@ -63,9 +63,7 @@ class OrderServiceTest {
     when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
 
     BusinessException exception =
-        assertThrows(
-            BusinessException.class,
-            () -> orderService.getPaymentValidationInfo(orderId));
+        assertThrows(BusinessException.class, () -> orderService.getPaymentValidationInfo(orderId));
 
     assertThat(exception.getErrorCode()).isEqualTo(OrderErrorCode.NOT_FOUND);
   }

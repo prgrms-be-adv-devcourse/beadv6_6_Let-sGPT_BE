@@ -73,7 +73,7 @@ public class OrderCreationService {
       decreaseStock(order);
     } catch (ProductPortException exception) {
       if (isBusinessFailure(exception.getFailCode())) {
-        recordFailureAndThrow(order, exception, requestedAt, false);
+        recordFailureAndThrow(order, exception, requestedAt);
       }
 
       orderFailureRecorder.recordCreateFailure(
@@ -155,20 +155,15 @@ public class OrderCreationService {
       if (!isBusinessFailure(exception.getFailCode())) {
         throw new BusinessException(OrderErrorCode.PORT_ERROR, exception.getMessage(), exception);
       }
-      recordFailureAndThrow(order, exception, Instant.now(), false);
+      recordFailureAndThrow(order, exception, Instant.now());
       throw new IllegalStateException();
     }
   }
 
   private void recordFailureAndThrow(
-      Order order, ProductPortException exception, Instant failedAt, boolean compensating) {
-    if (compensating) {
-      orderFailureRecorder.recordCreateFailure(
-          order.getId(), exception.getFailCode(), exception.getMessage(), failedAt, true);
-    } else {
-      orderFailureRecorder.recordCreateFailure(
-          order.getId(), exception.getFailCode(), exception.getMessage(), failedAt);
-    }
+      Order order, ProductPortException exception, Instant failedAt) {
+    orderFailureRecorder.recordCreateFailure(
+        order.getId(), exception.getFailCode(), exception.getMessage(), failedAt);
     throw new BusinessException(
         toOrderErrorCode(exception.getFailCode()), exception.getMessage(), exception);
   }

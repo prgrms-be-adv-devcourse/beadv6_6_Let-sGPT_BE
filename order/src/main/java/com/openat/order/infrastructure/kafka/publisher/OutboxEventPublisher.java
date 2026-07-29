@@ -29,8 +29,7 @@ public class OutboxEventPublisher {
   private final ObjectMapper objectMapper;
   private final MeterRegistry meterRegistry;
 
-  // Kept comfortably above delivery.timeout.ms (10s) so a slow send loop cannot push later
-  // futures past the wait window and produce sent-but-marked-PENDING false partials.
+  // delivery.timeout.ms(10s)보다 커야 한다 — 좁히면 뒤 future가 대기 창 밖으로 밀려 발행됐는데 PENDING으로 남는다
   private final long batchTimeoutSeconds;
 
   public OutboxEventPublisher(
@@ -67,9 +66,7 @@ public class OutboxEventPublisher {
         futures.put(
             event.getId(), kafkaTemplate.send(event.getTopic(), orderId, event.getPayload()));
       } catch (RuntimeException exception) {
-        // Synchronous send() failure (buffer full, max.block.ms exceeded, serialization,
-        // producer closed) isolates to this event: leave it PENDING for the next poll and
-        // keep firing the rest so their futures are still awaited and marked.
+        // 버퍼 풀·max.block.ms 초과·직렬화 실패 같은 동기 send 실패는 이 이벤트에만 국한 — PENDING으로 두고 루프를 계속한다
         log.error(
             "Outbox event synchronous send failed; left PENDING for next poll. "
                 + "outboxEventId={}, topic={}",
@@ -86,7 +83,8 @@ public class OutboxEventPublisher {
     awaitBatch(futures.values());
 
     List<UUID> succeeded = new ArrayList<>();
-    for (Map.Entry<UUID, CompletableFuture<SendResult<String, String>>> entry : futures.entrySet()) {
+    for (Map.Entry<UUID, CompletableFuture<SendResult<String, String>>> entry :
+        futures.entrySet()) {
       CompletableFuture<SendResult<String, String>> future = entry.getValue();
       if (future.isDone() && !future.isCancelled() && !future.isCompletedExceptionally()) {
         succeeded.add(entry.getKey());
@@ -112,8 +110,7 @@ public class OutboxEventPublisher {
           succeeded.size(),
           updated);
     }
-    log.info(
-        "Outbox batch published. successCount={}, updatedRows={}", succeeded.size(), updated);
+    log.info("Outbox batch published. successCount={}, updatedRows={}", succeeded.size(), updated);
   }
 
   private void awaitBatch(

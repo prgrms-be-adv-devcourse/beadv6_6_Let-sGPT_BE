@@ -54,7 +54,6 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("결제 성공 이벤트로 주문이 결제 완료 상태가 된다")
   void paymentComplete_changesOrderToCompleted() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     UUID orderId = order.getId();
     UUID paymentId = UUID.randomUUID();
@@ -63,10 +62,8 @@ class OrderEventServiceTest {
 
     PaymentCompletedCommand command = new PaymentCompletedCommand(orderId, paymentId, 10_000L);
 
-    // when
     withTransactionSynchronization(() -> orderEventService.handlePaymentCompleted(command));
 
-    // then
     assertThat(order.getStatus()).isEqualTo(OrderStatus.COMPLETED);
     assertThat(order.getPaymentId()).isEqualTo(paymentId);
     ArgumentCaptor<String> sourceEventKey = ArgumentCaptor.forClass(String.class);
@@ -85,7 +82,6 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("이미 COMPLETED 상태면 결제 성공 이벤트는 중복 처리하지 않는다")
   void paymentComplete_whenAlreadyCompleted_noHistory() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     UUID paymentId = UUID.randomUUID();
     order.complete(paymentId, Instant.parse("2026-06-26T00:00:01Z"));
@@ -96,10 +92,8 @@ class OrderEventServiceTest {
     PaymentCompletedCommand command =
         new PaymentCompletedCommand(orderId, UUID.randomUUID(), 10_000L);
 
-    // when
     orderEventService.handlePaymentCompleted(command);
 
-    // then
     verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
     verify(orderSagaRecorder, never()).recordCompleted(any());
     verify(orderCompletedOutboxPort, never()).save(any());
@@ -137,7 +131,6 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("결제 실패 이벤트는 주문을 닫지 않고 시도 실패 이력만 남긴다")
   void paymentFailed_recordsAttemptFailureWithoutClosingOrder() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     UUID orderId = order.getId();
 
@@ -146,10 +139,8 @@ class OrderEventServiceTest {
     PaymentFailedCommand command =
         new PaymentFailedCommand(orderId, UUID.randomUUID(), "PG_TIMEOUT");
 
-    // when
     orderEventService.handlePaymentFailed(command);
 
-    // then
     assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
     assertThat(order.getFailCode()).isNull();
     ArgumentCaptor<Order> recordedOrder = ArgumentCaptor.forClass(Order.class);
@@ -166,7 +157,6 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("환불 완료 이벤트는 주문을 환불 완료로 반영한다")
   void refundCompleted_changesToRefunded() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
     order.requestRefund(Instant.parse("2026-06-26T00:00:01Z"));
@@ -177,10 +167,8 @@ class OrderEventServiceTest {
     RefundCompletedCommand command =
         new RefundCompletedCommand(orderId, UUID.randomUUID(), 10_000L, UUID.randomUUID());
 
-    // when
     orderEventService.handleRefundCompleted(command);
 
-    // then
     assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
     verify(orderHistoryRecorder).record(any(), any(), any(), any(), any());
     verify(applicationEventPublisher)
@@ -206,7 +194,6 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("환불 실패 이벤트는 주문을 환불 실패 상태로 반영한다")
   void refundFailed_changesToRefundFailed() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
     order.requestRefund(Instant.parse("2026-06-26T00:00:02Z"));
@@ -217,10 +204,8 @@ class OrderEventServiceTest {
     RefundFailedCommand command =
         new RefundFailedCommand(orderId, UUID.randomUUID(), UUID.randomUUID(), "PG_REFUND_FAILED");
 
-    // when
     orderEventService.handleRefundFailed(command);
 
-    // then
     assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUND_FAILED);
     assertThat(order.getFailCode()).isEqualTo(OrderFailCode.PG_ERROR);
     verify(orderHistoryRecorder).record(any(), any(), any(), any(), any());
@@ -229,7 +214,6 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("결제 성공 이벤트 금액이 주문 금액과 다르면 주문을 완료하지 않는다")
   void paymentComplete_whenAmountMismatch_throwInvalidInput() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     UUID orderId = order.getId();
 
@@ -238,12 +222,10 @@ class OrderEventServiceTest {
     PaymentCompletedCommand command =
         new PaymentCompletedCommand(orderId, UUID.randomUUID(), 9_999L);
 
-    // when
     BusinessException ex =
         assertThrows(
             BusinessException.class, () -> orderEventService.handlePaymentCompleted(command));
 
-    // then
     assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
     assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
     verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
@@ -252,7 +234,6 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("환불 완료 이벤트 금액이 주문 금액과 다르면 환불 완료로 전이하지 않는다")
   void refundCompleted_whenAmountMismatch_throwInvalidInput() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
     order.requestRefund(Instant.parse("2026-06-26T00:00:02Z"));
@@ -263,12 +244,10 @@ class OrderEventServiceTest {
     RefundCompletedCommand command =
         new RefundCompletedCommand(orderId, UUID.randomUUID(), 10_001L, UUID.randomUUID());
 
-    // when
     BusinessException ex =
         assertThrows(
             BusinessException.class, () -> orderEventService.handleRefundCompleted(command));
 
-    // then
     assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
     verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
@@ -277,13 +256,11 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("환불 진행 중 주문의 부분환불 이벤트는 거부하고 보상을 시작하지 않는다")
   void refundCompleted_whenPendingPartialRefund_rejectsWithoutCompensation() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
     order.requestRefund(Instant.parse("2026-06-26T00:00:02Z"));
     when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
 
-    // when
     BusinessException ex =
         assertThrows(
             BusinessException.class,
@@ -292,7 +269,6 @@ class OrderEventServiceTest {
                     new RefundCompletedCommand(
                         order.getId(), UUID.randomUUID(), 4_000L, UUID.randomUUID())));
 
-    // then
     assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
     verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
@@ -303,12 +279,10 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("결제 완료 주문의 직행 부분환불 이벤트는 거부한다")
   void refundCompleted_whenDirectPartialRefund_rejects() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
     when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
 
-    // when
     BusinessException ex =
         assertThrows(
             BusinessException.class,
@@ -317,7 +291,6 @@ class OrderEventServiceTest {
                     new RefundCompletedCommand(
                         order.getId(), UUID.randomUUID(), 4_000L, UUID.randomUUID())));
 
-    // then
     assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_INPUT);
     assertThat(order.getStatus()).isEqualTo(OrderStatus.COMPLETED);
     verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
@@ -352,16 +325,13 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("결제 완료 주문의 직행 전액환불 이벤트는 환불 완료 처리한다")
   void refundCompleted_whenDirectFullRefund_changesToRefunded() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
     when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
 
-    // when
     orderEventService.handleRefundCompleted(
         new RefundCompletedCommand(order.getId(), UUID.randomUUID(), 10_000L, UUID.randomUUID()));
 
-    // then
     assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
     verify(orderSagaRecorder).recordCompensating(order.getId());
     verify(applicationEventPublisher).publishEvent(any(RefundStockRestoreRequested.class));
@@ -370,27 +340,22 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("이미 보상 완료된 주문은 환불 완료 시 재고복구를 다시 요청하지 않는다")
   void refundCompleted_whenCompensationAlreadyCompleted_skipsStockRestore() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
     when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
     when(orderSagaRecorder.isCompensationCompleted(order.getId())).thenReturn(true);
 
-    // when
     orderEventService.handleRefundCompleted(
         new RefundCompletedCommand(order.getId(), UUID.randomUUID(), 10_000L, UUID.randomUUID()));
 
-    // then
     assertThat(order.getStatus()).isEqualTo(OrderStatus.REFUNDED);
     verify(orderSagaRecorder, never()).recordCompensating(any());
-    verify(applicationEventPublisher, never())
-        .publishEvent(any(RefundStockRestoreRequested.class));
+    verify(applicationEventPublisher, never()).publishEvent(any(RefundStockRestoreRequested.class));
   }
 
   @Test
   @DisplayName("결제 완료 상태의 주문에 결제 실패 이벤트가 오면 무시한다")
   void paymentFailed_whenAlreadyCompleted_ignoreStaleFailure() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
     UUID orderId = order.getId();
@@ -400,10 +365,8 @@ class OrderEventServiceTest {
     PaymentFailedCommand command =
         new PaymentFailedCommand(orderId, UUID.randomUUID(), "PG_TIMEOUT");
 
-    // when
     orderEventService.handlePaymentFailed(command);
 
-    // then
     assertThat(order.getStatus()).isEqualTo(OrderStatus.COMPLETED);
     verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
   }
@@ -411,7 +374,6 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("이미 REFUND_FAILED 상태면 환불 실패 이벤트는 중복 처리하지 않는다")
   void refundFailed_whenAlreadyRefundFailed_noHistory() {
-    // given
     Order order = createOrder(Instant.parse("2026-06-26T00:00:00Z"));
     order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:00:01Z"));
     order.requestRefund(Instant.parse("2026-06-26T00:00:02Z"));
@@ -423,10 +385,8 @@ class OrderEventServiceTest {
     RefundFailedCommand command =
         new RefundFailedCommand(orderId, UUID.randomUUID(), UUID.randomUUID(), "PG_REFUND_FAILED");
 
-    // when
     orderEventService.handleRefundFailed(command);
 
-    // then
     verify(orderHistoryRecorder, never()).record(any(), any(), any(), any(), any());
   }
 
@@ -502,19 +462,16 @@ class OrderEventServiceTest {
   @Test
   @DisplayName("주문이 없으면 주문 조회 이벤트는 예외가 발생한다")
   void event_whenOrderNotFound_throwNotFound() {
-    // given
     UUID orderId = UUID.randomUUID();
     when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
 
     PaymentCompletedCommand command =
         new PaymentCompletedCommand(orderId, UUID.randomUUID(), 10_000L);
 
-    // when
     var ex =
         assertThrows(
             BusinessException.class, () -> orderEventService.handlePaymentCompleted(command));
 
-    // then
     assertThat(ex.getErrorCode()).isEqualTo(OrderErrorCode.NOT_FOUND);
   }
 

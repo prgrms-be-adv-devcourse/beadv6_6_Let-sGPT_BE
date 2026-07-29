@@ -35,8 +35,7 @@ public class KafkaStringConfig {
     props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
     props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
     props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-    // Bounded producer timeouts: all three together to satisfy Kafka's constraint
-    // delivery.timeout.ms >= linger.ms + request.timeout.ms (otherwise the app fails to boot).
+    // 셋을 함께 유지 — delivery.timeout.ms >= linger.ms + request.timeout.ms 위반 시 부팅 실패
     props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5_000);
     props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5_000);
     props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 10_000);
@@ -50,8 +49,7 @@ public class KafkaStringConfig {
       ProducerFactory<String, String> producerFactory,
       @Value("${spring.kafka.template.observation-enabled:false}") boolean observationEnabled) {
     KafkaTemplate<String, String> template = new KafkaTemplate<>(producerFactory);
-    // spring.kafka.template.observation-enabled는 Boot가 자동설정한 KafkaTemplate에만 먹는다.
-    // 이 템플릿은 직접 등록한 빈이라 같은 프로퍼티를 읽어 수동으로 적용해야 producer 스팬이 생긴다.
+    // observation-enabled는 Boot 자동설정 KafkaTemplate에만 먹는다 — 직접 등록한 이 빈은 수동 적용해야 producer 스팬이 생긴다
     template.setObservationEnabled(observationEnabled);
     return template;
   }
@@ -69,8 +67,7 @@ public class KafkaStringConfig {
     props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
     props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
     DefaultKafkaConsumerFactory<String, String> factory = new DefaultKafkaConsumerFactory<>(props);
-    // producer와 대칭. 컨슈머 랙·페치 지표(kafka_consumer_fetch_manager_records_lag 등)를
-    // 같은 이유(직접 등록한 팩토리)로 수동 부착한다.
+    // Boot 자동설정 ConsumerFactory가 붙여주던 리스너 — 직접 등록한 팩토리라 수동 부착해야 컨슈머 랙·페치 지표가 나온다
     factory.addListener(new MicrometerConsumerListener<>(meterRegistry));
     return factory;
   }

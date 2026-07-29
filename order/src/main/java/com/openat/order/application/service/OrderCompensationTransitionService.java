@@ -34,7 +34,6 @@ public class OrderCompensationTransitionService {
   @Transactional
   public int prepareRefundRetry(UUID orderId) {
     Order order = getOrder(orderId);
-    // 사용자에게 감춘 접수 미확정 표식이 곧 운영 재트리거 대상 — 같은 판정을 도메인 한 곳에서 읽는다.
     boolean retryable =
         order.getStatus() == OrderStatus.REFUND_FAILED || order.isRefundRequestUnconfirmed();
     if (!retryable) {
