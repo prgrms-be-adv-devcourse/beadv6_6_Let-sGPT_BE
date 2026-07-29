@@ -141,6 +141,52 @@ class WaitingQueueRedisRepositoryTest {
     }
 
     @Test
+    @DisplayName(
+        "같은 사용자가 진짜 동시에 즉시입장을 두 번 요청해도 outstanding이 중복 가산되지 않는다" +
+            "(앱 레벨 admittedQuantityOf 가드와 이 스크립트 호출 사이의 좁은 레이스 방어)"
+    )
+    fun enqueueOrFastAdmit_sameUserConcurrentRequests_neverDoubleCountsOutstanding() {
+        // QueueService.enter()는 호출 전 admittedQuantityOf로 이미 입장권을 보유했는지 먼저
+        // 확인하지만, 그 GET과 이 스크립트 호출 사이엔 왕복(round trip)이 있어 완전한 원자성이
+        // 아니다 - 실제로 같은 순간 도착한 두 요청은 둘 다 "아직 없음"을 보고 여기까지 올 수
+        // 있다. 이 리포지토리 테스트는 그 앱 레벨 가드를 건너뛰고 같은 사용자로 동시에 스크립트를
+        // 직접 두 번 호출해, 스크립트 자체(Redis의 단일 스레드 직렬 실행 + 이 안의 ZSCORE 가드)가
+        // 그 레이스를 닫는지 검증한다.
+        val dropId = newDropId()
+        val userId = "racer"
+        seedRemaining(dropId, 10)
+        val executor = Executors.newFixedThreadPool(2)
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val done = CountDownLatch(2)
+        val results = java.util.Collections.synchronizedList(mutableListOf<AdmittedEntry?>())
+
+        repeat(2) {
+            executor.submit {
+                ready.countDown()
+                start.await()
+                try {
+                    results.add(runBlocking { repository.enqueueOrFastAdmit(dropId, userId, 1, TTL_SECONDS) })
+                } finally {
+                    done.countDown()
+                }
+            }
+        }
+        ready.await()
+        start.countDown()
+        done.await()
+        executor.shutdown()
+
+        // 둘 다 도착은 했지만, 발급은 정확히 한 번만 이뤄져야 한다 - 두 번째 호출은 이미
+        // admitted ZSET에 있는 걸 보고 fast admit을 재부여하지 않고 대기열 등록으로 폴백한다.
+        assertThat(results.count { it != null }).isEqualTo(1)
+        runBlocking {
+            assertThat(repository.admittedQuantityOf(dropId, userId)).isEqualTo(1)
+            assertThat(repository.outstandingOf(dropId)).isEqualTo(1L)
+        }
+    }
+
+    @Test
     @DisplayName("맨 앞사람 몫이 재고로 안 되면, 뒷사람 몫이 재고로 충분해도 새치기 입장시키지 않는다(엄격한 FIFO)")
     fun admitBatch_frontCandidateBlocked_neverAdmitsSmallerCandidateBehind() = runBlocking<Unit> {
         val dropId = newDropId()

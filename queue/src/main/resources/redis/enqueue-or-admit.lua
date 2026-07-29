@@ -58,7 +58,18 @@ redis.call('SADD', KEYS[10], dropId)
 local closeAt = tonumber(redis.call('HGET', KEYS[6], 'closeAt') or '-1')
 local dropClosed = closeAt >= 0 and now >= closeAt
 
-if not dropClosed and redis.call('ZCARD', KEYS[1]) == 0 then
+-- 회계 정합성 방어(admit.lua의 ZSCORE 가드와 동일 목적, 2026-07 추가): 앱 레벨 가드
+-- (QueueService.enter의 admittedQuantityOf 체크)는 "먼저 읽고(GET) 없으면 쓴다(SET)"
+-- 방식이라 그 자체로는 원자적이지 않다 - 진짜 동시(round trip 없이 같은 순간) 요청 두 건이
+-- 둘 다 "아직 없음"을 보고 이 스크립트까지 도달할 수 있다. 이 스크립트는 Redis에서 항상
+-- 단일 스레드로 직렬 실행되므로, 여기서 한 번 더 확인하면 그 좁은 창까지 완전히 닫힌다.
+-- 이미 미소진 입장권을 보유 중이면(직전 동시 요청이 먼저 발급받음) fast admit을 다시
+-- 부여하지 않고 아래 평범한 대기열 등록 경로로 흘려보낸다 - 그 경로는 이미 입장권을 쥔
+-- 사용자를 등록해도 무해하다(admit.lua의 동일 가드가 다음 tick에서 재부여 없이 대기열에서만
+-- 조용히 제거한다).
+local alreadyAdmitted = redis.call('ZSCORE', KEYS[8], userId)
+
+if not dropClosed and not alreadyAdmitted and redis.call('ZCARD', KEYS[1]) == 0 then
   local total = redis.call('GET', KEYS[4])
   if total ~= false then
     local reserved = tonumber(redis.call('GET', KEYS[5]) or '0')
