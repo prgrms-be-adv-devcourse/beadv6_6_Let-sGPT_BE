@@ -156,14 +156,33 @@ public class SecurityConfig {
                         .pathMatchers("/api/v1/seller/**").access(authenticatedAndNotScoped())
 
                         // 정산 관리자 전용
-                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/admin/*").hasRole("ADMIN")
+                        //
+                        // /* 가 아니라 /** 다 — /* 는 단일 세그먼트만 매칭해서 하위 경로가 생기면
+                        // 이 규칙을 벗어나 anyExchange().access(authenticatedAndNotScoped())로 샌다.
+                        // /settlement/api/v1/settlements/admin/** 도 함께 막는다 — 게이트웨이에
+                        // settlement로 가는 라우트가 두 벌이라(settlement-api: /api/v1/settlements/**
+                        // 그대로 프록시, settlement: /settlement/** + StripPrefix=1) 스트립 후 같은
+                        // :9140 컨트롤러에 도달한다. 아래 seller 규칙과 같은 이유.
+                        .pathMatchers(HttpMethod.GET,
+                                "/api/v1/settlements/admin/**",
+                                "/settlement/api/v1/settlements/admin/**").hasRole("ADMIN")
 
                         // 정산 판매자 조회 — scoped 토큰(typ=scoped, aud=openat-settlement)만 허용.
                         // access 토큰(ROLE_SELLER)은 더 이상 통과하지 못한다 — settlement 쪽 IDOR(다른 판매자
                         // sellerId를 파라미터로 넘겨 조회) 수정과 짝이다. scoped 토큰의 sub(sellerInfoId)를
                         // X-Seller-Id로 내려주면 settlement가 그 값을 신뢰해 본인 것만 조회하도록 바뀐다.
                         // scoped 토큰엔 roles 클레임이 없어 admin 경로로는 새지 않는다.
-                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/seller/**").access(scopedFor("openat-settlement"))
+                        //
+                        // /settlement/api/v1/settlements/seller/** 도 함께 막는다 — 안 막으면
+                        // /settlement/** + StripPrefix=1 라우트로 우회해 이 규칙 자체를 안 타고
+                        // anyExchange().access(authenticatedAndNotScoped())로 샌다. 그 경로는
+                        // scoped 토큰만 거부할 뿐 access 토큰은 role 검사 없이 통과시키므로,
+                        // ROLE_SELLER조차 없는 아무 로그인 회원이나 이 우회로로 정산을 조회할 수
+                        // 있었다 — 원래 막으려던 구멍보다 넓은 구멍이었다.
+                        .pathMatchers(HttpMethod.GET,
+                                "/api/v1/settlements/seller/**",
+                                "/settlement/api/v1/settlements/seller/**")
+                        .access(scopedFor("openat-settlement"))
 
 //                        // 판매자만
 //                        .pathMatchers(
