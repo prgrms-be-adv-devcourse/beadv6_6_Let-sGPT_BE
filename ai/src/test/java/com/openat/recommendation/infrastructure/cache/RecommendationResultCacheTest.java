@@ -3,6 +3,8 @@ package com.openat.recommendation.infrastructure.cache;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -98,6 +100,36 @@ class RecommendationResultCacheTest {
                           assertThat(product.name()).isEqualTo("옛 상품");
                           assertThat(product.price()).isEqualTo(1000L);
                         }));
+  }
+
+  /**
+   * 캐시 JSON의 필드명은 계약이다. {@code thumbnailUrl}은 값이 실제로는 오브젝트 키지만, 이름을
+   * 바꾸면 살아 있는 캐시(TTL 12시간)가 전부 미스로 떨어져 LLM 비용이 폭증한다. 이름을 못 박는다.
+   */
+  @Test
+  void save_writesThumbnailKeyUnderThumbnailUrlProperty() throws Exception {
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    RecommendationResponse response =
+        new RecommendationResponse(
+            List.of(
+                new RecommendationResponse.Section(
+                    "연관",
+                    List.of(
+                        new RecommendationResponse.Product(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "드롭 상품",
+                            "판매자",
+                            900L,
+                            "products/2026/07/abc.jpg")))));
+
+    new RecommendationResultCache(redisTemplate, objectMapper).save("rec:detail:product", response);
+
+    verify(valueOperations)
+        .set(
+            eq("rec:detail:product"),
+            contains("\"thumbnailUrl\":\"products/2026/07/abc.jpg\""),
+            eq(Duration.ofHours(12)));
   }
 
   @Test

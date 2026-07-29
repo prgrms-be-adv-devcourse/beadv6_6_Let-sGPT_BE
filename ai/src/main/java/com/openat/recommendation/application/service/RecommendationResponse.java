@@ -1,5 +1,6 @@
 package com.openat.recommendation.application.service;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 import java.util.UUID;
 
@@ -18,6 +19,10 @@ public record RecommendationResponse(List<Section> sections) {
    *
    * <p>필드를 추가할 때 순서를 바꿔도 JSON 역직렬화는 이름 기준이라 옛 캐시와 호환된다. 누락된
    * {@code dropId}는 null이 된다.
+   *
+   * <p>{@code thumbnailUrl}은 이름과 달리 완성된 URL이 아니라 오브젝트 스토리지 키다(상품 상세의
+   * {@code thumbnailKey}, 드롭 메타의 {@code thumbnailKey}를 그대로 담는다). 이름을 바꾸면 이름
+   * 기준으로 역직렬화하는 Redis 결과 캐시가 배포 즉시 전면 미스가 되므로 유지한다.
    */
   public record Product(
       UUID productId,
@@ -25,5 +30,6 @@ public record RecommendationResponse(List<Section> sections) {
       String name,
       String sellerName,
       long price,
-      String thumbnailUrl) {}
+      @Schema(description = "썸네일 오브젝트 키. 완성된 URL이 아니다 — 클라이언트가 베이스 URL과 조합한다")
+          String thumbnailUrl) {}
 }
