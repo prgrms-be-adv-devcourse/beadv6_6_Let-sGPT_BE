@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -76,8 +78,11 @@ public class PaymentRepositoryAdaptor implements PaymentRepository {
     }
 
     @Override
-    public List<Payment> findStalePending(LocalDateTime threshold) {
-        return paymentJpaRepository.findByStatusAndCreatedAtBefore(Payment.Status.PAYMENT_PENDING, threshold)
+    public List<Payment> findStalePending(LocalDateTime threshold, int limit) {
+        // 오래된 순 + 상한 — 정체가 쌓여도 한 사이클이 유한 시간에 끝나고, 가장 오래 굳은 건부터 회수된다.
+        return paymentJpaRepository
+                .findByStatusAndCreatedAtBefore(Payment.Status.PAYMENT_PENDING, threshold,
+                        PageRequest.of(0, limit, Sort.by(Sort.Direction.ASC, "createdAt")))
                 .stream().map(PaymentJpaEntity::toDomain).toList();
     }
 

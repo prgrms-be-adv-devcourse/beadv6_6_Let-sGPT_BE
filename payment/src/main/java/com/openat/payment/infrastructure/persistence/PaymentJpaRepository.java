@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -36,8 +37,10 @@ public interface PaymentJpaRepository extends JpaRepository<PaymentJpaEntity, UU
     int tryTransitionFromPending(@Param("id") UUID id, @Param("newStatus") Payment.Status newStatus,
             @Param("pgTxId") String pgTxId, @Param("approvedAt") LocalDateTime approvedAt);
 
-    // TTL 스캐너(§3) — 생성 후 threshold 이전인 PAYMENT_PENDING row 전체.
-    List<PaymentJpaEntity> findByStatusAndCreatedAtBefore(Payment.Status status, LocalDateTime threshold);
+    // TTL 스캐너(§3) — 생성 후 threshold 이전인 PAYMENT_PENDING row. Pageable로 사이클당 상한을 걸고
+    // 오래된 순으로 가져온다(정렬·크기는 호출측이 지정).
+    List<PaymentJpaEntity> findByStatusAndCreatedAtBefore(Payment.Status status, LocalDateTime threshold,
+            Pageable pageable);
 
     // 환불가능액 원자 검증(#13) — 합계가 원 결제금액을 넘지 않을 때만 증가.
     @Modifying(clearAutomatically = true)

@@ -23,7 +23,8 @@ public interface RefundRepository {
     int tryTransitionFromPending(UUID id, Refund.Status newStatus, String pgRefundKey, LocalDateTime completedAt);
 
     // TTL 스캐너 — PENDING 상태이고 threshold 이전에 생성된 Refund 조회(토스 환불 응답을 못 받아 굳은 건 회수).
-    List<Refund> findStalePending(LocalDateTime threshold);
+    // limit — 한 사이클에 가져올 최대 건수(오래된 순). 상한 취지는 PaymentRepository.findStalePending과 동일.
+    List<Refund> findStalePending(LocalDateTime threshold, int limit);
 
     // 환불 이력(memberId는 Refund에 없어 paymentId로 Payment를 조인해서 조회, A6) — 0-base page.
     List<Refund> findByMemberId(UUID memberId, int page, int size);
