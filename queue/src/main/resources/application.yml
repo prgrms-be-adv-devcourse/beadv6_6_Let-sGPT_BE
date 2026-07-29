@@ -26,6 +26,11 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         spring.json.trusted.packages: "*"
+    listener:
+      # StockAdjustmentConsumer는 @RetryableTopic + @KafkaListener로 자동구성 리스너 컨테이너
+      # 팩토리를 쓰므로 이 프로퍼티만으로 Observation이 켜져 레코드에 실려온 traceparent를 읽고
+      # 소비 스팬을 producer 트레이스의 자식으로 잇는다(retry/dlt 재발행 흐름도 트레이스에 드러난다).
+      observation-enabled: true
 
 # WebFlux+SSE 전환분: springdoc-openapi-starter-webmvc-ui(루트 build.gradle.kts 전역 적용)는
 # 서블릿 DispatcherServlet 전제라 reactive 모드에서 기동 실패 위험이 있어 그냥 끈다.

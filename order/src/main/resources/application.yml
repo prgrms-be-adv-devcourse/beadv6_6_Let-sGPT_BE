@@ -18,6 +18,11 @@ spring:
       # KafkaTemplate.send를 Observation으로 감싸 producer 스팬을 만들고 트레이스 헤더를 전파한다.
       # KafkaStringConfig가 KafkaTemplate을 직접 등록하므로 이 값을 그 빈에서 읽어 적용한다.
       observation-enabled: true
+    listener:
+      # 소비 리스너에도 Observation을 켜 레코드에 실려온 traceparent를 읽고 소비 스팬을 producer
+      # 트레이스의 자식으로 잇는다. KafkaStringConfig가 리스너 컨테이너 팩토리를 직접 등록하므로
+      # 이 값을 그 빈에서 읽어 컨테이너 프로퍼티에 적용한다.
+      observation-enabled: true
   profiles:
     active: local
   application:

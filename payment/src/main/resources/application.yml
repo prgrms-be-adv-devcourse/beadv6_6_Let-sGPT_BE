@@ -35,6 +35,10 @@ spring:
       # KafkaTemplate.send를 Observation으로 감싸 producer 스팬을 만들고 트레이스 헤더를 전파한다.
       # KafkaProducerConfig가 KafkaTemplate을 직접 등록하므로 이 값을 그 빈에서 읽어 적용한다.
       observation-enabled: true
+    listener:
+      # 컨슈머는 자동구성 리스너 컨테이너 팩토리를 쓰므로 이 프로퍼티만으로 Observation이 켜져
+      # 레코드에 실려온 traceparent를 읽고 소비 스팬을 producer 트레이스의 자식으로 잇는다.
+      observation-enabled: true
 
 # JDBC 계측(datasource-micrometer). 커넥션 획득/쿼리/페치가 각각 자식 스팬으로 떨어져
 # "요청 시간이 커넥션 대기인지 쿼리인지"를 트레이스에서 가를 수 있게 된다.
