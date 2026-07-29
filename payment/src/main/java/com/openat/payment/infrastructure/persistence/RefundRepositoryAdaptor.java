@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -53,8 +54,12 @@ public class RefundRepositoryAdaptor implements RefundRepository {
     }
 
     @Override
-    public List<Refund> findStalePending(LocalDateTime threshold) {
-        return refundJpaRepository.findStalePending(threshold).stream()
+    public List<Refund> findStalePending(LocalDateTime threshold, LocalDateTime cursor, int limit) {
+        // 오래된 순 + 상한 — PaymentRepositoryAdaptor.findStalePending과 동일한 취지.
+        return refundJpaRepository
+                .findStalePending(threshold, cursor,
+                        PageRequest.of(0, limit, Sort.by(Sort.Direction.ASC, "createdAt")))
+                .stream()
                 .map(RefundJpaEntity::toDomain).toList();
     }
 

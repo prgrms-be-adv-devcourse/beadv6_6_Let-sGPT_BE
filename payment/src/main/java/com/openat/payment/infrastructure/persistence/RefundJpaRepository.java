@@ -33,8 +33,11 @@ public interface RefundJpaRepository extends JpaRepository<RefundJpaEntity, UUID
             @Param("pgRefundKey") String pgRefundKey, @Param("completedAt") LocalDateTime completedAt);
 
     // TTL 스캐너 — PENDING 상태이고 threshold 이전에 생성된 Refund 조회.
-    @Query("SELECT r FROM RefundJpaEntity r WHERE r.status = 'PENDING' AND r.createdAt < :threshold")
-    List<RefundJpaEntity> findStalePending(@Param("threshold") LocalDateTime threshold);
+    // Pageable로 사이클당 상한을 걸고 오래된 순으로 가져온다(정렬·크기는 호출측이 지정).
+    @Query("SELECT r FROM RefundJpaEntity r WHERE r.status = 'PENDING' AND r.createdAt < :threshold "
+            + "AND (:cursor IS NULL OR r.createdAt > :cursor)")
+    List<RefundJpaEntity> findStalePending(@Param("threshold") LocalDateTime threshold,
+            @Param("cursor") LocalDateTime cursor, Pageable pageable);
 
     // Refund에는 memberId가 없어(A6) paymentId로 Payment를 서브쿼리 조인해서 조회.
     @Query("SELECT r FROM RefundJpaEntity r WHERE r.paymentId IN "
