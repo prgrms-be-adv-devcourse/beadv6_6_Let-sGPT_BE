@@ -111,11 +111,22 @@ public class RefundService implements RefundUseCase {
   }
 
   @Override
-  public RefundResult getRefund(UUID refundId) {
+  public RefundResult getRefund(UUID refundId, UUID memberId) {
     Refund refund =
         refundRepository
             .findById(refundId)
             .orElseThrow(() -> new BusinessException(CommonErrorCode.NOT_FOUND));
+
+    // Refund는 memberId를 중복 저장하지 않는 설계라 Payment를 조인해 소유자를 대조한다(requestRefund와 동일).
+    // Payment 소실은 정합성이 깨진 상태 — NOT_FOUND로 숨기지 않고 시끄럽게 드러낸다.
+    UUID paymentId = refund.getPaymentId();
+    Payment payment =
+        paymentRepository
+            .findById(paymentId)
+            .orElseThrow(() -> new IllegalStateException("환불 대상 Payment 소실: " + paymentId));
+    if (!Objects.equals(payment.getMemberId(), memberId)) {
+      throw new BusinessException(PaymentErrorCode.FORBIDDEN);
+    }
     return new RefundResult(
         refund.getId(), refund.getPaymentId(), refund.getAmount(), refund.getStatus().name());
   }

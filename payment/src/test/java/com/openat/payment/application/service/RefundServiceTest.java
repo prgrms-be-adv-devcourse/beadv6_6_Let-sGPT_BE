@@ -84,6 +84,15 @@ class RefundServiceTest {
         .build();
   }
 
+  private Refund completeRefund(UUID refundId) {
+    return Refund.builder()
+        .id(refundId)
+        .paymentId(paymentId)
+        .amount(amount)
+        .status(Refund.Status.COMPLETE)
+        .build();
+  }
+
   @Test
   void 접수가_즉시_완료를_반환하면_그대로_반환하고_PG를_호출하지_않는다() {
     UUID refundId = UUID.randomUUID();
@@ -277,32 +286,52 @@ class RefundServiceTest {
   }
 
   @Test
-  void getRefund_정상_조회() {
+  void getRefund_소유자가_일치하면_정상_조회한다() {
     UUID refundId = UUID.randomUUID();
-    Refund refund =
-        Refund.builder()
-            .id(refundId)
-            .paymentId(paymentId)
-            .amount(amount)
-            .status(Refund.Status.COMPLETE)
-            .build();
-    when(refundRepository.findById(refundId)).thenReturn(Optional.of(refund));
+    when(refundRepository.findById(refundId)).thenReturn(Optional.of(completeRefund(refundId)));
+    when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(pgPayment()));
 
-    RefundResult result = refundService.getRefund(refundId);
+    RefundResult result = refundService.getRefund(refundId, memberId);
 
     assertThat(result.refundId()).isEqualTo(refundId);
     assertThat(result.status()).isEqualTo("COMPLETE");
   }
 
   @Test
-  void getRefund_대상이_없으면_NOT_FOUND_예외가_발생한다() {
+  void getRefund_소유자가_다르면_FORBIDDEN_예외가_발생한다() {
+    UUID refundId = UUID.randomUUID();
+    when(refundRepository.findById(refundId)).thenReturn(Optional.of(completeRefund(refundId)));
+    when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(pgPayment()));
+
+    assertThatThrownBy(() -> refundService.getRefund(refundId, UUID.randomUUID()))
+        .isInstanceOf(BusinessException.class)
+        .extracting(e -> ((BusinessException) e).getErrorCode())
+        .isEqualTo(PaymentErrorCode.FORBIDDEN);
+  }
+
+  @Test
+  void getRefund_대상이_없으면_NOT_FOUND_예외가_발생하고_Payment를_조회하지_않는다() {
     UUID refundId = UUID.randomUUID();
     when(refundRepository.findById(refundId)).thenReturn(Optional.empty());
 
-    assertThatThrownBy(() -> refundService.getRefund(refundId))
+    assertThatThrownBy(() -> refundService.getRefund(refundId, memberId))
         .isInstanceOf(BusinessException.class)
         .extracting(e -> ((BusinessException) e).getErrorCode())
         .isEqualTo(CommonErrorCode.NOT_FOUND);
+
+    verify(paymentRepository, never()).findById(any());
+  }
+
+  // 정합성이 깨진 상태 — NOT_FOUND(404)로 숨기지 않고 IllegalStateException으로 드러낸다.
+  @Test
+  void getRefund_환불_대상_Payment가_소실됐으면_IllegalStateException이_발생한다() {
+    UUID refundId = UUID.randomUUID();
+    when(refundRepository.findById(refundId)).thenReturn(Optional.of(completeRefund(refundId)));
+    when(paymentRepository.findById(paymentId)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> refundService.getRefund(refundId, memberId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(paymentId.toString());
   }
 
   @Test
