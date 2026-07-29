@@ -33,6 +33,12 @@ import reactor.core.publisher.Mono;
  *
  * <p>settlement 컨트롤러의 {@code sellerId} 파라미터 제거·{@code X-Seller-Id} 사용은
  * settlement 모듈 담당(parksunkyu)의 몫이라 이 테스트에는 포함하지 않는다.
+ *
+ * <p>{@code /settlement/**}(StripPrefix=1) 우회 경로도 함께 검증한다 — 게이트웨이에
+ * settlement로 가는 라우트가 두 벌 있어서 스트립 후 같은 컨트롤러에 도달하는데, 처음엔
+ * seller/admin 두 경로 모두 이쪽으로 요청하면 {@code anyExchange().access
+ * (authenticatedAndNotScoped())}로 새서 seller 경로는 access 토큰(ROLE_SELLER조차
+ * 불필요)이 통과했고 admin 경로는 role 검사 없이 로그인 회원 누구나 통과했다.
  */
 @WebFluxTest(SettlementSellerGatewaySecurityTest.SettlementEndpoint.class)
 @Import({
@@ -156,6 +162,68 @@ class SettlementSellerGatewaySecurityTest {
         .isOk();
   }
 
+  // ---------------------------------------------------------------
+  // /settlement/** 우회 경로 — StripPrefix 후 같은 컨트롤러에 도달하므로 동일 규칙이 걸려야 한다
+  // ---------------------------------------------------------------
+
+  @Test
+  @DisplayName("/settlement/** 우회 경로로도 일반 SELLER access 토큰은 정산 판매자 조회를 통과하지 못한다")
+  void sellerSettlementStrippedRoute_sellerAccessToken_returnsForbidden() {
+    given(jwtDecoder.decode("seller-access-token"))
+        .willReturn(Mono.just(accessJwt("seller-access-token", "SELLER")));
+
+    webTestClient
+        .get()
+        .uri("/settlement/api/v1/settlements/seller/orders")
+        .headers(headers -> headers.setBearerAuth("seller-access-token"))
+        .exchange()
+        .expectStatus()
+        .isForbidden();
+  }
+
+  @Test
+  @DisplayName("/settlement/** 우회 경로에서도 aud=openat-settlement scoped 토큰은 통과한다")
+  void sellerSettlementStrippedRoute_settlementScopedToken_returnsOk() {
+    given(jwtDecoder.decode("settlement-scoped-token"))
+        .willReturn(Mono.just(scopedJwt("settlement-scoped-token", "openat-settlement")));
+
+    webTestClient
+        .get()
+        .uri("/settlement/api/v1/settlements/seller/orders")
+        .headers(headers -> headers.setBearerAuth("settlement-scoped-token"))
+        .exchange()
+        .expectStatus()
+        .isOk();
+  }
+
+  @Test
+  @DisplayName("/settlement/** 우회 경로로는 일반 회원(ROLE_USER)이 관리자 정산을 조회할 수 없다")
+  void adminSettlementStrippedRoute_userRole_returnsForbidden() {
+    given(jwtDecoder.decode("user-token")).willReturn(Mono.just(accessJwt("user-token", "USER")));
+
+    webTestClient
+        .get()
+        .uri("/settlement/api/v1/settlements/admin/orders")
+        .headers(headers -> headers.setBearerAuth("user-token"))
+        .exchange()
+        .expectStatus()
+        .isForbidden();
+  }
+
+  @Test
+  @DisplayName("/settlement/** 우회 경로에서도 ROLE_ADMIN access 토큰은 관리자 정산을 통과한다")
+  void adminSettlementStrippedRoute_adminAccessToken_returnsOk() {
+    given(jwtDecoder.decode("admin-token")).willReturn(Mono.just(accessJwt("admin-token", "ADMIN")));
+
+    webTestClient
+        .get()
+        .uri("/settlement/api/v1/settlements/admin/orders")
+        .headers(headers -> headers.setBearerAuth("admin-token"))
+        .exchange()
+        .expectStatus()
+        .isOk();
+  }
+
   private Jwt accessJwt(String tokenValue, String role) {
     return Jwt.withTokenValue(tokenValue)
         .header("alg", "none")
@@ -179,12 +247,12 @@ class SettlementSellerGatewaySecurityTest {
   @RestController
   static class SettlementEndpoint {
 
-    @GetMapping("/api/v1/settlements/seller/orders")
+    @GetMapping({"/api/v1/settlements/seller/orders", "/settlement/api/v1/settlements/seller/orders"})
     String sellerOrders() {
       return "OK";
     }
 
-    @GetMapping("/api/v1/settlements/admin/orders")
+    @GetMapping({"/api/v1/settlements/admin/orders", "/settlement/api/v1/settlements/admin/orders"})
     String adminOrders() {
       return "OK";
     }
