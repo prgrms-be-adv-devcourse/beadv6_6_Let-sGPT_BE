@@ -38,12 +38,15 @@ public interface PaymentJpaRepository extends JpaRepository<PaymentJpaEntity, UU
             @Param("pgTxId") String pgTxId, @Param("approvedAt") LocalDateTime approvedAt);
 
     // TTL 스캐너(§3) — 생성 후 threshold 이전인 PAYMENT_PENDING row. Pageable로 사이클당 상한을 걸고
-    // 오래된 순으로 가져온다(정렬·크기는 호출측이 지정). cursor(createdAt)가 있으면 그보다 큰 것만 —
-    // 종결불가 행이 선두를 점유해도 커서를 전진시켜 그 뒤 행에 도달하게 한다(null이면 처음부터).
+    // 오래된 순으로 가져온다(정렬·크기는 호출측이 지정). (createdAt, id) 복합 커서가 있으면 그보다 큰 것만 —
+    // 동일 createdAt 행이 페이지 경계에 몰려도 id로 동률을 깨서 후속 행을 건너뛰지 않는다. 종결불가 행이
+    // 선두를 점유해도 커서를 전진시켜 그 뒤 행에 도달하게 한다(null이면 처음부터).
     @Query("SELECT p FROM PaymentJpaEntity p WHERE p.status = 'PAYMENT_PENDING' AND p.createdAt < :threshold "
-            + "AND (:cursor IS NULL OR p.createdAt > :cursor)")
+            + "AND (:cursorCreatedAt IS NULL OR p.createdAt > :cursorCreatedAt "
+            + "OR (p.createdAt = :cursorCreatedAt AND p.id > :cursorId))")
     List<PaymentJpaEntity> findStalePending(@Param("threshold") LocalDateTime threshold,
-            @Param("cursor") LocalDateTime cursor, Pageable pageable);
+            @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt, @Param("cursorId") UUID cursorId,
+            Pageable pageable);
 
     // 환불가능액 원자 검증(#13) — 합계가 원 결제금액을 넘지 않을 때만 증가.
     @Modifying(clearAutomatically = true)

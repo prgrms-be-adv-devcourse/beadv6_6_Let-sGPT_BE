@@ -38,9 +38,11 @@ public interface WalletChargeJpaRepository extends JpaRepository<WalletChargeJpa
 
     // TTL 스캐너 — PENDING 상태이고 threshold 이전에 생성된 row 조회.
     // Pageable로 사이클당 상한을 걸고 오래된 순으로 가져온다(정렬·크기는 호출측이 지정).
-    // cursor(createdAt)가 있으면 그보다 큰 것만(null이면 처음부터) — 취지는 PaymentJpaRepository.findStalePending과 동일.
+    // (createdAt, id) 복합 커서가 있으면 그보다 큰 것만(null이면 처음부터) — 취지는 PaymentJpaRepository.findStalePending과 동일.
     @Query("SELECT c FROM WalletChargeJpaEntity c WHERE c.status = 'PENDING' AND c.createdAt < :threshold "
-            + "AND (:cursor IS NULL OR c.createdAt > :cursor)")
+            + "AND (:cursorCreatedAt IS NULL OR c.createdAt > :cursorCreatedAt "
+            + "OR (c.createdAt = :cursorCreatedAt AND c.id > :cursorId))")
     List<WalletChargeJpaEntity> findStalePending(@Param("threshold") LocalDateTime threshold,
-            @Param("cursor") LocalDateTime cursor, Pageable pageable);
+            @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt, @Param("cursorId") UUID cursorId,
+            Pageable pageable);
 }

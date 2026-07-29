@@ -10,6 +10,7 @@ import com.openat.payment.domain.model.Refund;
 import com.openat.payment.domain.model.WalletCharge;
 import com.openat.payment.domain.repository.PaymentRepository;
 import com.openat.payment.domain.repository.RefundRepository;
+import com.openat.payment.domain.repository.ScanCursor;
 import com.openat.payment.domain.repository.WalletChargeRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -189,7 +190,7 @@ public class PaymentTtlScanner {
       CycleStats stats) {
     long deadlineNanos = System.nanoTime() + budgetNanos;
     // 사이클 시작 시 커서는 항상 처음(오래된 것)부터 — 종결불가 행 건너뛰기는 백오프가 담당한다.
-    LocalDateTime cursor = null;
+    ScanCursor cursor = null;
     int attempted = 0; // PG를 실제로 조회·확정 시도한 건수(백오프로 건너뛴 건은 제외).
     // 전부 백오프 중이어도 무한정 읽지 않도록 조회량 상한(상한의 배수). 스키마 컬럼 없이 SQL에서 poison을
     // 제외할 수 없는 데 따른 완화의 한계 — 근본 수정은 별도 안건(TtlBackoffRegistry 참조).
@@ -214,8 +215,10 @@ public class PaymentTtlScanner {
       boolean budgetExceeded = false;
       for (T row : batch) {
         // 커서는 처리·건너뜀과 무관하게 전진시켜 다음 배치가 이 행 뒤로 넘어가게 한다.
-        cursor = createdAtExtractor.apply(row);
+        // (createdAt, id) 복합 커서 — 동일 createdAt 행이 페이지 경계에 몰려도 id로 동률을 깨서
+        // 후속 행을 건너뛰지 않는다.
         UUID id = idExtractor.apply(row);
+        cursor = new ScanCursor(createdAtExtractor.apply(row), id);
         LocalDateTime now = LocalDateTime.now();
 
         if (backoff.shouldSkip(id, now)) {
@@ -277,10 +280,10 @@ public class PaymentTtlScanner {
     }
   }
 
-  // 다음 배치를 커서 이후로 조회한다(cursor null이면 처음부터).
+  // 다음 배치를 커서 이후로 조회한다((createdAt, id) 복합 커서, null이면 처음부터).
   @FunctionalInterface
   private interface StaleFetcher<T> {
-    List<T> fetch(LocalDateTime threshold, LocalDateTime cursor, int limit);
+    List<T> fetch(LocalDateTime threshold, ScanCursor cursor, int limit);
   }
 
   // 한 행의 처리 결과 — 백오프·집계 판단의 근거.
