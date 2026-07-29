@@ -132,7 +132,9 @@ class QueueService(
             // 사용자의 입장권까지 파괴돼 restore-admission.lua의 설계 의도와 어긋난다.
             DecisionChoice.GIVE_UP -> {
                 val removed = waitingQueueRepository.removeFromQueue(dropId, userId)
-                val releasedQty = waitingQueueRepository.releaseAdmission(dropId, userId)
+                val releasedQty = waitingQueueRepository.releaseAdmission(
+                    dropId, userId, queueProperties.admission.giveUpTombstoneTtlSeconds,
+                )
                 // 이 경로는 원래 로그/메트릭/이벤트가 전무해서 "정말로 나갔는지"를 서버에서
                 // 확인할 방법이 없었다(Redis 키는 삭제가 정상이라 부재로는 증명이 안 됨).
                 // removed=1 -> 대기 중이던 사람이 줄에서 빠짐 / releasedQty>0 -> READY였던

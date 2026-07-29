@@ -284,15 +284,17 @@ class QueueServiceDecisionTest {
                 ),
             )
         whenever(repository.removeFromQueue(dropId, userId)).thenReturn(0) // 대기열엔 이미 없음
-        whenever(repository.releaseAdmission(dropId, userId)).thenReturn(3)
+        val properties = QueueProperties()
+        whenever(repository.releaseAdmission(dropId, userId, properties.admission.giveUpTombstoneTtlSeconds))
+            .thenReturn(3)
         val service = QueueService(
-            repository, mock(), mock(), QueueProperties(), mock(),
+            repository, mock(), mock(), properties, mock(),
         )
 
         service.decide(dropId, userId, DecisionChoice.GIVE_UP)
 
         verify(repository).removeFromQueue(dropId, userId)
-        verify(repository).releaseAdmission(dropId, userId)
+        verify(repository).releaseAdmission(dropId, userId, properties.admission.giveUpTombstoneTtlSeconds)
     }
 
     private lateinit var waitingQueueRepositoryMock: WaitingQueueRepository

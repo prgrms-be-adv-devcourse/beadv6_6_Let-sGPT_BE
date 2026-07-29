@@ -10,6 +10,12 @@
 -- 1. admitted ZSET에 아직 남아있는(= 스위퍼가 회수하지 않은) 경우에만 복구한다 - 요청이
 --    오래 걸리는 사이 TTL이 지나 이미 회수됐다면 정당한 만료이므로 되살리지 않는다.
 -- 2. 남은 유효시간이 1초 미만이면 복구해도 쓸 수 없으므로 하지 않는다(스위퍼가 곧 회수).
+-- 3. GIVE_UP tombstone(queue의 release-admission.lua가 남김)이 있으면 복구하지 않는다.
+--    버그 이력(발견): 사용자가 GETDEL 직후(=이 스크립트가 없던 시절 그 사이) GIVE_UP을
+--    선택해도 이 스크립트는 그 사실을 알 방법이 없어 무조건 복구했다 - 포기했던 사용자가
+--    나중에 그 주문 실패로 다시 READY가 되는 lost-update였다. queue와 apigateway가 이미
+--    admission:/admitted:/outstanding: 네임스페이스를 공유하는 것과 동일한 방식으로
+--    giveup:{dropId}:{userId} 키도 공유한다(queue의 RedisKeys.giveUpTombstone 참고).
 --
 -- 안전 전제(확인됨): 주문이 실제로는 성공했는데 응답만 유실(타임아웃)된 경우 티켓이 복구돼
 -- 재시도가 가능해지는데, order의 주문 생성이 idempotencyKey 기반으로 이미 멱등하다
@@ -22,10 +28,16 @@
 --
 -- KEYS[1]=admitted:{dropId}           (ZSET, member=userId, score=입장권 만료 epoch ms)
 -- KEYS[2]=admission:{dropId}:{userId} (STRING, 값=발급 수량)
+-- KEYS[3]=giveup:{dropId}:{userId}    (STRING, GIVE_UP tombstone - 존재 여부만 봄)
 --
 -- ARGV[1]=userId  ARGV[2]=qty(GETDEL로 읽어뒀던 발급 수량)  ARGV[3]=now(epoch ms)
 --
--- 반환: 1=복구됨, 0=복구 안 함(이미 회수됐거나 만료 임박 - 사용자는 재진입 필요)
+-- 반환: 1=복구됨, 0=복구 안 함(이미 회수됐거나 만료 임박이거나 GIVE_UP tombstone 존재 -
+--       어느 쪽이든 사용자는 재진입 필요)
+
+if redis.call('EXISTS', KEYS[3]) == 1 then
+  return 0
+end
 
 local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
 if score == false then

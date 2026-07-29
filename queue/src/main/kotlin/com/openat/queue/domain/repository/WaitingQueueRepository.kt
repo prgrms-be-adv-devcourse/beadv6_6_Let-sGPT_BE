@@ -139,12 +139,17 @@ interface WaitingQueueRepository {
      * outstanding 되돌리기를 원자적으로 수행해, TTL 만료(기본 180초)를 기다리지 않고
      * 뒷사람이 바로 입장할 수 있게 한다.
      *
-     * 이미 게이트웨이가 GETDEL로 입장권을 소진한 뒤(= 주문 진행 중)라면 아무 것도 하지
-     * 않는다 - 그 경우 outstanding은 CREATED 이벤트를 받은 apply-created-reservation.lua가
-     * 넘겨받으므로, 여기서도 깎으면 이중 차감이 된다.
+     * 이미 게이트웨이가 GETDEL로 입장권을 소진한 뒤(= 주문 진행 중)라면 outstanding/admitted는
+     * 건드리지 않는다 - 그 경우 outstanding은 CREATED 이벤트를 받은
+     * apply-created-reservation.lua가 넘겨받으므로, 여기서도 깎으면 이중 차감이 된다. 대신
+     * GIVE_UP tombstone([com.openat.queue.infrastructure.persistence.RedisKeys.giveUpTombstone])을
+     * [tombstoneTtlSeconds] 동안 남긴다 - 그 주문이 나중에 5xx로 실패해 apigateway의
+     * restore-admission.lua가 입장권을 되살리려 할 때, 이 tombstone이 복원을 막는다(그 스크립트가
+     * 되살리기 직전 이 키를 확인). tombstone이 없으면 포기했던 사용자가 다시 READY로 보이는
+     * lost-update가 됐다.
      * @return 실제로 outstanding에서 되돌린 수량(0이면 회수할 입장권이 없었음)
      */
-    suspend fun releaseAdmission(dropId: String, userId: String): Long
+    suspend fun releaseAdmission(dropId: String, userId: String, tombstoneTtlSeconds: Long): Long
 
     /**
      * 정적 hot-drops 목록을 대체하는 동적 발견 레지스트리 - 현재 대기자가 있거나 미소진

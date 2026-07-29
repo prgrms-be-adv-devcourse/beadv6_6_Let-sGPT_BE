@@ -60,6 +60,15 @@ data class QueueProperties(
         @DefaultValue("180") val ttlSeconds: Long = 180,
         /** 미소진 입장권(TTL 경과) 회수 스위퍼 주기(ms) */
         @DefaultValue("5000") val sweepIntervalMs: Long = 5000,
+        /**
+         * GIVE_UP tombstone(`RedisKeys.giveUpTombstone`) TTL(초) - 게이트웨이가 이미 GETDEL로
+         * 입장권을 소진한 뒤(주문 진행 중) 사용자가 GIVE_UP하면, 그 주문이 나중에 실패해
+         * apigateway의 restore-admission.lua가 입장권을 되살리려는 시도를 이 tombstone으로
+         * 막는다. apigateway의 다운스트림 응답 타임아웃(현재 10분, `response-timeout: 600000`)
+         * 안에 오는 모든 5xx를 커버해야 하므로 그보다 넉넉하게(2배) 잡는다 - 타임아웃 자체가
+         * 이 값보다 늘어나면 함께 조정해야 한다.
+         */
+        @DefaultValue("1200") val giveUpTombstoneTtlSeconds: Long = 1200,
     )
 
     data class Waiting(

@@ -288,7 +288,7 @@ class WaitingQueueRedisRepository(
             listOf(userId),
         ).awaitFirstOrNull() ?: 0
 
-    override suspend fun releaseAdmission(dropId: String, userId: String): Long =
+    override suspend fun releaseAdmission(dropId: String, userId: String, tombstoneTtlSeconds: Long): Long =
         redisTemplate.execute(
             releaseAdmissionScript,
             listOf(
@@ -296,8 +296,9 @@ class WaitingQueueRedisRepository(
                 RedisKeys.admitted(dropId),
                 RedisKeys.admittedQuantity(dropId),
                 RedisKeys.outstanding(dropId),
+                RedisKeys.giveUpTombstone(dropId, userId),
             ),
-            listOf(userId),
+            listOf(userId, tombstoneTtlSeconds.toString()),
         ).awaitFirstOrNull() ?: 0
 
     override suspend fun activeDropIds(): Set<String> =
