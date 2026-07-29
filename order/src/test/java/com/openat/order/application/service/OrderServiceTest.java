@@ -22,7 +22,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -91,6 +94,19 @@ class OrderServiceTest {
     assertThat(result.get(1).productId()).isEqualTo(olderProductId);
     verify(orderRepository)
         .findPurchaseSignals(memberId, OrderStatus.COMPLETED, PageRequest.of(0, 2));
+  }
+
+  @Test
+  @DisplayName("주문 목록은 클라이언트가 보낸 sort를 무시하고 createdAt·id 내림차순으로 조회한다")
+  void getMyOrders_ignoresClientSortAndFixesOrdering() {
+    UUID memberId = UUID.randomUUID();
+    Pageable expected = PageRequest.of(2, 10, Sort.by(Sort.Direction.DESC, "createdAt", "id"));
+    when(orderRepository.findByMemberId(memberId, null, expected)).thenReturn(Page.empty());
+
+    orderService.getMyOrders(
+        memberId, null, PageRequest.of(2, 10, Sort.by(Sort.Direction.ASC, "totalPrice")));
+
+    verify(orderRepository).findByMemberId(memberId, null, expected);
   }
 
   private Order createOrder(UUID memberId) {

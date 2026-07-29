@@ -3,6 +3,11 @@ package com.openat.order.infrastructure.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
+import com.openat.order.application.dto.OrderSummaryInfo;
+import com.openat.order.application.service.OrderCancellationService;
+import com.openat.order.application.service.OrderCompensationService;
+import com.openat.order.application.service.OrderCreationService;
+import com.openat.order.application.service.OrderService;
 import com.openat.order.domain.model.Order;
 import com.openat.order.domain.model.OrderStatus;
 import com.openat.order.domain.model.PurchaseSignal;
@@ -10,6 +15,7 @@ import com.openat.order.domain.repository.OrderRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -21,6 +27,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -28,16 +35,21 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
-@Import(OrderRepositoryAdaptor.class)
+@Import({OrderRepositoryAdaptor.class, OrderService.class})
 @TestPropertySource(properties = "spring.sql.init.mode=never")
-@DisplayName("주문 영속성 - 구매 신호 집계")
+@DisplayName("주문 영속성 - 구매 신호 집계·목록 페이징")
 class OrderRepositoryAdaptorTest {
 
     @Container @ServiceConnection
     static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16-alpine");
 
     @Autowired private OrderRepository orderRepository;
+    @Autowired private OrderService orderService;
     @PersistenceContext private EntityManager entityManager;
+
+    @MockitoBean private OrderCreationService orderCreationService;
+    @MockitoBean private OrderCancellationService orderCancellationService;
+    @MockitoBean private OrderCompensationService orderCompensationService;
 
     @Test
     @DisplayName("같은 상품의 완료 주문 여러 건을 주문횟수·총수량·최근주문일로 합산한다")
@@ -125,11 +137,49 @@ class OrderRepositoryAdaptorTest {
         assertThat(signals).isEmpty();
     }
 
+    @Test
+    @DisplayName("주문 목록은 생성 시각 내림차순으로 정렬한다")
+    void getMyOrders_ordersByCreatedAtDesc() {
+        UUID memberId = UUID.randomUUID();
+        UUID oldest = persistOrder(memberId, UUID.randomUUID(), 1, OrderStatus.COMPLETED, at("2026-07-01"));
+        UUID newest = persistOrder(memberId, UUID.randomUUID(), 1, OrderStatus.COMPLETED, at("2026-07-09"));
+        UUID middle = persistOrder(memberId, UUID.randomUUID(), 1, OrderStatus.COMPLETED, at("2026-07-05"));
+
+        var page = orderService.getMyOrders(memberId, null, PageRequest.of(0, 10));
+
+        assertThat(page.getContent())
+                .extracting(OrderSummaryInfo::orderId)
+                .containsExactly(newest, middle, oldest);
+    }
+
+    @Test
+    @DisplayName("생성 시각이 같은 주문도 페이지를 넘길 때 중복·누락되지 않는다")
+    void getMyOrders_pagesWithoutDuplicatesOnCreatedAtTie() {
+        UUID memberId = UUID.randomUUID();
+        Instant sameMoment = at("2026-07-20");
+        List<UUID> persisted = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            persisted.add(
+                    persistOrder(memberId, UUID.randomUUID(), 1, OrderStatus.COMPLETED, sameMoment));
+        }
+
+        List<UUID> paged = new ArrayList<>();
+        for (int page = 0; page < 3; page++) {
+            paged.addAll(
+                    orderService.getMyOrders(memberId, null, PageRequest.of(page, 2)).getContent()
+                            .stream()
+                            .map(OrderSummaryInfo::orderId)
+                            .toList());
+        }
+
+        assertThat(paged).doesNotHaveDuplicates().containsExactlyInAnyOrderElementsOf(persisted);
+    }
+
     private static Instant at(String date) {
         return Instant.parse(date + "T10:00:00Z");
     }
 
-    private void persistOrder(
+    private UUID persistOrder(
             UUID memberId, UUID productId, int quantity, OrderStatus status, Instant createdAt) {
         Order order = Order.create()
                 .orderNumber("ORD-" + UUID.randomUUID().toString().substring(0, 20))
@@ -153,5 +203,6 @@ class OrderRepositoryAdaptorTest {
                 .setParameter("id", order.getId())
                 .executeUpdate();
         entityManager.clear();
+        return order.getId();
     }
 }

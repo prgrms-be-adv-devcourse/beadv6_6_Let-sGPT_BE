@@ -53,7 +53,9 @@ public interface OrderApiSpec {
   @ApiResponse(responseCode = "200", description = "조회 성공")
   ResponseEntity<OrderResponse> getOrder(@CurrentUser UserContext userContext, UUID orderId);
 
-  @Operation(summary = "내 주문 목록 조회", description = "로그인 사용자의 주문 목록을 페이징 조회한다.")
+  @Operation(
+      summary = "내 주문 목록 조회",
+      description = "로그인 사용자의 주문 목록을 최신순(createdAt·id 내림차순)으로 페이징 조회한다. sort 파라미터는 무시한다.")
   @ApiResponse(responseCode = "200", description = "조회 성공")
   ResponseEntity<PageResponse<OrderSummaryResponse>> getMyOrders(
       @CurrentUser UserContext userContext,
