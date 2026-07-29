@@ -500,6 +500,65 @@ class WaitingQueueRedisRepositoryTest {
         assertThat(repository.activeDropIds()).doesNotContain(dropId)
     }
 
+    @Test
+    @DisplayName("READY 사용자가 포기하면 입장권을 즉시 반납하고 outstanding이 그만큼 되돌아간다")
+    fun releaseAdmission_admittedUser_returnsQuantityAndDecrementsOutstanding() = runBlocking<Unit> {
+        val dropId = newDropId()
+        val userId = "ready-user"
+        seedRemaining(dropId, 10)
+        repository.enqueueOrFastAdmit(dropId, userId, 3, TTL_SECONDS) // 즉시 입장 - 입장권 발급
+        assertThat(outstandingOf(dropId)).isEqualTo(3)
+
+        val released = repository.releaseAdmission(dropId, userId)
+
+        assertThat(released).isEqualTo(3)
+        assertThat(outstandingOf(dropId)).isZero()
+        // status-snapshot.lua가 READY 판정에 쓰는 키가 사라져야 다음 폴링에서 READY가 풀린다.
+        assertThat(repository.admittedQuantityOf(dropId, userId)).isNull()
+        assertThat(admittedScoreOf(dropId, userId)).isNull()
+    }
+
+    @Test
+    @DisplayName("이미 소진된 입장권(게이트웨이 GETDEL 이후)이면 아무 것도 하지 않는다 - outstanding 이중 차감 방지")
+    fun releaseAdmission_alreadyConsumedTicket_isNoOp() = runBlocking<Unit> {
+        val dropId = newDropId()
+        val userId = "ordering-user"
+        seedRemaining(dropId, 10)
+        repository.enqueueOrFastAdmit(dropId, userId, 3, TTL_SECONDS)
+        // 게이트웨이가 주문 요청에서 입장권을 GETDEL로 소진한 직후를 흉내낸다(admitted 추적은
+        // 아직 남아있고, outstanding은 CREATED 이벤트를 받은 queue가 나중에 넘겨받는다).
+        redisTemplate.delete(RedisKeys.admission(dropId, userId))
+
+        val released = repository.releaseAdmission(dropId, userId)
+
+        assertThat(released).isZero()
+        // 여기서 깎였다면 CREATED 이벤트 처리 시 또 깎여 이중 차감이 된다.
+        assertThat(outstandingOf(dropId)).isEqualTo(3)
+        assertThat(admittedScoreOf(dropId, userId)).isNotNull()
+    }
+
+    @Test
+    @DisplayName("두 번 호출해도 outstanding은 한 번만 되돌아간다(멱등)")
+    fun releaseAdmission_twice_decrementsOnce() = runBlocking<Unit> {
+        val dropId = newDropId()
+        val userId = "ready-user"
+        seedRemaining(dropId, 10)
+        repository.enqueueOrFastAdmit(dropId, userId, 2, TTL_SECONDS)
+
+        assertThat(repository.releaseAdmission(dropId, userId)).isEqualTo(2)
+        assertThat(repository.releaseAdmission(dropId, userId)).isZero()
+
+        assertThat(outstandingOf(dropId)).isZero()
+    }
+
+    private fun outstandingOf(dropId: String): Long =
+        redisTemplate.opsForValue().get(RedisKeys.outstanding(dropId))?.toLong() ?: 0
+
+    // 반환 타입을 Double?로 명시한다 - 플랫폼 타입(Double!)을 그대로 넘기면 AssertJ의 원시형
+    // assertThat(double) 오버로드가 선택돼 null 언박싱으로 NPE가 난다.
+    private fun admittedScoreOf(dropId: String, userId: String): Double? =
+        redisTemplate.opsForZSet().score(RedisKeys.admitted(dropId), userId)
+
     // remaining = total - reserved이므로, reserved를 안 건드리는(0 가정) 대부분의 테스트는
     // total만 세팅하면 "자유 재고 remaining개"를 그대로 흉내낼 수 있다.
     private fun seedRemaining(dropId: String, remaining: Long) {

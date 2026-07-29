@@ -58,6 +58,8 @@ class WaitingQueueRedisRepository(
         RedisScript.of(ClassPathResource("redis/sweep-decision.lua"), String::class.java)
     private val removeFromQueueScript: RedisScript<Long> =
         RedisScript.of(ClassPathResource("redis/remove-from-queue.lua"), Long::class.java)
+    private val releaseAdmissionScript: RedisScript<Long> =
+        RedisScript.of(ClassPathResource("redis/release-admission.lua"), Long::class.java)
 
     override suspend fun enqueueOrFastAdmit(
         dropId: String,
@@ -274,7 +276,7 @@ class WaitingQueueRedisRepository(
         return if (grant > 0) AdmittedEntry(userId = userId, quantity = grant.toInt()) else null
     }
 
-    override suspend fun removeFromQueue(dropId: String, userId: String) {
+    override suspend fun removeFromQueue(dropId: String, userId: String): Long =
         redisTemplate.execute(
             removeFromQueueScript,
             listOf(
@@ -284,8 +286,19 @@ class WaitingQueueRedisRepository(
                 RedisKeys.decision(dropId),
             ),
             listOf(userId),
-        ).awaitFirstOrNull()
-    }
+        ).awaitFirstOrNull() ?: 0
+
+    override suspend fun releaseAdmission(dropId: String, userId: String): Long =
+        redisTemplate.execute(
+            releaseAdmissionScript,
+            listOf(
+                RedisKeys.admission(dropId, userId),
+                RedisKeys.admitted(dropId),
+                RedisKeys.admittedQuantity(dropId),
+                RedisKeys.outstanding(dropId),
+            ),
+            listOf(userId),
+        ).awaitFirstOrNull() ?: 0
 
     override suspend fun activeDropIds(): Set<String> =
         redisTemplate.opsForSet().members(RedisKeys.activeDrops()).collectList().awaitSingle().toSet()

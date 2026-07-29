@@ -124,8 +124,27 @@ interface WaitingQueueRepository {
     suspend fun admitSingle(dropId: String, userId: String, ttlSeconds: Long): AdmittedEntry?
 
     /** 대기열/하트비트/수량/결정상태 전부에서 이 사용자를 제거한다("포기" 선택, 또는 SSE
-     * 커넥션이 끊겼을 때의 즉시 회수 - QueueStreamService 참고). */
-    suspend fun removeFromQueue(dropId: String, userId: String)
+     * 커넥션이 끊겼을 때의 즉시 회수 - QueueStreamService 참고).
+     *
+     * 입장권(admission)은 일부러 건드리지 않는다 - SSE 커넥션이 잠깐 끊겼다고 이미 발급된
+     * 입장권까지 파괴하면 "서버 사정으로 순번을 잃게 하지 않는다"는 restore-admission.lua의
+     * 설계 의도와 정면으로 어긋난다. 입장권 반납은 [releaseAdmission]으로 분리돼 있다.
+     * @return 실제로 대기 순번을 갖고 있었으면 1, 이미 없었으면(중복 호출/READY 상태 등) 0
+     */
+    suspend fun removeFromQueue(dropId: String, userId: String): Long
+
+    /**
+     * 이미 발급된 입장권을 즉시 반납한다(release-admission.lua) - "포기" 선택 시
+     * [removeFromQueue]와 짝으로 호출한다. 입장권 키 삭제 + admitted 추적 정리 +
+     * outstanding 되돌리기를 원자적으로 수행해, TTL 만료(기본 180초)를 기다리지 않고
+     * 뒷사람이 바로 입장할 수 있게 한다.
+     *
+     * 이미 게이트웨이가 GETDEL로 입장권을 소진한 뒤(= 주문 진행 중)라면 아무 것도 하지
+     * 않는다 - 그 경우 outstanding은 CREATED 이벤트를 받은 apply-created-reservation.lua가
+     * 넘겨받으므로, 여기서도 깎으면 이중 차감이 된다.
+     * @return 실제로 outstanding에서 되돌린 수량(0이면 회수할 입장권이 없었음)
+     */
+    suspend fun releaseAdmission(dropId: String, userId: String): Long
 
     /**
      * 정적 hot-drops 목록을 대체하는 동적 발견 레지스트리 - 현재 대기자가 있거나 미소진
