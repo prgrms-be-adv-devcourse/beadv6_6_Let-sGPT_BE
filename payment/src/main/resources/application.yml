@@ -68,7 +68,9 @@ payment:
   # 넘긴 건은 상태를 건드리지 않은 채 다음 주기로 이월되므로 유실이 없다(오래된 순 조회라 굶지도 않는다).
   ttl-scanner:
     max-per-cycle: ${PAYMENT_TTL_SCANNER_MAX_PER_CYCLE:100} # 종류별(결제/지갑충전/환불) 사이클당 조회 상한
-    cycle-budget-seconds: ${PAYMENT_TTL_SCANNER_CYCLE_BUDGET_SECONDS:30} # 사이클 시간 예산, 초과 시 잔여분 이월
+    # 사이클 시간 예산. 종류(3) 균등 분할해 도메인당 독립 예산으로 부여한다(30초면 종류당 10초) — 선행 도메인이
+    # 예산을 독식해 뒤 도메인이 굶는 것을 막는다. 도메인이 자기 몫을 넘기면 남은 건은 다음 주기로 이월.
+    cycle-budget-seconds: ${PAYMENT_TTL_SCANNER_CYCLE_BUDGET_SECONDS:30}
 pg:
   secret-key: ${PG_SECRET_KEY} # 토스 API Basic Auth용 시크릿 키(TossClientConfig) — 웹훅 서명검증은 2026-06-24 제거됨
   # 부하테스트 전용 오버라이드. 프로덕션은 미설정(기본값 = 실 토스)이 정상이며 ENV_SECRETS에 넣지 않는다.

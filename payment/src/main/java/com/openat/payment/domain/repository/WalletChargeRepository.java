@@ -25,5 +25,6 @@ public interface WalletChargeRepository {
 
     // TTL 스캐너(§5 하자드#10) — PENDING 상태이고 threshold 이전에 생성된 row 조회.
     // limit — 한 사이클에 가져올 최대 건수(오래된 순). 상한 취지는 PaymentRepository.findStalePending과 동일.
-    List<WalletCharge> findStalePending(LocalDateTime threshold, int limit);
+    // cursor — createdAt 커서(이 값보다 큰 것만, null이면 처음부터). 취지는 PaymentRepository.findStalePending과 동일.
+    List<WalletCharge> findStalePending(LocalDateTime threshold, LocalDateTime cursor, int limit);
 }
