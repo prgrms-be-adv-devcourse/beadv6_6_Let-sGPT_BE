@@ -1,14 +1,13 @@
 package com.openat.recommendation.infrastructure.cache;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 final class JsonRedisStore {
 
@@ -23,16 +22,6 @@ final class JsonRedisStore {
   }
 
   <T> Optional<T> read(String key, Class<T> type) {
-    try {
-      String value = redisTemplate.opsForValue().get(key);
-      return value == null ? Optional.empty() : Optional.of(objectMapper.readValue(value, type));
-    } catch (Exception exception) {
-      log.warn("Failed to read JSON Redis value; treating as miss: key={}", key, exception);
-      return Optional.empty();
-    }
-  }
-
-  <T> Optional<T> read(String key, TypeReference<T> type) {
     try {
       String value = redisTemplate.opsForValue().get(key);
       return value == null ? Optional.empty() : Optional.of(objectMapper.readValue(value, type));
@@ -80,10 +69,7 @@ final class JsonRedisStore {
     }
   }
 
-  /**
-   * 읽은 직후 다른 요청이 갱신한 캐시를 덮지 않는 Redis CAS. {@code expected}가 null이면 키가
-   * 아직 없는 경우에만 쓴다.
-   */
+  /** 읽은 직후 갱신된 캐시를 덮지 않는 Redis CAS. {@code expected}가 null이면 키가 없을 때만 쓴다. */
   boolean writeIfUnchanged(
       String key, String expected, Object value, Duration ttl, long generationAtStart) {
     try {

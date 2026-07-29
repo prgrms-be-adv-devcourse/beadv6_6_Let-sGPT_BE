@@ -48,7 +48,6 @@ class LastResortProductsCacheTest {
     cache.refresh();
 
     assertThat(cache.get()).extracting(Product::productId).containsExactly(first, second);
-    // 드롭 무관 상품이므로 dropId는 null이다(프런트는 상품 페이지로 보낸다).
     assertThat(cache.get()).extracting(Product::dropId).containsOnlyNulls();
   }
 
