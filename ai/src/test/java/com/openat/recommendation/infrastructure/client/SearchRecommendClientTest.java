@@ -9,15 +9,24 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.openat.recommendation.domain.model.Seed;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.mock.http.client.MockClientHttpResponse;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -42,7 +51,8 @@ class SearchRecommendClientTest {
   }
 
   private SearchRecommendClient client(int maxGroups, int overfetch) {
-    return new SearchRecommendClient(builder.build(), 20, maxGroups, overfetch, Runnable::run);
+    return new SearchRecommendClient(
+        builder.build(), 20, maxGroups, overfetch, 20, Duration.ofSeconds(2), Runnable::run);
   }
 
   @Test
@@ -342,6 +352,61 @@ class SearchRecommendClientTest {
         .extracting(SearchRecommendClient.SimilarProductResponse::id)
         .containsExactlyElementsOf(resultIds);
     server.verify();
+  }
+
+  @Test
+  @DisplayName("전역 동시성 상한을 넘는 검색 호출은 허가를 기다리다 타임아웃되면 셰딩되어 폴백으로 넘어간다")
+  void recommend_whenSearchConcurrencyExhausted_shedsExcessCallToFallback() throws Exception {
+    UUID heldResultId = UUID.randomUUID();
+    CountDownLatch permitHeld = new CountDownLatch(1);
+    CountDownLatch releaseHold = new CountDownLatch(1);
+    RestClient.Builder blockingBuilder =
+        RestClient.builder()
+            .baseUrl(BASE_URL)
+            .requestInterceptor(
+                (request, body, execution) -> {
+                  // 유일한 permit을 쥔 채로 HTTP 안에서 블로킹한다 — 두 번째 호출이 굶도록.
+                  permitHeld.countDown();
+                  try {
+                    releaseHold.await();
+                  } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                  }
+                  MockClientHttpResponse response =
+                      new MockClientHttpResponse(
+                          products(List.of(heldResultId)).getBytes(StandardCharsets.UTF_8),
+                          HttpStatus.OK);
+                  response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+                  return response;
+                });
+    // maxConcurrency=1, maxGroups=1 이라 recommend()가 호출 스레드에서 바로 post()를 타 점유가 결정적이다.
+    SearchRecommendClient limitedClient =
+        new SearchRecommendClient(
+            blockingBuilder.build(), 20, 1, 1, 1, Duration.ofMillis(150), Runnable::run);
+
+    ExecutorService background = Executors.newSingleThreadExecutor();
+    try {
+      Future<List<SearchRecommendClient.SimilarProductResponse>> holding =
+          background.submit(() -> limitedClient.recommend(List.of(new Seed(UUID.randomUUID(), 0.5, false))));
+      assertThat(permitHeld.await(2, TimeUnit.SECONDS)).isTrue();
+
+      // permit이 없는 두 번째 호출은 acquire 타임아웃(150ms)만큼 대기한 뒤 셰딩 예외로 폴백된다.
+      long startedAt = System.nanoTime();
+      assertThatThrownBy(
+              () -> limitedClient.recommend(List.of(new Seed(UUID.randomUUID(), 0.5, false))))
+          .isInstanceOf(SearchRecommendClient.SearchConcurrencyLimitedException.class);
+      long waitedMillis = (System.nanoTime() - startedAt) / 1_000_000;
+      assertThat(waitedMillis).isGreaterThanOrEqualTo(120);
+
+      // 점유 호출을 풀어 주면 permit이 반납돼 정상 완료된다.
+      releaseHold.countDown();
+      assertThat(holding.get(2, TimeUnit.SECONDS))
+          .extracting(SearchRecommendClient.SimilarProductResponse::id)
+          .containsExactly(heldResultId);
+    } finally {
+      releaseHold.countDown();
+      background.shutdownNow();
+    }
   }
 
   private List<UUID> ids(int count) {

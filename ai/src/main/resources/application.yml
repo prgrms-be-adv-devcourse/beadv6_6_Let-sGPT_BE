@@ -154,6 +154,12 @@ recommendation:
     max-groups: ${RECOMMENDATION_SEARCH_MAX_GROUPS:5}
     # 그룹당 요청 배수 — 인접 시드의 KNN이 겹쳐 중복 제거 후 후보가 마르는 것을 메운다. 호출 횟수·LLM 입력은 불변.
     overfetch: ${RECOMMENDATION_SEARCH_OVERFETCH:3}
+    # 검색 서비스로 나가는 동시 HTTP 호출 전역 상한. 파이프라인 병렬(max-groups)×파이프라인 상한이
+    # 곱해져 검색이 폭주하는 것을 막는 밸브 — 초과분은 아래 대기 후 폴백한다.
+    max-concurrency: ${RECOMMENDATION_SEARCH_MAX_CONCURRENCY:20}
+    # 허가를 못 얻은 검색 호출의 최대 대기 시간. 넘기면 해당 검색만 실패시켜 폴백으로 넘긴다.
+    # 검색 읽기 타임아웃(services.search.timeout)과 정합하게 둔다.
+    acquire-timeout: ${RECOMMENDATION_SEARCH_ACQUIRE_TIMEOUT:2500ms}
   drop-cache:
     page-size: ${RECOMMENDATION_DROP_CACHE_PAGE_SIZE:100}
     refresh-interval: ${RECOMMENDATION_DROP_CACHE_REFRESH_INTERVAL:5m}

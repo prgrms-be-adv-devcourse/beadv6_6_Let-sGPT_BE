@@ -3,6 +3,7 @@ package com.openat.recommendation.infrastructure.client;
 import static com.openat.recommendation.infrastructure.client.RestClientResponses.requireBody;
 
 import com.openat.recommendation.domain.model.Seed;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -11,6 +12,8 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -32,17 +35,25 @@ public class SearchRecommendClient {
   private final int maxGroups;
   private final int overfetch;
   private final Executor executor;
+  // 검색 서비스로 나가는 동시 HTTP 호출 전역 상한 — 파이프라인 병렬×파이프라인 상한의 증폭을 막는다.
+  // 공정 모드라 대기가 몰려도 굶는 호출 없이 순서대로 통과한다. 가상 스레드라 블로킹 대기 비용은 싸다.
+  private final Semaphore searchConcurrencyLimiter;
+  private final long acquireTimeoutMillis;
 
   public SearchRecommendClient(
       @Qualifier("searchRestClient") RestClient restClient,
       @Value("${services.search.recommendation-size}") int recommendationSize,
       @Value("${recommendation.search.max-groups:5}") int maxGroups,
       @Value("${recommendation.search.overfetch:3}") int overfetch,
+      @Value("${recommendation.search.max-concurrency:20}") int maxConcurrency,
+      @Value("${recommendation.search.acquire-timeout:2500ms}") Duration acquireTimeout,
       @Qualifier("recommendationExecutor") Executor executor) {
     this.restClient = restClient;
     this.recommendationSize = recommendationSize;
     this.maxGroups = Math.max(1, maxGroups);
     this.overfetch = Math.max(1, overfetch);
+    this.searchConcurrencyLimiter = new Semaphore(Math.max(1, maxConcurrency), true);
+    this.acquireTimeoutMillis = Math.max(0, acquireTimeout.toMillis());
     this.executor = executor;
   }
 
@@ -133,15 +144,44 @@ public class SearchRecommendClient {
     return exception;
   }
 
+  // 전역 캡을 이 한 곳에서만 통과시킨다 — 단일 그룹·팬아웃 그룹 모두 여기로 모인다.
+  // 허가를 못 얻은 호출은 예외를 던져 기존 그룹 실패·검색 실패 폴백 경로로 흡수되게 한다.
   private List<SimilarProductResponse> post(List<Seed> seeds, int size) {
-    return requireBody(
-        restClient
-            .post()
-            .uri("/api/v1/searchs/recommand")
-            .body(buildRequest(seeds, size))
-            .retrieve()
-            .body(new ParameterizedTypeReference<List<SimilarProductResponse>>() {}),
-        "Search recommendation response body is empty");
+    boolean acquired;
+    try {
+      acquired = searchConcurrencyLimiter.tryAcquire(acquireTimeoutMillis, TimeUnit.MILLISECONDS);
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new SearchConcurrencyLimitedException(
+          "interrupted while awaiting a search concurrency permit", exception);
+    }
+    if (!acquired) {
+      throw new SearchConcurrencyLimitedException(
+          "search concurrency limit reached, shedding this search call");
+    }
+    try {
+      return requireBody(
+          restClient
+              .post()
+              .uri("/api/v1/searchs/recommand")
+              .body(buildRequest(seeds, size))
+              .retrieve()
+              .body(new ParameterizedTypeReference<List<SimilarProductResponse>>() {}),
+          "Search recommendation response body is empty");
+    } finally {
+      searchConcurrencyLimiter.release();
+    }
+  }
+
+  /** 전역 동시성 상한 초과로 셰딩된 검색 호출. 기존 그룹 실패·검색 실패 폴백 경로로 흘려보낸다. */
+  public static class SearchConcurrencyLimitedException extends RuntimeException {
+    SearchConcurrencyLimitedException(String message) {
+      super(message);
+    }
+
+    SearchConcurrencyLimitedException(String message, Throwable cause) {
+      super(message, cause);
+    }
   }
 
   private SearchRecommendationRequest buildRequest(List<Seed> seeds, int size) {
