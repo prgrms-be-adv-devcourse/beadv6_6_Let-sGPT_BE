@@ -5,6 +5,7 @@ import com.openat.queue.domain.model.DecisionState
 import com.openat.queue.domain.model.QueueStatusSnapshot
 import com.openat.queue.domain.model.WaitingTicket
 import com.openat.queue.domain.repository.WaitingQueueRepository
+import com.openat.queue.infrastructure.trace.QueueTraceBridge
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.reactive.awaitFirstOrNull
@@ -31,6 +32,7 @@ import reactor.core.publisher.Mono
 @Repository
 class WaitingQueueRedisRepository(
     private val redisTemplate: ReactiveStringRedisTemplate,
+    private val queueTraceBridge: QueueTraceBridge,
 ) : WaitingQueueRepository {
 
     @Suppress("UNCHECKED_CAST")
@@ -81,6 +83,11 @@ class WaitingQueueRedisRepository(
         ).awaitFirstOrNull() ?: return null
         val admitted = result.getOrNull(0)?.toIntOrNull() ?: 0
         val grantedQuantity = result.getOrNull(1)?.toIntOrNull() ?: 0
+        if (admitted != 1) {
+            // 즉시 입장(fast-admit)이 아니라 실제로 대기열에 들어간 경우에만, 이 요청의 traceparent를
+            // 저장해 둔다. 나중에 admit tick이 이 사용자를 입장시킬 때 그 원 요청 트레이스로 링크를 건다.
+            queueTraceBridge.captureEnqueue(dropId, userId)
+        }
         return if (admitted == 1) AdmittedEntry(userId = userId, quantity = grantedQuantity) else null
     }
 

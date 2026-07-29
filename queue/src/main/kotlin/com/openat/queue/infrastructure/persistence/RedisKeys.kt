@@ -70,6 +70,13 @@ object RedisKeys {
      * 키가 아니라 전역 키 하나뿐이다. */
     fun activeDrops(): String = "queue:active-drops"
 
+    /** enqueue 시점의 원 요청 W3C traceparent 보관소 (HASH, field=userId, value=traceparent).
+     * enqueue와 admit이 서로 다른 실행 문맥/tick에서 일어나 Redis 외에는 트레이스 문맥을 실어
+     * 나를 수단이 없다. admit 스팬에서 원 enqueue 트레이스로 링크를 걸기 위한 부가 데이터일 뿐
+     * 입장 판정 원자성과 무관하므로 Lua 밖에서 다룬다. admit 시 해당 필드를 삭제하고, 유령
+     * 데이터 방지를 위해 해시 자체에 TTL을 건다. */
+    fun enqueueTrace(dropId: String): String = "queue:$dropId:traceparent"
+
     /** SSE 푸시용 Redis Pub/Sub 채널(WebFlux+SSE 전환분). 이 dropId의 대기열 상태가 바뀔 수
      * 있는 지점(입장 배치 admit, decision, sweep)에서 [QueueEventPublisher]가 "변경됨" 신호만
      * 싣는다 - payload에 누구의 무엇이 바뀌었는지는 안 담는다. 구독 중인 각 SSE 커넥션이 신호를

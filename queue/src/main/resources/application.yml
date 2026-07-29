@@ -62,6 +62,10 @@ management:
         "[http.server.requests]": 5ms
       maximum-expected-value:
         "[http.server.requests]": 10s
+  tracing:
+    export:
+      otlp:
+        enabled: false   # 로컬/compose 기본 off — Tempo 없으면 export 실패가 반복 로깅됨(k8s ConfigMap에서 true로 override)
 
 # 대기열 튜닝 파라미터 - 전부 외부 설정으로 노출(하드코딩 금지), 재배포 없이 env로 조정 가능.
 # 정적 hot-drops 목록 없음 - 모든 드롭에 균일 적용(WaitingQueueRepository.activeDropIds()로 동적 발견).

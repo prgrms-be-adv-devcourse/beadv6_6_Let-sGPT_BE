@@ -4,6 +4,7 @@ import com.openat.queue.application.usecase.AdmitWaitersUseCase
 import com.openat.queue.domain.repository.WaitingQueueRepository
 import com.openat.queue.infrastructure.config.QueueMetricsConfig
 import com.openat.queue.infrastructure.persistence.QueueEventPublisher
+import com.openat.queue.infrastructure.trace.QueueTraceBridge
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.async
@@ -44,6 +45,7 @@ class AdmissionScheduler(
     private val queueMetricsConfig: QueueMetricsConfig,
     private val meterRegistry: MeterRegistry,
     private val queueEventPublisher: QueueEventPublisher,
+    private val queueTraceBridge: QueueTraceBridge,
 ) {
 
     private val log = LoggerFactory.getLogger(AdmissionScheduler::class.java)
@@ -57,6 +59,9 @@ class AdmissionScheduler(
                     queueMetricsConfig.ensureRegistered(dropId)
                     val admitted = admitWaitersUseCase.admitBatch(dropId)
                     if (admitted.isNotEmpty()) {
+                        // 입장 처리된 각 사용자의 원 enqueue 트레이스로 링크를 건 admit 스팬을 남긴다.
+                        // 저장된 traceparent가 없으면(비활성/이미 소진) 조용히 지나간다.
+                        admitted.forEach { queueTraceBridge.linkAdmit(dropId, it.userId) }
                         val totalQuantity = admitted.sumOf { it.quantity }
                         log.info(
                             "[queue-admit] dropId={} userCount={} totalQuantity={} entries={}",
