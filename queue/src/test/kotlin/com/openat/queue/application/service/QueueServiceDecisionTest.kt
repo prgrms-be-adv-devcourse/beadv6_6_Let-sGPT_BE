@@ -261,6 +261,42 @@ class QueueServiceDecisionTest {
         assertThat(result.availableChoices).containsExactly("PARTIAL", "GIVE_UP")
     }
 
+    @Test
+    @DisplayName("이미 입장권을 받은(READY) 사용자가 포기하면 대기열 제거뿐 아니라 입장권 반납도 함께 호출한다")
+    fun decide_giveUpWhenReady_alsoReleasesAdmission() = runBlocking<Unit> {
+        // 회귀 방지: 예전엔 GIVE_UP이 removeFromQueue만 호출해서, 이미 READY인 사용자는
+        // admission 키가 남아 계속 READY로 보이고 outstanding도 TTL(기본 180초)까지 묶였다.
+        val repository = mock<WaitingQueueRepository>()
+        whenever(repository.statusSnapshotOf(eq(dropId), eq(userId), any(), any()))
+            .thenReturn(
+                QueueStatusSnapshot(
+                    admittedQuantity = 3, // READY 상태
+                    rank = null,
+                    totalWaiting = 0,
+                    quantity = null,
+                    remaining = null,
+                    closeAt = null,
+                    outstanding = 3,
+                    confirmed = 0,
+                    total = 10,
+                    decision = null,
+                    reserved = 0,
+                ),
+            )
+        whenever(repository.removeFromQueue(dropId, userId)).thenReturn(0) // 대기열엔 이미 없음
+        val properties = QueueProperties()
+        whenever(repository.releaseAdmission(dropId, userId, properties.admission.giveUpTombstoneTtlSeconds))
+            .thenReturn(3)
+        val service = QueueService(
+            repository, mock(), mock(), properties, mock(),
+        )
+
+        service.decide(dropId, userId, DecisionChoice.GIVE_UP)
+
+        verify(repository).removeFromQueue(dropId, userId)
+        verify(repository).releaseAdmission(dropId, userId, properties.admission.giveUpTombstoneTtlSeconds)
+    }
+
     private lateinit var waitingQueueRepositoryMock: WaitingQueueRepository
 
     private suspend fun serviceWith(

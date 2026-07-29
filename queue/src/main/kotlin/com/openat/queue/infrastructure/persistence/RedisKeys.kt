@@ -84,4 +84,13 @@ object RedisKeys {
      * 내려보낸다(QueueStreamService 참고) - 폴링처럼 "누가 요청했으니 계산한다"가 아니라
      * "바뀌었으니 계산한다"로 뒤집힌 것이 이 전환의 핵심이다. */
     fun eventsChannel(dropId: String): String = "queue-events:$dropId"
+
+    /** GIVE_UP 의사 표시(tombstone) - STRING, 값 없음("1"), TTL만 의미 있음. `release-admission
+     * .lua`가 게이트웨이의 GETDEL에 진 경우(이미 주문 진행 중) 이 키를 남겨, 그 주문이 나중에
+     * 실패해 apigateway의 `restore-admission.lua`가 입장권을 되살리려 할 때 여기 tombstone이
+     * 있으면 복원을 건너뛰게 한다. TTL은 게이트웨이 다운스트림 응답 타임아웃(현재 10분,
+     * apigateway response-timeout)보다 넉넉히 잡아야 한다 - 그 안에 5xx 응답이 오는 모든
+     * 케이스를 커버해야 하기 때문. GIVE_UP은 항상 이 키를 SET한 뒤 값을 넘겨주므로 TTL이
+     * 지나 사라져도 안전 측 실패(늦게 도착한 restore가 다시 성공)일 뿐 사용자는 재진입하면 된다. */
+    fun giveUpTombstone(dropId: String, userId: String): String = "giveup:$dropId:$userId"
 }
