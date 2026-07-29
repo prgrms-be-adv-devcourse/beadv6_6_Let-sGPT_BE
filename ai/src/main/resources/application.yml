@@ -146,6 +146,11 @@ recommendation:
   # 이 밸브가 발동하지 못해 초과분이 accept 큐에 쌓인다(실측 90/s에서 p95 7.7s).
   # 40으로 두어 남은 스레드를 캐시 히트(~10ms)·헬스체크에 남긴다 — 미스가 히트를 굶기지 않게.
   max-concurrent-pipelines: ${RECOMMENDATION_MAX_CONCURRENT_PIPELINES:40}
+  search:
+    # 시드를 나눠 검색을 부르는 최대 횟수. 요청당 검색 호출이 이 배까지 늘고 size는 이만큼 쪼개진다.
+    max-groups: ${RECOMMENDATION_SEARCH_MAX_GROUPS:5}
+    # 그룹당 요청 배수 — 인접 시드의 KNN이 겹쳐 중복 제거 후 후보가 마르는 것을 메운다. 호출 횟수·LLM 입력은 불변.
+    overfetch: ${RECOMMENDATION_SEARCH_OVERFETCH:3}
   drop-cache:
     page-size: ${RECOMMENDATION_DROP_CACHE_PAGE_SIZE:100}
     refresh-interval: ${RECOMMENDATION_DROP_CACHE_REFRESH_INTERVAL:5m}
