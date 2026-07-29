@@ -19,12 +19,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
 public class OrderService implements OrderUseCase {
+
+  // createdAt 단독 정렬은 페이지 경계 중복·누락 — id 타이브레이커 필수
+  private static final Sort MY_ORDERS_SORT = Sort.by(Sort.Direction.DESC, "createdAt", "id");
 
   private final OrderRepository orderRepository;
   private final OrderCreationService orderCreationService;
@@ -46,7 +50,9 @@ public class OrderService implements OrderUseCase {
   @Override
   @Transactional(readOnly = true)
   public Page<OrderSummaryInfo> getMyOrders(UUID memberId, OrderStatus status, Pageable pageable) {
-    return orderRepository.findByMemberId(memberId, status, pageable).map(OrderSummaryInfo::from);
+    return orderRepository
+        .findByMemberId(memberId, status, fixSort(pageable))
+        .map(OrderSummaryInfo::from);
   }
 
   @Override
@@ -92,6 +98,13 @@ public class OrderService implements OrderUseCase {
         .stream()
         .map(PurchaseSignalInfo::from)
         .toList();
+  }
+
+  private static Pageable fixSort(Pageable pageable) {
+    if (pageable.isUnpaged()) {
+      return Pageable.unpaged(MY_ORDERS_SORT);
+    }
+    return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), MY_ORDERS_SORT);
   }
 
   private Order getOwnedOrder(UUID memberId, UUID orderId) {

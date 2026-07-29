@@ -18,6 +18,7 @@ public enum OrderErrorCode implements ErrorCode {
       "ORDER_ALREADY_COMPLETED",
       "결제 완료 주문은 취소할 수 없습니다. /api/v1/orders/{orderId}/refund-requests를 이용해 주세요."),
   INVALID_STATUS(HttpStatus.CONFLICT, "ORDER_INVALID_STATUS", "요청한 주문 상태에서는 처리할 수 없습니다."),
+  DROP_NOT_FOUND(HttpStatus.NOT_FOUND, "DROP_NOT_FOUND", "존재하지 않는 드롭입니다."),
   SOLD_OUT(HttpStatus.CONFLICT, "SOLD_OUT", "재고가 없습니다."),
   DROP_NOT_OPEN(HttpStatus.BAD_REQUEST, "DROP_NOT_OPEN", "드롭이 오픈되지 않았습니다."),
   DROP_CLOSED(HttpStatus.CONFLICT, "DROP_CLOSED", "종료된 드롭입니다."),

@@ -1,5 +1,6 @@
 package com.openat.order.infrastructure.client;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.web.client.RestClientException;
 
@@ -21,5 +22,9 @@ public class ProductApiException extends RestClientException {
 
   public boolean isServerError() {
     return statusCode.is5xxServerError();
+  }
+
+  boolean isNotFound() {
+    return statusCode.value() == HttpStatus.NOT_FOUND.value();
   }
 }

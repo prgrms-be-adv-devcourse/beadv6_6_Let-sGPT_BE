@@ -38,7 +38,6 @@ class PendingOrderCreatorTest {
   @Test
   @DisplayName("주문 생성은 주문 저장과 같은 트랜잭션에서 사가 ORDER_CREATED 기록을 요청한다")
   void create_recordsOrderCreatedSagaWithSavedOrder() {
-    // given
     UUID memberId = UUID.randomUUID();
     CreateOrderCommand command = new CreateOrderCommand(UUID.randomUUID(), 2, "idem-001", "테스트 상품");
     OrderSnapshotInfo snapshot =
@@ -54,10 +53,8 @@ class PendingOrderCreatorTest {
               return order;
             });
 
-    // when
     Order result = pendingOrderCreator.create(memberId, command, snapshot, now);
 
-    // then
     assertThat(result.getId()).isEqualTo(generatedId);
     ArgumentCaptor<Order> savedOrderCaptor = ArgumentCaptor.forClass(Order.class);
     verify(orderSagaRecorder).recordOrderCreated(savedOrderCaptor.capture());
