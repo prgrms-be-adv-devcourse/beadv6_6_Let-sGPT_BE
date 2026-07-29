@@ -10,10 +10,10 @@ spec:
   source:
     repoURL: https://github.com/prgrms-be-adv-devcourse/beadv6_6_Let-sGPT_BE
     targetRevision: deploy/state
-    # 부하테스트 오버레이 활성 상태(2026-07-28 켜짐). 목·커넥션풀·유량제한이 git desired-state로
-    # 강제된다. 비활성화 = 이 커밋 revert(path를 k8s/overlay로 복귀, prune이 wiremock 철거).
-    # 절차·검증은 k8s/overlay-loadtest/README.md 참고.
-    path: k8s/overlay
+    # 부하테스트 오버레이 재활성(2026-07-29, 통합테스트 종료 후 캠페인 잔여 라운드).
+    # 목·커넥션풀·유량제한이 git desired-state로 강제된다. 비활성화 = 이 커밋 revert
+    # (path를 k8s/overlay로 복귀, prune이 wiremock 철거). 절차·검증은 k8s/overlay-loadtest/README.md 참고.
+    path: k8s/overlay-loadtest
   destination:
     server: https://kubernetes.default.svc
     namespace: openat
