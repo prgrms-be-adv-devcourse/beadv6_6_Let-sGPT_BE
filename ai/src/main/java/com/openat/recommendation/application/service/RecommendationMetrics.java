@@ -26,6 +26,7 @@ public class RecommendationMetrics {
   private static final String LLM = "recommendation.llm";
   private static final String FALLBACK = "recommendation.fallback";
   private static final String LAST_RESORT = "recommendation.last-resort";
+  private static final String EMPTY = "recommendation.empty";
   private static final String OVERLOADED = "recommendation.overloaded";
   private static final String SEED_REFRESH = "recommendation.seed-refresh";
   private static final String SEED_SALVAGE = "recommendation.seed-salvage";
@@ -123,6 +124,15 @@ public class RecommendationMetrics {
    */
   void lastResort(RecommendationMode mode, String reason) {
     registry.counter(LAST_RESORT, "mode", mode.tag(), "reason", reason).increment();
+  }
+
+  /**
+   * 사용자가 아무것도 보지 못한 응답. {@code fallback}은 "왜 폴백했나"만 담고 그 폴백이 실제로
+   * 무언가를 채웠는지는 구분하지 않으므로, 빈 응답으로 끝난 경우를 따로 센다. 요청당 INFO 로그를
+   * 지우는 대신 이 카운터가 그 신호를 맡는다.
+   */
+  void empty(RecommendationMode mode, String reason) {
+    registry.counter(EMPTY, "mode", mode.tag(), "reason", reason).increment();
   }
 
   void overloaded(boolean requestPath) {

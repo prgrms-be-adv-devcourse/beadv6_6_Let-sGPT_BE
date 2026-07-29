@@ -497,7 +497,8 @@ public class RecommendationService {
       if (mode.isHome()) {
         return fallback(mode, productId, currentProduct, "no-open-candidates");
       }
-      log.info("recommendation empty: home=false, reason=no-candidates");
+      metrics.empty(RecommendationMode.DETAIL, "no-candidates");
+      log.debug("recommendation empty: home=false, reason=no-candidates");
       return RecommendationResponse.empty();
     }
 
@@ -628,7 +629,8 @@ public class RecommendationService {
     metrics.fallback(RecommendationMode.HOME, reason);
     List<DropMeta> drops = openDropCache.findGeneral(fallbackLimit);
     if (drops.isEmpty()) {
-      log.info("recommendation fallback empty: home=true, reason={}", reason);
+      metrics.empty(RecommendationMode.HOME, reason);
+      log.debug("recommendation fallback empty: home=true, reason={}", reason);
       return RecommendationResponse.empty();
     }
     return dropSection(RecommendationMode.HOME, "이런 드롭은 어떠세요?", drops, reason);
@@ -660,11 +662,12 @@ public class RecommendationService {
     // 최후 폴백 캐시는 스케줄로 채워진다. 기동 직후처럼 아직 비어 있으면 빈 응답이 될 수밖에 없다.
     List<Product> latest = lastResortProductsCache.get();
     if (latest.isEmpty()) {
-      log.info("recommendation fallback empty: home=false, reason={}", reason);
+      metrics.empty(RecommendationMode.DETAIL, reason);
+      log.debug("recommendation fallback empty: home=false, reason={}", reason);
       return RecommendationResponse.empty();
     }
     metrics.lastResort(RecommendationMode.DETAIL, reason);
-    log.info(
+    log.debug(
         "recommendation last-resort served: home=false, reason={}, count={}", reason, latest.size());
     return new RecommendationResponse(List.of(new Section(LAST_RESORT_TITLE, latest)));
   }
@@ -672,7 +675,7 @@ public class RecommendationService {
   private RecommendationResponse dropSection(
       RecommendationMode mode, String title, List<DropMeta> drops, String reason) {
     List<Product> products = drops.stream().map(this::toProduct).toList();
-    log.info(
+    log.debug(
         "recommendation fallback served: home={}, reason={}, count={}",
         mode.isHome(),
         reason,

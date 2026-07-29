@@ -717,6 +717,22 @@ class RecommendationServiceTest {
 
     // 최후 폴백 캐시는 스케줄로 채워진다. 기동 직후엔 비어 있어 빈 응답이 될 수밖에 없다.
     assertThat(service.recommend(currentId).sections()).isEmpty();
+    assertThat(counterCount("recommendation.empty", "mode", "detail", "reason", "search-failed"))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void recommend_forDetailWhenNoOpenCandidates_countsEmptyResponse() {
+    UUID currentId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId))
+        .thenReturn(product(currentId, UUID.randomUUID()));
+    when(searchClient.recommend(any())).thenReturn(List.of());
+
+    assertThat(service.recommend(currentId).sections()).isEmpty();
+
+    assertThat(counterCount("recommendation.empty", "mode", "detail", "reason", "no-candidates"))
+        .isEqualTo(1);
+    verify(llmClient, never()).complete(any());
   }
 
   @Test
@@ -1085,6 +1101,18 @@ class RecommendationServiceTest {
     service.recommend(null);
 
     assertThat(counterCount("recommendation.fallback", "mode", "home", "reason", "no-seeds"))
+        .isEqualTo(1);
+  }
+
+  /** 요청당 INFO 로그를 DEBUG로 내린 대신 이 카운터가 "사용자가 아무것도 못 봤다"를 담는다. */
+  @Test
+  void recommend_forHomeWhenNoOpenDrops_countsEmptyResponse() {
+    when(seedService.collect()).thenReturn(List.of());
+    when(openDropCache.findGeneral(3)).thenReturn(List.of());
+
+    service.recommend(null);
+
+    assertThat(counterCount("recommendation.empty", "mode", "home", "reason", "no-seeds"))
         .isEqualTo(1);
   }
 
