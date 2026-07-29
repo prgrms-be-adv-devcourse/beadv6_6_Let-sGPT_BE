@@ -58,6 +58,28 @@ redis.call('SADD', KEYS[10], dropId)
 local closeAt = tonumber(redis.call('HGET', KEYS[6], 'closeAt') or '-1')
 local dropClosed = closeAt >= 0 and now >= closeAt
 
+-- 회계 정합성 방어(admit.lua의 ZSCORE 가드와 동일 목적, 2026-07 추가): 앱 레벨 가드
+-- (QueueService.enter의 admittedQuantityOf 체크)는 "먼저 읽고(GET) 없으면 쓴다(SET)"
+-- 방식이라 그 자체로는 원자적이지 않다 - 진짜 동시(round trip 없이 같은 순간) 요청 두 건이
+-- 둘 다 "아직 없음"을 보고 이 스크립트까지 도달할 수 있다. 이 스크립트는 Redis에서 항상
+-- 단일 스레드로 직렬 실행되므로, 여기서 한 번 더 확인하면 그 좁은 창까지 완전히 닫힌다.
+--
+-- 이미 미소진 입장권을 보유 중이면(직전 동시 요청이 먼저 발급받음) 아무 것도 하지 않고
+-- 그대로 반환한다 - 대기열에도 등록하지 않는다(수정, 2026-07 PR 리뷰: 처음엔 "아래 평범한
+-- 대기열 등록 경로로 흘려보내도 admit.lua의 동일 가드가 다음 tick에서 재부여 없이 대기열에서만
+-- 조용히 제거하니 무해하다"고 판단했으나, 그 가드는 ZSCORE(admitted ZSET)로 판정하는데
+-- "지연된 이중 입장" 시나리오에서 허점이 있었다: 이 좀비 대기열 항목이 남아있는 동안 사용자가
+-- 원래 보유하던 티켓을 소비(주문 성공)하면 release-admitted-tracking.lua가 admitted ZSET에서
+-- 즉시 ZREM한다 - 그러면 다음 admit.lua tick이 이 좀비 항목을 볼 때 ZSCORE가 이미 nil이라
+-- "이미 입장권 보유 중"으로 인식하지 못하고 평범한 신규 후보로 취급해, 이미 티켓을 써버린
+-- 사용자에게 재고가 있으면 새 티켓을 또 발급해버린다(사용자 1명이 재고 2개를 실질적으로
+-- 가져가는 결함 - outstanding 회계뿐 아니라 실제 재고 배분이 틀어진다). 애초에 대기열에
+-- 넣지 않으면 좀비 항목 자체가 생기지 않아 이 경로가 통째로 사라진다.
+local alreadyAdmitted = redis.call('ZSCORE', KEYS[8], userId)
+if alreadyAdmitted then
+  return {'0', '0'}
+end
+
 if not dropClosed and redis.call('ZCARD', KEYS[1]) == 0 then
   local total = redis.call('GET', KEYS[4])
   if total ~= false then

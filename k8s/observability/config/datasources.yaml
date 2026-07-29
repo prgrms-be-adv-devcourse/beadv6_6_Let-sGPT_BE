@@ -8,6 +8,12 @@ datasources:
     access: proxy
     url: "http://prometheus:9090"
     isDefault: true
+    jsonData:
+      # 히스토그램 버킷 exemplar의 trace id 라벨(Micrometer 기본 trace_id)을 Tempo 데이터소스로 연결한다.
+      # 지연 패널의 exemplar 점을 클릭하면 해당 trace_id로 Tempo 트레이스가 열린다.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
   - name: Tempo
     uid: tempo
     type: tempo

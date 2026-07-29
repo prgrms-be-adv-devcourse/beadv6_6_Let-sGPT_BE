@@ -10,5 +10,10 @@ import java.util.UUID;
  */
 public interface TokenExchangeUseCase {
 
-    SellerTokenResponse issueSellerToken(UUID memberId, UUID sellerInfoId);
+    /**
+     * @param audience 대상 서비스. {@code null}/blank이면 하위 호환을 위해
+     *                 {@code TokenExchangeRequest.AUDIENCE_PRODUCT}로 취급한다.
+     *                 지원하지 않는 값이면 {@code SELLER_TOKEN_EXCHANGE_UNSUPPORTED_AUDIENCE}로 거부한다.
+     */
+    SellerTokenResponse issueSellerToken(UUID memberId, UUID sellerInfoId, String audience);
 }

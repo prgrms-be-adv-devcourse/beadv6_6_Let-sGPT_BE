@@ -9,8 +9,8 @@ package com.openat.member.application.dto;
  *   <li>grant_type: {@code urn:ietf:params:oauth:grant-type:token-exchange}</li>
  *   <li>subject_token_type: {@code urn:ietf:params:oauth:token-type:jwt}</li>
  *   <li>requested_token_type: {@code urn:ietf:params:oauth:token-type:jwt}</li>
- *   <li>audience: {@code openat-product}</li>
- *   <li>scope: {@code product:write}</li>
+ *   <li>audience: {@code openat-product} | {@code openat-settlement}</li>
+ *   <li>scope: {@code product:write} | {@code settlement:read}</li>
  *   <li>resource: {@code urn:openat:seller:{sellerInfoId}} — 테넌트 선택 (비표준 확장)</li>
  * </ul>
  */
@@ -28,6 +28,9 @@ public record TokenExchangeRequest(
     public static final String TOKEN_TYPE_JWT = "urn:ietf:params:oauth:token-type:jwt";
     public static final String AUDIENCE_PRODUCT = "openat-product";
     public static final String SCOPE_PRODUCT_WRITE = "product:write";
+    /** 정산(settlement) 판매자 조회 scoped 토큰용 audience/scope. apigateway {@code scopedFor("openat-settlement")}와 짝이다. */
+    public static final String AUDIENCE_SETTLEMENT = "openat-settlement";
+    public static final String SCOPE_SETTLEMENT_READ = "settlement:read";
     /** resource URN 접두사. sellerInfoId는 마지막 세그먼트. */
     public static final String RESOURCE_SELLER_PREFIX = "urn:openat:seller:";
 }
