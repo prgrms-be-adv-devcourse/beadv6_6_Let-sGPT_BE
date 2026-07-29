@@ -9,17 +9,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 열린 드롭 상품의 DETAIL 추천을 주기적으로 미리 계산해 캐시({@code rec:detail:{productId}})를
- * 데워 두는 프리배치. 첫 방문자가 콜드 미스로 LLM 지연을 겪지 않도록 한다.
+ * 열린 드롭 상품의 DETAIL 추천을 미리 계산해 캐시를 데운다. LLM 비용이 있어 기본값은 비활성이다.
  *
- * <p>새벽 고정이 아니라 설정 가능한 간격으로 돈다. LLM 비용이 있으므로 코드 기본값은 비활성
- * ({@code recommendation.prebatch.enabled=false})이며 환경 변수로 켤 수 있다.
- *
- * <p>홈은 회원별이라 프리배치 대상이 아니다. 상세만 공유 캐시 키를 쓰므로 데울 수 있다.
- *
- * <p>비용 억제: 이미 신선한 상품은 건너뛰고(콜드만 데움), {@link RecommendationService#warmDetail}
- * 이 라이브 요청과 같은 single-flight·pipelineLimiter 경로를 재사용해 중복 계산·다운스트림
- * 과부하를 막는다. 상품은 순차 처리하며 한 상품이 실패해도 로그만 남기고 나머지를 계속한다.
+ * <p>홈은 회원별 키라 프리배치 대상이 아니다. 상세만 공유 캐시 키를 쓰므로 데울 수 있다.
  */
 @Component
 public class RecommendationPrebatchScheduler {
@@ -63,7 +55,6 @@ public class RecommendationPrebatchScheduler {
           skipped++;
         }
       } catch (RuntimeException | Error throwable) {
-        // 한 상품의 실패가 배치 전체를 멈추지 않는다. 로그만 남기고 다음 상품으로 넘어간다.
         failed++;
         log.warn("recommendation prebatch failed for product: productId={}", productId, throwable);
       }

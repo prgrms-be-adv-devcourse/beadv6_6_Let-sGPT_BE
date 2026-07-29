@@ -35,7 +35,8 @@ class RecommendationControllerTest {
     RecommendationResponse response =
         new RecommendationResponse(
             List.of(
-                new Section("추천", List.of(new Product(productId, null, "상품", "판매자", 1000L, "thumb")))));
+                new Section(
+                    "추천", List.of(new Product(productId, null, "상품", "판매자", 1000L, "thumb")))));
     when(recommendationService.recommend(isNull())).thenReturn(response);
 
     mvc()
@@ -46,8 +47,7 @@ class RecommendationControllerTest {
 
   @Test
   void recommendations_whenProductIdIsMalformed_returnsBadRequest() throws Exception {
-    // 앱 전역 GlobalExceptionHandler의 catch-all(Exception→500)까지 함께 등록해, 형식 오류가
-    // 500이 아니라 400으로 응답되는지(우선순위 높은 타입 불일치 핸들러가 이기는지) 확인한다.
+    // 전역 catch-all까지 함께 등록해, 타입 불일치 핸들러가 먼저 이겨 400이 나오는지 확인한다.
     MockMvcBuilders.standaloneSetup(new RecommendationController(recommendationService))
         .setControllerAdvice(new RecommendationExceptionHandler(), new GlobalExceptionHandler())
         .build()

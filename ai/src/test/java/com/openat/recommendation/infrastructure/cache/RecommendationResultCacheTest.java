@@ -3,6 +3,8 @@ package com.openat.recommendation.infrastructure.cache;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -63,10 +65,7 @@ class RecommendationResultCacheTest {
         .contains(response);
   }
 
-  /**
-   * dropId 추가 이전에 쓰인 캐시 엔트리(TTL 12시간)는 배포 직후에도 그대로 남아 있다. 역직렬화가
-   * 깨지면 모든 히트가 미스로 떨어져 전면 LLM 폭주가 되므로, 옛 JSON이 그대로 읽히는지 못 박는다.
-   */
+  /** TTL 12시간짜리 옛 엔트리가 배포 직후에도 남아 있다. 역직렬화가 깨지면 전면 LLM 폭주다. */
   @Test
   void find_whenCachedJsonPredatesDropIdField_parsesWithNullDropId() {
     String key = "rec:member:home";
@@ -100,6 +99,33 @@ class RecommendationResultCacheTest {
                         }));
   }
 
+  /** 캐시 JSON 필드명은 계약이다. 이름을 바꾸면 TTL 12시간 캐시가 전부 미스로 떨어진다. */
+  @Test
+  void save_writesThumbnailKeyUnderThumbnailUrlProperty() throws Exception {
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    RecommendationResponse response =
+        new RecommendationResponse(
+            List.of(
+                new RecommendationResponse.Section(
+                    "연관",
+                    List.of(
+                        new RecommendationResponse.Product(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "드롭 상품",
+                            "판매자",
+                            900L,
+                            "products/2026/07/abc.jpg")))));
+
+    new RecommendationResultCache(redisTemplate, objectMapper).save("rec:detail:product", response);
+
+    verify(valueOperations)
+        .set(
+            eq("rec:detail:product"),
+            contains("\"thumbnailUrl\":\"products/2026/07/abc.jpg\""),
+            eq(Duration.ofHours(12)));
+  }
+
   @Test
   void find_whenRedisFails_returnsMiss() {
     when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("redis"));
@@ -127,7 +153,7 @@ class RecommendationResultCacheTest {
 
     new RecommendationResultCache(redisTemplate, objectMapper).invalidateMember(memberId);
 
-    // 회원 캐시는 rec:{memberId}:home 단일 키 — 직접 삭제(SCAN 불필요)
+    // 회원 캐시는 rec:{memberId}:home 단일 키라 SCAN 없이 직접 삭제한다.
     verify(redisTemplate).delete("rec:" + memberId + ":home");
   }
 }

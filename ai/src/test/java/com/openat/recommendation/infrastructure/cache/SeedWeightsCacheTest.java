@@ -2,14 +2,12 @@ package com.openat.recommendation.infrastructure.cache;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openat.recommendation.domain.model.Seed;
 import com.openat.recommendation.infrastructure.cache.SeedWeightsCache.SeedWeights;
 import com.openat.recommendation.infrastructure.config.JacksonConfig;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;

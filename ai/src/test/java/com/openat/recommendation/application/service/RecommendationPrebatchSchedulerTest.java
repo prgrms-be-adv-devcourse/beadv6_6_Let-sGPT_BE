@@ -2,7 +2,6 @@ package com.openat.recommendation.application.service;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -44,7 +43,7 @@ class RecommendationPrebatchSchedulerTest {
     UUID fresh = UUID.randomUUID();
     UUID cold = UUID.randomUUID();
     when(openDropCache.openProductIds()).thenReturn(List.of(fresh, cold));
-    // warmDetail은 신선한 상품엔 false(건너뜀)를 반환한다. 배치는 둘 다 호출하되 정상 완료해야 한다.
+    // warmDetail이 돌려주는 false는 건너뜀이지 실패가 아니다.
     when(recommendationService.warmDetail(fresh)).thenReturn(false);
     when(recommendationService.warmDetail(cold)).thenReturn(true);
 
@@ -66,7 +65,6 @@ class RecommendationPrebatchSchedulerTest {
 
     scheduler(true).prebatch();
 
-    // 한 상품 실패가 배치를 중단시키지 않는다 — 나머지가 모두 처리된다.
     verify(recommendationService).warmDetail(failing);
     verify(recommendationService).warmDetail(second);
     verify(recommendationService).warmDetail(third);
