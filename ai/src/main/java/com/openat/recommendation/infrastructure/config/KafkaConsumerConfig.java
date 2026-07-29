@@ -30,10 +30,14 @@ public class KafkaConsumerConfig {
 
   @Bean
   public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
-      ConsumerFactory<String, String> consumerFactory) {
+      ConsumerFactory<String, String> consumerFactory,
+      @Value("${spring.kafka.listener.observation-enabled:false}") boolean observationEnabled) {
     ConcurrentKafkaListenerContainerFactory<String, String> factory =
         new ConcurrentKafkaListenerContainerFactory<>();
     factory.setConsumerFactory(consumerFactory);
+    // 수동 등록 팩토리라 spring.kafka.listener.observation-enabled 프로퍼티가 자동으로 먹지 않는다 —
+    // 컨테이너 프로퍼티에 직접 세팅해야 소비 스팬이 producer가 보낸 traceparent에 이어붙는다.
+    factory.getContainerProperties().setObservationEnabled(observationEnabled);
     return factory;
   }
 }

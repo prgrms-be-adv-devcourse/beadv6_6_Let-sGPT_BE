@@ -5,6 +5,7 @@ import com.openat.queue.domain.model.DecisionState
 import com.openat.queue.domain.model.QueueStatusSnapshot
 import com.openat.queue.domain.model.WaitingTicket
 import com.openat.queue.domain.repository.WaitingQueueRepository
+import com.openat.queue.infrastructure.trace.QueueTraceBridge
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.reactive.awaitFirstOrNull
@@ -31,6 +32,7 @@ import reactor.core.publisher.Mono
 @Repository
 class WaitingQueueRedisRepository(
     private val redisTemplate: ReactiveStringRedisTemplate,
+    private val queueTraceBridge: QueueTraceBridge,
 ) : WaitingQueueRepository {
 
     @Suppress("UNCHECKED_CAST")
@@ -63,6 +65,11 @@ class WaitingQueueRedisRepository(
         quantity: Int,
         ttlSeconds: Long,
     ): AdmittedEntry? {
+        // enqueue-or-admit Lua는 재고가 있으면 이 자리에서 즉시 입장시키고, 대기로 가더라도 admit
+        // 스케줄러가 곧바로 다음 tick에 입장시킬 수 있다. 따라서 traceparent 저장은 반드시 Lua "이전"에
+        // await로 완료해야 admit 측 조회가 저장을 앞지르지 않는다. 즉시 입장으로 링크되지 않는 고아
+        // 항목은 해시 TTL이 청소하므로 무해하다.
+        queueTraceBridge.captureEnqueue(dropId, userId)
         val result = redisTemplate.execute(
             enqueueOrAdmitScript,
             listOf(

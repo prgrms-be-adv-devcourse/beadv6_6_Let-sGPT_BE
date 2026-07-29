@@ -69,6 +69,7 @@ public class RecommendationSeedService {
 
   public List<Seed> refreshWeightsCache(UUID memberId) {
     Instant startedAt = Instant.now();
+    long generationAtStart = seedWeightsCache.generation(memberId);
     CompletableFuture<Optional<List<PurchaseSignal>>> purchaseSignalsFuture =
         CompletableFuture.supplyAsync(() -> getPurchaseSignals(memberId), executor);
     CompletableFuture<Optional<List<UUID>>> wishlistProductIdsFuture =
@@ -102,12 +103,20 @@ public class RecommendationSeedService {
     // 그대로 반환하면 방금 받은 변경(예: 새 찜)이 FULL_TTL 동안 묻힌다.
     boolean purchaseSucceeded = purchaseSignals.isPresent();
     metrics.seedRefresh(purchaseSucceeded ? "wishlist-missing" : "order-missing");
+    // Redis 세대 번호는 모든 인스턴스가 공유한다. 로컬 wall clock 비교 대신, 신호 조회가 시작된
+    // 뒤 완전 저장된 엔트리를 판정해 clock skew가 있어도 부분 결과로 덮지 않는다.
+    if (cachedSnapshot
+        .filter(snapshot -> snapshot.weights().complete() && snapshot.generation() > generationAtStart)
+        .isPresent()) {
+      metrics.seedSalvage("superseded");
+      return cached.orElseThrow().seeds();
+    }
     // 살려 온 절반을 계속 물려주면 실패가 이어지는 동안 그 시드의 수명이 무한 연장된다. 상한을
     // 넘으면 실패한 쪽을 버리고 방금 받은 쪽만 남긴다.
     Optional<SeedWeights> salvageable = cached.filter(weights -> canSalvage(weights, startedAt));
     List<Seed> salvagedSeeds =
         salvageable.map(weights -> salvage(weights, purchaseSucceeded)).orElse(List.of());
-    metrics.seedSalvage(salvageOutcome(cached, salvageable, salvagedSeeds));
+    String salvageOutcome = salvageOutcome(cached, salvageable, salvagedSeeds);
     List<Seed> mergedSeeds =
         purchaseSucceeded ? merge(freshSeeds, salvagedSeeds) : merge(salvagedSeeds, freshSeeds);
     // 살려 온 절반은 낡았을 수 있으므로 완전 데이터인 척 FULL_TTL 동안 남기지 않고, 그 절반을
@@ -117,8 +126,13 @@ public class RecommendationSeedService {
     SeedWeights partial = SeedWeights.partial(mergedSeeds, collectedAt);
     boolean saved =
         seedWeightsCache.saveIfUnchanged(
-            memberId, cachedSnapshot.map(CachedWeights::serialized).orElse(null), partial, partialTtl);
+            memberId,
+            cachedSnapshot.map(CachedWeights::serialized).orElse(null),
+            partial,
+            partialTtl,
+            generationAtStart);
     if (saved) {
+      metrics.seedSalvage(salvageOutcome);
       return mergedSeeds;
     }
     // find와 save 사이에 다른 요청이 갱신했다. 특히 완전 결과를 부분 결과로 덮지 않도록, CAS에

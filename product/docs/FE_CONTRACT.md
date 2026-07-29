@@ -178,9 +178,8 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey?, image
 ## 3. CATEGORY (담당)
 
 - `GET /api/v1/categories` → `List<CategoryResponse> { id, name }` (**구현 완료** — `CategoryController.getCategories`, 이름순)
-- 쓰기: `POST`(201+Location), `PATCH /{id}`(204), `DELETE /{id}`(204). 현재 Gateway에서는
-  일반 access JWT 인증만 요구하고 역할 제한은 두지 않는다. ADMIN 전용이 제품 의도라면
-  문서가 아니라 Gateway 인가 구현을 보강해야 한다.
+- 쓰기: `POST`(201+Location), `PATCH /{id}`(204), `DELETE /{id}`(204). Gateway에서
+  ADMIN 역할만 허용한다.
 - FE seed 예시: `의류·액세서리·문구·전자기기·피규어·기타` (`id` = `c-apparel` 등 slug, 단 BE는 UUID 발급 — FE는 id를 불투명 문자열로만 사용하므로 무방).
 
 ```json

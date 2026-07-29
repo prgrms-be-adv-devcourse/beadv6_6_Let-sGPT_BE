@@ -242,7 +242,7 @@
 - 예치금은 payment의 지갑·충전·지갑 결제로 구현됐다. 장바구니는 별도 모듈·API가 없고 드롭 즉시 주문만 제공한다.
 - PG는 프론트가 토스 SDK successUrl 결과를 받아 `/api/v1/payments/confirm`으로 확정하고, 백엔드는 Kafka로 주문·정산에 전파한다.
 - search의 product 스키마 직접 조회는 전체 재색인에만 남아 있다. 전용 읽기 계정 또는 API 기반 스냅샷으로 강화할지는 후속 합의가 필요하다.
-- 카테고리 GET은 공개지만 POST/PATCH/DELETE는 현재 Gateway에서 일반 access JWT만 요구하고 역할 제한은 없다. ADMIN 전용이 의도라면 인가 정책 보강이 필요하다.
+- 카테고리 GET은 공개지만 POST/PATCH/DELETE는 Gateway에서 ADMIN 역할만 허용한다.
 - 정산 관리자 GET은 Gateway에서 ADMIN 역할을 검사하지만 `retry-failed`·`monthly/run`·`reconciliation/run` POST는 현재 일반 access JWT만 요구한다. 또한 판매자 정산 GET은 SELLER 역할만 확인하고 controller가 현재 판매자의 sellerInfoId로 조회 범위를 강제하지 않아 다른 판매자 또는 전체 결과를 요청할 수 있다. 두 경계 모두 운영 전 인가 보강이 필요하다.
 - 카테고리: 상품 서비스 내 **`categories` 테이블**로 분리 완료(`Product`가 `@ManyToOne`으로 **선택 참조** — nullable, 카테고리 없이 상품 등록 가능·삭제 시 미분류). 계층 구조·카테고리별 수수료는 추후 컬럼 확장으로 대응.
 - 공통 모듈 범위·QueryDSL 도입 여부: 도메인별 결정 사항.
