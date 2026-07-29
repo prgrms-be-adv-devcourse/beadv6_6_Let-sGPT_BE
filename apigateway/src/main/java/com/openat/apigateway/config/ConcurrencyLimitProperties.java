@@ -26,6 +26,17 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 @ConfigurationProperties("gateway.concurrency")
 public record ConcurrencyLimitProperties(
         @DefaultValue("2000")
-        int maxInFlightRequests
+        int maxInFlightRequests,
+
+        /**
+         * SSE({@code /status/stream}) 전용 동시 연결 수 상한. SSE는 연결 수명 내내(게이트웨이
+         * 라우트 metadata의 response-timeout 10분 동안) 슬롯을 점유하는 성격이라, 일반 API와
+         * 같은 카운터를 공유하면 SSE 구독자가 상한을 채운 순간부터는 GIVE_UP 같은 상태 변경
+         * 요청도 429로 거절돼 사용자가 스스로 자리를 반납할 방법이 없어진다(리뷰 지적). 별도
+         * 카운터로 분리해 제어 API가 SSE 포화와 무관하게 항상 처리되도록 한다. 기본값은 전체
+         * 상한보다 낮게 잡아 제어 API 몫을 항상 남겨둔다.
+         */
+        @DefaultValue("1500")
+        int sseMaxInFlightRequests
 ) {
 }

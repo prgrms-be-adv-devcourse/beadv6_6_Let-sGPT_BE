@@ -1,7 +1,10 @@
 package com.openat.apigateway.config;
 
 import com.openat.apigateway.error.ApiErrorResponseWriter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -34,6 +37,12 @@ import reactor.core.publisher.Mono;
  *
  * <p>액추에이터(k8s probe/Prometheus scrape) 경로는 상한에서 제외한다 - 과부하로 초과 요청을
  * 거절하는 상황에서 헬스체크까지 429가 되면 쿠버네티스가 정상 동작 중인 파드를 죽여버린다.
+ *
+ * <p>카운터를 SSE({@code /status/stream})와 일반 API로 분리한다(리뷰 지적으로 추가): SSE는
+ * 연결 수명 내내 슬롯을 점유하는 성격이라 일반 제어 API(진입/폴링/GIVE_UP 등 decision)와 같은
+ * 카운터를 공유하면, SSE 구독자가 상한을 다 채운 순간부터는 GIVE_UP 같은 상태 변경 요청도
+ * 429로 거절돼 사용자가 스스로 자리를 반납할 방법조차 없어진다. 별도 카운터로 나눠 SSE 포화가
+ * 제어 API 가용성을 잠식하지 않게 한다.
  */
 @Slf4j
 @Component
@@ -41,15 +50,30 @@ import reactor.core.publisher.Mono;
 public class ConcurrencyLimitFilter implements WebFilter {
 
     private static final String ACTUATOR_PREFIX = "/actuator";
+    private static final String SSE_PATH_SUFFIX = "/status/stream";
+    // 과부하 시 거절 건마다 WARN을 남기면 로그 자체가 부하 유발원이 된다(리뷰 지적) - 카운터는
+    // Micrometer로 매 건 저비용 집계하고, WARN 로그는 이 값마다 하나씩만 "누적 거절 수"와
+    // 함께 남긴다. 상한 초과가 시작된 첫 건은 항상 즉시 로깅해 장애 시작 시점을 놓치지 않는다.
+    private static final long REJECT_LOG_SAMPLE_RATE = 100L;
 
     private final int maxInFlight;
+    private final int sseMaxInFlight;
     private final ApiErrorResponseWriter responseWriter;
     private final AtomicInteger inFlight = new AtomicInteger(0);
+    private final AtomicInteger sseInFlight = new AtomicInteger(0);
+    private final AtomicLong rejectedTotal = new AtomicLong(0);
+    private final AtomicLong rejectedTotalSse = new AtomicLong(0);
 
     public ConcurrencyLimitFilter(ConcurrencyLimitProperties properties,
-                                  ApiErrorResponseWriter responseWriter) {
+                                  ApiErrorResponseWriter responseWriter,
+                                  MeterRegistry meterRegistry) {
         this.maxInFlight = properties.maxInFlightRequests();
+        this.sseMaxInFlight = properties.sseMaxInFlightRequests();
         this.responseWriter = responseWriter;
+        meterRegistry.gauge("gateway.concurrency.in-flight", Tags.of("kind", "control"), inFlight);
+        meterRegistry.gauge("gateway.concurrency.in-flight", Tags.of("kind", "sse"), sseInFlight);
+        meterRegistry.gauge("gateway.concurrency.rejected", Tags.of("kind", "control"), rejectedTotal);
+        meterRegistry.gauge("gateway.concurrency.rejected", Tags.of("kind", "sse"), rejectedTotalSse);
     }
 
     @Override
@@ -59,17 +83,31 @@ public class ConcurrencyLimitFilter implements WebFilter {
             return chain.filter(exchange);
         }
 
-        int current = inFlight.incrementAndGet();
-        if (current > maxInFlight) {
-            inFlight.decrementAndGet();
-            log.warn("[gateway-concurrency-limit] rejected - inFlight={} max={} path={}",
-                    current - 1, maxInFlight, path);
+        boolean isSse = path.endsWith(SSE_PATH_SUFFIX);
+        AtomicInteger counter = isSse ? sseInFlight : inFlight;
+        int limit = isSse ? sseMaxInFlight : maxInFlight;
+
+        int current = counter.incrementAndGet();
+        if (current > limit) {
+            counter.decrementAndGet();
+            logRejected(isSse, current - 1, limit, path);
             return responseWriter.write(
                     exchange,
                     HttpStatus.TOO_MANY_REQUESTS,
                     "GATEWAY_CONCURRENCY_LIMIT_EXCEEDED",
                     "서버가 처리할 수 있는 동시 요청 수를 초과했습니다. 잠시 후 다시 시도해 주세요.");
         }
-        return chain.filter(exchange).doFinally(signal -> inFlight.decrementAndGet());
+        return chain.filter(exchange).doFinally(signal -> counter.decrementAndGet());
+    }
+
+    private void logRejected(boolean isSse, int currentInFlight, int limit, String path) {
+        AtomicLong counter = isSse ? rejectedTotalSse : rejectedTotal;
+        long total = counter.incrementAndGet();
+        // 첫 건(total==1)은 즉시, 이후로는 표본만 - Micrometer 게이지가 정확한 누적치를 계속
+        // 들고 있으므로 로그가 빠뜨린 건도 관측에서 유실되지 않는다.
+        if (total == 1L || total % REJECT_LOG_SAMPLE_RATE == 0L) {
+            log.warn("[gateway-concurrency-limit] rejected(sampled 1/{}) kind={} inFlight={} max={} path={} rejectedTotal={}",
+                    REJECT_LOG_SAMPLE_RATE, isSse ? "sse" : "control", currentInFlight, limit, path, total);
+        }
     }
 }

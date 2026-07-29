@@ -115,5 +115,14 @@ data class QueueProperties(
          * 마진이다 - 운영 트래픽 프로파일에 맞춰 조정 가능(`QUEUE_CONCURRENCY_MAX_IN_FLIGHT`).
          */
         @DefaultValue("2000") val maxInFlightRequests: Int = 2000,
+        /**
+         * SSE(`/status/stream`) 전용 동시 연결 수 상한. SSE는 연결 수명 내내 슬롯을 점유하는
+         * 성격이라 일반 API(진입/폴링/decision)와 같은 카운터를 공유하면, SSE 구독자가
+         * [maxInFlightRequests]를 채운 뒤에는 GIVE_UP 같은 상태 변경 요청조차 429로 막혀
+         * 사용자가 스스로 슬롯을 반환할 방법이 없어진다. 별도 카운터로 분리해 제어 API가
+         * SSE 포화와 무관하게 항상 처리되도록 한다. 기본값은 전체 상한(2,000)보다 낮게 잡아
+         * 제어 API 몫을 항상 남겨둔다(`QUEUE_CONCURRENCY_SSE_MAX_IN_FLIGHT`로 조정 가능).
+         */
+        @DefaultValue("1500") val sseMaxInFlightRequests: Int = 1500,
     )
 }
