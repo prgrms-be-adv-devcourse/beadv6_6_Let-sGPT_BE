@@ -19,12 +19,15 @@ import com.openat.payment.domain.model.Refund;
 import com.openat.payment.domain.model.WalletCharge;
 import com.openat.payment.domain.repository.PaymentRepository;
 import com.openat.payment.domain.repository.RefundRepository;
+import com.openat.payment.domain.repository.ScanCursor;
 import com.openat.payment.domain.repository.WalletChargeRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -286,16 +289,13 @@ class PaymentTtlScannerTest {
     Refund good = refundPendingCreatedAt(goodPaymentId, LocalDateTime.now().minusMinutes(9));
     List<Refund> all = List.of(poison1, poison2, good); // createdAt 오름차순
 
-    // 커서(2번째 인자) 이후만, limit(3번째)만큼 반환 — 실제 키셋 페이지네이션을 흉내.
+    // 커서(2번째 인자, ScanCursor) 이후만, limit(3번째)만큼 반환 — 실제 (createdAt, id) 키셋 페이지네이션을 흉내.
     when(refundRepository.findStalePending(any(), any(), anyInt()))
         .thenAnswer(
             invocation -> {
-              LocalDateTime cursor = invocation.getArgument(1);
+              ScanCursor cursor = invocation.getArgument(1);
               int limit = invocation.getArgument(2);
-              return all.stream()
-                  .filter(r -> cursor == null || r.getCreatedAt().isAfter(cursor))
-                  .limit(limit)
-                  .toList();
+              return keysetPage(all, cursor, limit, Refund::getCreatedAt, Refund::getId);
             });
 
     when(paymentRepository.findById(poisonPaymentId)).thenReturn(Optional.of(poisonPayment));
@@ -315,5 +315,85 @@ class PaymentTtlScannerTest {
     // 2주기: poison 둘은 백오프로 건너뛰고 커서가 그 뒤로 전진해 good에 도달·확정한다.
     scanner.scan();
     verify(refundFinalizer).complete(good.getId(), goodPayment, "good-refund-tx");
+  }
+
+  // 봇 지적(단일 커서 tie-break) — 동일 createdAt의 poison 행 여러 개가 페이지 경계에 몰려도,
+  // (createdAt, id) 복합 커서라 같은 시각의 후속 확정 가능 행에 도달한다. createdAt 단독 커서면
+  // poison들 처리 후 커서가 그 시각으로 굳어 createdAt > cursor 가 같은 시각 good을 영원히 건너뛴다.
+  @Test
+  void 동일_createdAt_poison들이_페이지경계에_몰려도_같은_시각_후속행에_도달한다() {
+    ReflectionTestUtils.setField(scanner, "maxPerCycle", 2);
+
+    UUID poisonPaymentId = UUID.randomUUID();
+    Payment poisonPayment = Payment.builder().id(poisonPaymentId).pgPaymentKey("poison-pk").build();
+    UUID goodPaymentId = UUID.randomUUID();
+    Payment goodPayment = Payment.builder().id(goodPaymentId).pgPaymentKey("good-pk").build();
+
+    // 셋 다 동일 createdAt(마지노선 지남). id로만 순서가 갈리도록 poison들의 id가 good보다 앞서게 고정.
+    LocalDateTime sameTime = LocalDateTime.now().minusMinutes(9);
+    Refund poison1 = refundWithId(idOf(1), poisonPaymentId, sameTime);
+    Refund poison2 = refundWithId(idOf(2), poisonPaymentId, sameTime);
+    Refund good = refundWithId(idOf(3), goodPaymentId, sameTime);
+    List<Refund> all = List.of(poison1, poison2, good); // (createdAt, id) 오름차순
+
+    when(refundRepository.findStalePending(any(), any(), anyInt()))
+        .thenAnswer(
+            invocation -> {
+              ScanCursor cursor = invocation.getArgument(1);
+              int limit = invocation.getArgument(2);
+              return keysetPage(all, cursor, limit, Refund::getCreatedAt, Refund::getId);
+            });
+
+    when(paymentRepository.findById(poisonPaymentId)).thenReturn(Optional.of(poisonPayment));
+    when(paymentRepository.findById(goodPaymentId)).thenReturn(Optional.of(goodPayment));
+    when(tossPaymentClient.queryRefundStatus("poison-pk", null, 3_000L))
+        .thenReturn(TossQueryResult.of(TossQueryResult.Status.NOT_FOUND, null));
+    when(tossPaymentClient.queryRefundStatus("good-pk", null, 3_000L))
+        .thenReturn(TossQueryResult.of(TossQueryResult.Status.APPROVED, "good-refund-tx"));
+    when(refundFinalizer.complete(good.getId(), goodPayment, "good-refund-tx"))
+        .thenReturn(Optional.of(good));
+
+    // 1주기: 상한(2)에 걸려 poison 둘만 시도하고 같은 시각 good엔 도달하지 못한다.
+    scanner.scan();
+    verify(refundFinalizer, never()).complete(eq(good.getId()), any(), any());
+
+    // 2주기: poison 둘은 백오프로 건너뛰고 복합 커서가 (sameTime, poison2.id) 뒤로 전진해
+    // 같은 createdAt의 good(id 더 큼)에 도달·확정한다.
+    scanner.scan();
+    verify(refundFinalizer).complete(good.getId(), goodPayment, "good-refund-tx");
+  }
+
+  // 고정 id — 같은 createdAt 안에서 순서를 결정론적으로 통제하기 위해.
+  private static UUID idOf(int n) {
+    return new UUID(0L, n);
+  }
+
+  private Refund refundWithId(UUID id, UUID paymentId, LocalDateTime createdAt) {
+    return Refund.builder()
+        .id(id)
+        .paymentId(paymentId)
+        .amount(3_000L)
+        .status(Refund.Status.PENDING)
+        .createdAt(createdAt)
+        .build();
+  }
+
+  // 실제 (createdAt, id) 키셋 페이지네이션 흉내 — 복합 정렬 후 커서 초과분만 limit만큼.
+  private static <R> List<R> keysetPage(
+      List<R> rows,
+      ScanCursor cursor,
+      int limit,
+      Function<R, LocalDateTime> createdAtFn,
+      Function<R, UUID> idFn) {
+    return rows.stream()
+        .sorted(Comparator.comparing(createdAtFn).thenComparing(idFn))
+        .filter(
+            r ->
+                cursor == null
+                    || createdAtFn.apply(r).isAfter(cursor.createdAt())
+                    || (createdAtFn.apply(r).isEqual(cursor.createdAt())
+                        && idFn.apply(r).compareTo(cursor.id()) > 0))
+        .limit(limit)
+        .toList();
   }
 }

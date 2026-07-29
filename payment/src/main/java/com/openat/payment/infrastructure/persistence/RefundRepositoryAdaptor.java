@@ -3,6 +3,7 @@ package com.openat.payment.infrastructure.persistence;
 import com.openat.payment.domain.model.PgReconStatus;
 import com.openat.payment.domain.model.Refund;
 import com.openat.payment.domain.repository.RefundRepository;
+import com.openat.payment.domain.repository.ScanCursor;
 import com.openat.payment.infrastructure.persistence.entity.RefundJpaEntity;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -54,11 +55,14 @@ public class RefundRepositoryAdaptor implements RefundRepository {
     }
 
     @Override
-    public List<Refund> findStalePending(LocalDateTime threshold, LocalDateTime cursor, int limit) {
-        // 오래된 순 + 상한 — PaymentRepositoryAdaptor.findStalePending과 동일한 취지.
+    public List<Refund> findStalePending(LocalDateTime threshold, ScanCursor cursor, int limit) {
+        // 오래된 순 + 상한 — PaymentRepositoryAdaptor.findStalePending과 동일한 취지((createdAt, id) 복합 커서·정렬).
+        LocalDateTime cursorCreatedAt = cursor == null ? null : cursor.createdAt();
+        UUID cursorId = cursor == null ? null : cursor.id();
         return refundJpaRepository
-                .findStalePending(threshold, cursor,
-                        PageRequest.of(0, limit, Sort.by(Sort.Direction.ASC, "createdAt")))
+                .findStalePending(threshold, cursorCreatedAt, cursorId,
+                        PageRequest.of(0, limit,
+                                Sort.by(Sort.Order.asc("createdAt"), Sort.Order.asc("id"))))
                 .stream()
                 .map(RefundJpaEntity::toDomain).toList();
     }
