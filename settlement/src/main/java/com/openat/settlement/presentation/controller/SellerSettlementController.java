@@ -8,6 +8,7 @@ import com.openat.settlement.application.usecase.SettlementQueryUseCase;
 import com.openat.settlement.domain.exception.SettlementErrorCode;
 import com.openat.settlement.domain.model.SellerSettlementStatus;
 import com.openat.settlement.domain.model.SettlementOrderStatus;
+import com.openat.settlement.support.auth.CurrentUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import lombok.RequiredArgsConstructor;
@@ -35,16 +36,15 @@ public class SellerSettlementController {
 
     @Operation(
             summary = "판매자 정산 주문 목록 조회",
-            description = "정산월, 정산 상태, 판매자 ID, 주문 ID 조건으로 정산 주문 목록을 페이징 조회합니다. 조건을 입력하지 않으면 전체 정산 주문을 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
+            description = "인증된 판매자의 정산 주문을 정산월, 정산 상태, 주문 ID 조건으로 페이징 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
     )
     @GetMapping("orders")
     public ResponseEntity<PageResponse<SettlementOrderSummary>> findSettlementOrders(
+            @CurrentUser UUID sellerId,
             @Parameter(description = "정산월입니다. yyyyMM 형식으로 입력합니다. 예: 202506")
             @RequestParam(required = false) String settlementMonth,
             @Parameter(description = "정산 주문 상태입니다. READY 또는 COMPLETED 값을 입력합니다.")
             @RequestParam(required = false) SettlementOrderStatus status,
-            @Parameter(description = "판매자 ID입니다. 특정 판매자의 정산 주문만 조회할 때 사용합니다.")
-            @RequestParam(required = false) UUID sellerId,
             @Parameter(description = "주문 ID입니다. 특정 주문의 정산 주문만 조회할 때 사용합니다.")
             @RequestParam(required = false) UUID orderId,
             @Parameter(description = "조회할 페이지 번호입니다. 0부터 시작합니다. 기본값은 0입니다.")
@@ -67,14 +67,13 @@ public class SellerSettlementController {
 
     @Operation(
             summary = "판매자 정산 결과 조회",
-            description = "정산월, 판매자 ID, 판매자 정산 상태 조건으로 판매자별 월 정산 결과 목록을 페이징 조회합니다. 조건을 입력하지 않으면 전체 판매자 정산 결과를 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
+            description = "인증된 판매자의 월 정산 결과를 정산월, 정산 상태 조건으로 페이징 조회합니다. page는 0부터 시작하며 size는 최대 200건까지 허용합니다."
     )
     @GetMapping("sellers")
     public ResponseEntity<PageResponse<SellerSettlementSummary>> findSellerSettlements(
+            @CurrentUser UUID sellerId,
             @Parameter(description = "정산월입니다. yyyyMM 형식으로 입력합니다. 예: 202506")
             @RequestParam(required = false) String settlementMonth,
-            @Parameter(description = "판매자 ID입니다. 특정 판매자의 월 정산 결과만 조회할 때 사용합니다.")
-            @RequestParam(required = false) UUID sellerId,
             @Parameter(description = "판매자 정산 상태입니다. READY, COMPLETED, FAILED 중 하나를 입력합니다.")
             @RequestParam(required = false) SellerSettlementStatus status,
             @Parameter(description = "조회할 페이지 번호입니다. 0부터 시작합니다. 기본값은 0입니다.")

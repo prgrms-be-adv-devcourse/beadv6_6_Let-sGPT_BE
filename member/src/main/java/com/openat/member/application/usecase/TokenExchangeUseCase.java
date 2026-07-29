@@ -10,5 +10,10 @@ import java.util.UUID;
  */
 public interface TokenExchangeUseCase {
 
-    SellerTokenResponse issueSellerToken(UUID memberId, UUID sellerInfoId);
+    SellerTokenResponse issueSellerToken(
+            UUID memberId,
+            UUID sellerInfoId,
+            String audience,
+            String scope
+    );
 }

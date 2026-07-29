@@ -2,7 +2,6 @@ package com.openat.apigateway.config;
 
 import com.openat.apigateway.error.ApiErrorResponseWriter;
 import com.openat.common.error.CommonErrorCode;
-import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -26,6 +25,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import reactor.core.publisher.Flux;
+
+import java.util.List;
 
 @Configuration
 @EnableWebFluxSecurity
@@ -156,8 +157,19 @@ public class SecurityConfig {
                         .pathMatchers("/api/v1/seller/**").access(authenticatedAndNotScoped())
 
                         // 정산 관리자 전용
-                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/admin/*").hasRole("ADMIN")
-                        .pathMatchers(HttpMethod.GET, "/api/v1/settlements/seller/*").hasRole("SELLER")
+                        .pathMatchers(
+                                HttpMethod.GET,
+                                "/api/v1/settlements/admin", "/api/v1/settlements/admin/**",
+                                "/settlement/api/v1/settlements/admin", "/settlement/api/v1/settlements/admin/**").hasRole("ADMIN")
+                        .pathMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/settlements/admin", "/api/v1/settlements/admin/**",
+                                "/settlement/api/v1/settlements/admin", "/settlement/api/v1/settlements/admin/**").hasRole("ADMIN")
+                        .pathMatchers(
+                                HttpMethod.GET,
+                                "/api/v1/settlements/seller", "/api/v1/settlements/seller/**",
+                                "/settlement/api/v1/settlements/seller", "/settlement/api/v1/settlements/seller/**")
+                        .access(scopedFor("openat-settlement", "settlement:read"))
 
 //                        // 판매자만
 //                        .pathMatchers(
@@ -200,10 +212,12 @@ public class SecurityConfig {
                                 "/product/api/v1/categories", "/product/api/v1/categories/**").hasRole("ADMIN")
 
                         // product 판매자 write — scoped 토큰(typ=scoped, aud=openat-product)만 허용 (GET은 위에서 공개)
-                        .pathMatchers("/product/products", "/product/products/**").access(scopedFor("openat-product"))
+                        .pathMatchers("/product/products", "/product/products/**")
+                        .access(scopedFor("openat-product", "product:write"))
                         .pathMatchers(
                                 "/api/v1/products", "/api/v1/products/**",
-                                "/api/v1/drops", "/api/v1/drops/**").access(scopedFor("openat-product"))
+                                "/api/v1/drops", "/api/v1/drops/**")
+                        .access(scopedFor("openat-product", "product:write"))
 
                         // 개인화 추천 읽기 — 공개 (비회원도 기본 추천 조회 가능)
                         .pathMatchers(HttpMethod.GET, "/api/v1/recommendations").permitAll()
@@ -258,17 +272,28 @@ public class SecurityConfig {
     }
 
     /**
-     * scoped 토큰(typ=scoped)이고 지정 audience를 포함하는 경우만 허용하는 인가 관리자.
+     * scoped 토큰(typ=scoped)이고 지정 audience와 scope를 포함하는 경우만 허용하는 인가 관리자.
      * product write처럼 특정 서비스 전용 scoped 토큰이 필요한 경로에 사용한다.
      */
-    private ReactiveAuthorizationManager<AuthorizationContext> scopedFor(String audience) {
+    private ReactiveAuthorizationManager<AuthorizationContext> scopedFor(
+            String audience,
+            String requiredScope
+    ) {
         return (authentication, context) ->
                 authentication.<AuthorizationResult>map(auth -> new AuthorizationDecision(
                         auth instanceof JwtAuthenticationToken jwtAuth
                         && "scoped".equals(jwtAuth.getToken().getClaimAsString("typ"))
                         && jwtAuth.getToken().getAudience() != null
                         && jwtAuth.getToken().getAudience().contains(audience)
+                        && containsScope(jwtAuth.getToken().getClaimAsString("scope"), requiredScope)
                 )).defaultIfEmpty(new AuthorizationDecision(false));
+    }
+
+    private boolean containsScope(String scopeClaim, String requiredScope) {
+        if (scopeClaim == null || scopeClaim.isBlank()) {
+            return false;
+        }
+        return List.of(scopeClaim.trim().split("\\s+")).contains(requiredScope);
     }
 
     private ReactiveJwtAuthenticationConverter jwtAuthenticationConverter() {
