@@ -2,6 +2,7 @@ package com.openat.queue.infrastructure.persistence
 
 import com.openat.queue.domain.model.AdmittedEntry
 import com.openat.queue.domain.model.DecisionState
+import com.openat.queue.infrastructure.trace.QueueTraceBridge
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -440,7 +441,9 @@ class WaitingQueueRedisRepositoryTest {
             redisTemplate = StringRedisTemplate(connectionFactory)
             redisTemplate.afterPropertiesSet()
             reactiveRedisTemplate = ReactiveStringRedisTemplate(connectionFactory)
-            repository = WaitingQueueRedisRepository(reactiveRedisTemplate)
+            // 트레이싱 비활성(OpenTelemetry=null)이라 enqueue traceparent 캡처는 no-op이다 — 대기열 로직만 검증한다.
+            val queueTraceBridge = QueueTraceBridge(reactiveRedisTemplate, null, 600)
+            repository = WaitingQueueRedisRepository(reactiveRedisTemplate, queueTraceBridge)
         }
 
         @AfterAll

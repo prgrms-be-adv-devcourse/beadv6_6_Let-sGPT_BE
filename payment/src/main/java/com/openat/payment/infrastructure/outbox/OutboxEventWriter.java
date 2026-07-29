@@ -23,9 +23,12 @@ public class OutboxEventWriter implements DomainEventPublisher {
   public void publish(String aggregateType, UUID aggregateId, String topic, Object payload) {
     try {
       String json = objectMapper.writeValueAsString(payload);
+      // 원 요청 트랜잭션 안에서 현재 traceparent를 캡처해 저장한다. 발행은 폴링이라 이 값 없이는
+      // producer 스팬이 폴링 tick의 자식이 되어 원 요청과 끊긴다.
       outboxEventJpaRepository.save(
           new OutboxEventJpaEntity(
-              UuidV7Generator.generate(), aggregateType, aggregateId, topic, json));
+              UuidV7Generator.generate(), aggregateType, aggregateId, topic, json,
+              OutboxTracePropagation.currentTraceParent()));
     } catch (Exception e) {
       throw new IllegalStateException("outbox 이벤트 직렬화 실패: " + topic, e);
     }

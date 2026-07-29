@@ -2,6 +2,7 @@ package com.openat.queue.infrastructure.config
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.openat.queue.domain.repository.ConfirmedSalesRepository
+import io.micrometer.observation.ObservationRegistry
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -38,11 +39,15 @@ import org.springframework.web.client.RestClient
 class ProductClientConfig(
     @Value("\${services.product.url}") private val productBaseUrl: String,
     private val objectMapper: ObjectMapper,
+    private val observationRegistry: ObservationRegistry,
 ) {
 
     @Bean
     fun productRestClient(): RestClient = RestClient.builder()
         .baseUrl(productBaseUrl)
+        // 정적 빌더라 자동구성 계측이 안 붙는다 - ObservationRegistry를 수동 주입해 요청마다 client
+        // 스팬을 만들고 traceparent 헤더를 product로 전파한다(Jackson 컨버터 교체와는 무관).
+        .observationRegistry(observationRegistry)
         .messageConverters { converters ->
             converters.removeIf { it is MappingJackson2HttpMessageConverter }
             converters.add(0, MappingJackson2HttpMessageConverter(objectMapper))
