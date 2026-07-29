@@ -32,7 +32,7 @@ public record OrderDetailInfo(
                 order.getStatus(),
                 order.getPaymentId(),
                 order.getPaymentExpiresAt(),
-                order.getFailCode(),
+                order.getUserVisibleFailCode(),
                 order.getCreatedAt());
     }
 }

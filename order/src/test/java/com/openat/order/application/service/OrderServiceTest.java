@@ -9,6 +9,7 @@ import com.openat.common.exception.BusinessException;
 import com.openat.order.application.dto.OrderSnapshotInfo;
 import com.openat.order.domain.exception.OrderErrorCode;
 import com.openat.order.domain.model.Order;
+import com.openat.order.domain.model.OrderFailCode;
 import com.openat.order.domain.model.OrderStatus;
 import com.openat.order.domain.model.PurchaseSignal;
 import com.openat.order.domain.repository.OrderRepository;
@@ -107,6 +108,22 @@ class OrderServiceTest {
         memberId, null, PageRequest.of(2, 10, Sort.by(Sort.Direction.ASC, "totalPrice")));
 
     verify(orderRepository).findByMemberId(memberId, null, expected);
+  }
+
+  @Test
+  @DisplayName("환불 접수 미확정 주문의 상세 조회는 실패 사유를 노출하지 않는다")
+  void getMyOrder_whenRefundRequestUnconfirmed_hidesFailCode() {
+    UUID memberId = UUID.randomUUID();
+    Order order = createOrder(memberId);
+    order.complete(UUID.randomUUID(), Instant.parse("2026-06-26T00:01:00Z"));
+    order.requestRefund(Instant.parse("2026-06-26T00:02:00Z"));
+    order.recordFailure(OrderFailCode.REFUND_REQUEST_FAILED, "환불 요청 접수 미확인");
+    when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+
+    var detail = orderService.getMyOrder(memberId, order.getId());
+
+    assertThat(detail.status()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
+    assertThat(detail.failCode()).isNull();
   }
 
   private Order createOrder(UUID memberId) {
