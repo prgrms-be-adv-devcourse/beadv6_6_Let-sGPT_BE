@@ -89,15 +89,18 @@ public class PaymentController {
         return ResponseEntity.ok(body);
     }
 
-    @Operation(summary = "결제 단건 조회")
+    @Operation(summary = "결제 단건 조회", description = "본인 소유의 결제만 조회할 수 있다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "FORBIDDEN(본인 결제가 아님)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "NOT_FOUND")
     })
     @GetMapping("/{id}")
     public ResponseEntity<PaymentResponse> get(
+            @Parameter(description = "인증된 회원 정보(게이트웨이 주입)", required = true)
+            @CurrentUser UserContext userContext,
             @Parameter(description = "결제 ID") @PathVariable UUID id) {
-        PaymentResult result = paymentUseCase.getPayment(id);
+        PaymentResult result = paymentUseCase.getPayment(id, UUID.fromString(userContext.userId()));
         PaymentResponse body = PaymentResponse.of(result.paymentId(), result.status());
         return ResponseEntity.ok(body);
     }
