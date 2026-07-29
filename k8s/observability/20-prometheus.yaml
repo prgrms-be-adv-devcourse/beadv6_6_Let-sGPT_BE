@@ -30,6 +30,9 @@ spec:
             - --storage.tsdb.path=/prometheus
             - --storage.tsdb.retention.time=3d
             - --web.enable-remote-write-receiver
+            # exemplar 저장 활성화 — remote-write로 유입되는 히스토그램 버킷의 trace_id exemplar를
+            # 보관해 Grafana 지연 패널에서 트레이스로 점프할 수 있게 한다(기본 off).
+            - --enable-feature=exemplar-storage
           env:
             - { name: GOMEMLIMIT, value: "240MiB" }   # limit 288Mi − 비힙 쿠션
           ports: [{ containerPort: 9090 }]

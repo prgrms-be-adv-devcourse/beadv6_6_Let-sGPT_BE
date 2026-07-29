@@ -4,6 +4,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
 import com.openat.apigateway.error.ApiErrorResponseWriter;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,15 @@ class SettlementGatewaySecurityTest {
 
     @MockitoBean
     RouteLocator routeLocator;
+
+    @org.springframework.boot.test.context.TestConfiguration
+    static class MeterRegistryTestConfig {
+
+        @org.springframework.context.annotation.Bean
+        io.micrometer.core.instrument.MeterRegistry meterRegistry() {
+            return new SimpleMeterRegistry();
+        }
+    }
 
     @BeforeEach
     void setUpRoute() {

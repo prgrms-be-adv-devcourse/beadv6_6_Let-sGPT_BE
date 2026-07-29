@@ -38,13 +38,19 @@ public interface PaymentJpaRepository extends JpaRepository<PaymentJpaEntity, UU
             @Param("pgTxId") String pgTxId, @Param("approvedAt") LocalDateTime approvedAt);
 
     // TTL 스캐너(§3) — 생성 후 threshold 이전인 PAYMENT_PENDING row. Pageable로 사이클당 상한을 걸고
-    // 오래된 순으로 가져온다(정렬·크기는 호출측이 지정). (createdAt, id) 복합 커서가 있으면 그보다 큰 것만 —
-    // 동일 createdAt 행이 페이지 경계에 몰려도 id로 동률을 깨서 후속 행을 건너뛰지 않는다. 종결불가 행이
-    // 선두를 점유해도 커서를 전진시켜 그 뒤 행에 도달하게 한다(null이면 처음부터).
+    // 오래된 순으로 가져온다(정렬·크기는 호출측이 지정). 첫 페이지(커서 없음)와 후속 페이지(커서 있음)를
+    // 별도 쿼리로 분리한다 — 단일 쿼리로 합치면 `:cursor IS NULL` 분기의 null 바인드가 Postgres에서 타입
+    // 추론 불가(42P18 "could not determine data type")를 일으켜 매 사이클 즉시 실패한다. 후속 페이지 쿼리는
+    // 커서 파라미터가 비교식에만 등장(IS NULL 없음)하고 절대 null이 아니라 타입이 확정된다.
+    @Query("SELECT p FROM PaymentJpaEntity p WHERE p.status = 'PAYMENT_PENDING' AND p.createdAt < :threshold")
+    List<PaymentJpaEntity> findStalePendingFirst(@Param("threshold") LocalDateTime threshold, Pageable pageable);
+
+    // 후속 페이지 — (createdAt, id) 복합 커서 이후만. 동일 createdAt 행이 페이지 경계에 몰려도 id로 동률을
+    // 깨서 후속 행을 건너뛰지 않는다. 종결불가 행이 선두를 점유해도 커서를 전진시켜 그 뒤 행에 도달하게 한다.
     @Query("SELECT p FROM PaymentJpaEntity p WHERE p.status = 'PAYMENT_PENDING' AND p.createdAt < :threshold "
-            + "AND (:cursorCreatedAt IS NULL OR p.createdAt > :cursorCreatedAt "
+            + "AND (p.createdAt > :cursorCreatedAt "
             + "OR (p.createdAt = :cursorCreatedAt AND p.id > :cursorId))")
-    List<PaymentJpaEntity> findStalePending(@Param("threshold") LocalDateTime threshold,
+    List<PaymentJpaEntity> findStalePendingAfter(@Param("threshold") LocalDateTime threshold,
             @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt, @Param("cursorId") UUID cursorId,
             Pageable pageable);
 

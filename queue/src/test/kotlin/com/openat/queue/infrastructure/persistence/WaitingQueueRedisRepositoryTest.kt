@@ -141,6 +141,94 @@ class WaitingQueueRedisRepositoryTest {
     }
 
     @Test
+    @DisplayName(
+        "같은 사용자가 진짜 동시에 즉시입장을 두 번 요청해도 outstanding이 중복 가산되지 않는다" +
+            "(앱 레벨 admittedQuantityOf 가드와 이 스크립트 호출 사이의 좁은 레이스 방어)"
+    )
+    fun enqueueOrFastAdmit_sameUserConcurrentRequests_neverDoubleCountsOutstanding() {
+        // QueueService.enter()는 호출 전 admittedQuantityOf로 이미 입장권을 보유했는지 먼저
+        // 확인하지만, 그 GET과 이 스크립트 호출 사이엔 왕복(round trip)이 있어 완전한 원자성이
+        // 아니다 - 실제로 같은 순간 도착한 두 요청은 둘 다 "아직 없음"을 보고 여기까지 올 수
+        // 있다. 이 리포지토리 테스트는 그 앱 레벨 가드를 건너뛰고 같은 사용자로 동시에 스크립트를
+        // 직접 두 번 호출해, 스크립트 자체(Redis의 단일 스레드 직렬 실행 + 이 안의 ZSCORE 가드)가
+        // 그 레이스를 닫는지 검증한다.
+        val dropId = newDropId()
+        val userId = "racer"
+        seedRemaining(dropId, 10)
+        val executor = Executors.newFixedThreadPool(2)
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val done = CountDownLatch(2)
+        val results = java.util.Collections.synchronizedList(mutableListOf<AdmittedEntry?>())
+
+        repeat(2) {
+            executor.submit {
+                ready.countDown()
+                start.await()
+                try {
+                    results.add(runBlocking { repository.enqueueOrFastAdmit(dropId, userId, 1, TTL_SECONDS) })
+                } finally {
+                    done.countDown()
+                }
+            }
+        }
+        ready.await()
+        start.countDown()
+        done.await()
+        executor.shutdown()
+
+        // 둘 다 도착은 했지만, 발급은 정확히 한 번만 이뤄져야 한다 - 두 번째 호출은 이미
+        // admitted ZSET에 있는 걸 보고 fast admit을 재부여하지 않고, 대기열에도 등록하지
+        // 않은 채 그대로 반환한다(아래 좀비 대기열 항목 회귀 테스트 참고 - 대기열에 등록하는
+        // 폴백은 "지연된 이중 입장" 결함으로 이어져 폐기했다).
+        assertThat(results.count { it != null }).isEqualTo(1)
+        runBlocking {
+            assertThat(repository.admittedQuantityOf(dropId, userId)).isEqualTo(1)
+            assertThat(repository.outstandingOf(dropId)).isEqualTo(1L)
+            assertThat(repository.sizeOf(dropId)).isZero()
+            assertThat(repository.ticketOf(dropId, userId)).isNull()
+        }
+    }
+
+    @Test
+    @DisplayName(
+        "이미 입장권을 보유한 사용자의 중복 요청은 대기열에 좀비 항목을 남기지 않는다" +
+            "(남기면 원래 티켓을 소비한 뒤 admit.lua가 그 항목을 재입장시켜 지연된 이중 입장이 된다)"
+    )
+    fun enqueueOrFastAdmit_secondCallForAlreadyAdmittedUser_neverResultsInDelayedReAdmission() = runBlocking<Unit> {
+        val dropId = newDropId()
+        val userId = "double-clicker"
+        seedRemaining(dropId, 5)
+
+        // 1번째 요청: 정상적으로 즉시 입장한다(대기열이 비어 있고 재고 충분).
+        val first = repository.enqueueOrFastAdmit(dropId, userId, 1, TTL_SECONDS)
+        assertThat(first).isNotNull
+
+        // 2번째 요청(같은 사용자 - 더블클릭/중복 탭 등으로 재전송됐다고 가정): 이미 입장권을
+        // 보유 중이므로 아무 효과가 없어야 한다 - 특히 대기열에 좀비 항목을 남기면 안 된다.
+        val second = repository.enqueueOrFastAdmit(dropId, userId, 1, TTL_SECONDS)
+        assertThat(second).isNull()
+        assertThat(repository.sizeOf(dropId)).isZero()
+        assertThat(repository.ticketOf(dropId, userId)).isNull()
+
+        // 1번째 티켓을 "소비"한 상태를 흉내낸다(실제로는 게이트웨이의 GETDEL +
+        // release-admitted-tracking.lua가 주문 성공 응답 시점에 admitted 추적만 즉시 정리하고,
+        // outstanding은 이후 order의 CREATED 이벤트 컨슘 시점에 별도로 차감된다 - 이 테스트는
+        // admitted 추적 정리만으로 재현에 충분하므로 outstanding도 함께 맞춰 정리한다).
+        redisTemplate.delete(RedisKeys.admission(dropId, userId))
+        redisTemplate.opsForZSet().remove(RedisKeys.admitted(dropId), userId)
+        redisTemplate.opsForHash<String, String>().delete(RedisKeys.admittedQuantity(dropId), userId)
+        redisTemplate.opsForValue().decrement(RedisKeys.outstanding(dropId), 1)
+        assertThat(repository.admittedQuantityOf(dropId, userId)).isNull()
+
+        // 다음 admit tick: 대기열에 좀비 항목이 없으므로 이 사용자에게 재고를 또 내주지 않는다.
+        val admitted = repository.admitBatch(dropId, MAX_SCAN, TTL_SECONDS)
+
+        assertThat(admitted).isEmpty()
+        assertThat(repository.admittedQuantityOf(dropId, userId)).isNull()
+    }
+
+    @Test
     @DisplayName("맨 앞사람 몫이 재고로 안 되면, 뒷사람 몫이 재고로 충분해도 새치기 입장시키지 않는다(엄격한 FIFO)")
     fun admitBatch_frontCandidateBlocked_neverAdmitsSmallerCandidateBehind() = runBlocking<Unit> {
         val dropId = newDropId()
@@ -412,6 +500,102 @@ class WaitingQueueRedisRepositoryTest {
         assertThat(repository.activeDropIds()).doesNotContain(dropId)
     }
 
+    @Test
+    @DisplayName("READY 사용자가 포기하면 입장권을 즉시 반납하고 outstanding이 그만큼 되돌아간다")
+    fun releaseAdmission_admittedUser_returnsQuantityAndDecrementsOutstanding() = runBlocking<Unit> {
+        val dropId = newDropId()
+        val userId = "ready-user"
+        seedRemaining(dropId, 10)
+        repository.enqueueOrFastAdmit(dropId, userId, 3, TTL_SECONDS) // 즉시 입장 - 입장권 발급
+        assertThat(outstandingOf(dropId)).isEqualTo(3)
+
+        val released = repository.releaseAdmission(dropId, userId, TOMBSTONE_TTL_SECONDS)
+
+        assertThat(released).isEqualTo(3)
+        assertThat(outstandingOf(dropId)).isZero()
+        // status-snapshot.lua가 READY 판정에 쓰는 키가 사라져야 다음 폴링에서 READY가 풀린다.
+        assertThat(repository.admittedQuantityOf(dropId, userId)).isNull()
+        assertThat(admittedScoreOf(dropId, userId)).isNull()
+    }
+
+    @Test
+    @DisplayName("이미 소진된 입장권(게이트웨이 GETDEL 이후)이면 아무 것도 하지 않는다 - outstanding 이중 차감 방지")
+    fun releaseAdmission_alreadyConsumedTicket_isNoOp() = runBlocking<Unit> {
+        val dropId = newDropId()
+        val userId = "ordering-user"
+        seedRemaining(dropId, 10)
+        repository.enqueueOrFastAdmit(dropId, userId, 3, TTL_SECONDS)
+        // 게이트웨이가 주문 요청에서 입장권을 GETDEL로 소진한 직후를 흉내낸다(admitted 추적은
+        // 아직 남아있고, outstanding은 CREATED 이벤트를 받은 queue가 나중에 넘겨받는다).
+        redisTemplate.delete(RedisKeys.admission(dropId, userId))
+
+        val released = repository.releaseAdmission(dropId, userId, TOMBSTONE_TTL_SECONDS)
+
+        assertThat(released).isZero()
+        // 여기서 깎였다면 CREATED 이벤트 처리 시 또 깎여 이중 차감이 된다.
+        assertThat(outstandingOf(dropId)).isEqualTo(3)
+        assertThat(admittedScoreOf(dropId, userId)).isNotNull()
+    }
+
+    @Test
+    @DisplayName("두 번 호출해도 outstanding은 한 번만 되돌아간다(멱등)")
+    fun releaseAdmission_twice_decrementsOnce() = runBlocking<Unit> {
+        val dropId = newDropId()
+        val userId = "ready-user"
+        seedRemaining(dropId, 10)
+        repository.enqueueOrFastAdmit(dropId, userId, 2, TTL_SECONDS)
+
+        assertThat(repository.releaseAdmission(dropId, userId, TOMBSTONE_TTL_SECONDS)).isEqualTo(2)
+        assertThat(repository.releaseAdmission(dropId, userId, TOMBSTONE_TTL_SECONDS)).isZero()
+
+        assertThat(outstandingOf(dropId)).isZero()
+    }
+
+    @Test
+    @DisplayName(
+        "이미 소진된 입장권에 GIVE_UP하면 tombstone을 남긴다 - 게이트웨이가 이 사용자의 " +
+            "입장권을 나중에 되살리려 해도(다운스트림 5xx) 이 tombstone이 복구를 막아야 한다"
+    )
+    fun releaseAdmission_alreadyConsumedTicket_leavesTombstoneForRestoreToCheck() = runBlocking<Unit> {
+        val dropId = newDropId()
+        val userId = "ordering-user"
+        seedRemaining(dropId, 10)
+        repository.enqueueOrFastAdmit(dropId, userId, 3, TTL_SECONDS)
+        // 게이트웨이가 GETDEL로 입장권을 소진한 직후를 흉내낸다(주문 진행 중).
+        redisTemplate.delete(RedisKeys.admission(dropId, userId))
+
+        repository.releaseAdmission(dropId, userId, TOMBSTONE_TTL_SECONDS)
+
+        // 이 키의 존재 여부만이 apigateway의 restore-admission.lua가 복구를 막는 근거다 -
+        // 값 자체는 의미가 없다("1"). TTL은 별도로 검증하지 않는다(Testcontainers Redis에서
+        // 초 단위 TTL을 짧게 기다리는 건 플레이키해서, 존재 여부만으로 계약을 고정한다).
+        assertThat(redisTemplate.hasKey(RedisKeys.giveUpTombstone(dropId, userId))).isTrue()
+    }
+
+    @Test
+    @DisplayName("아직 소진 전인 입장권을 정상 반납할 때는 tombstone을 남기지 않는다")
+    fun releaseAdmission_notYetConsumedTicket_leavesNoTombstone() = runBlocking<Unit> {
+        val dropId = newDropId()
+        val userId = "ready-user"
+        seedRemaining(dropId, 10)
+        repository.enqueueOrFastAdmit(dropId, userId, 3, TTL_SECONDS)
+
+        repository.releaseAdmission(dropId, userId, TOMBSTONE_TTL_SECONDS)
+
+        // DEL이 성공한 정상 반납 경로라 tombstone이 불필요하다 - 남기면 이후 이 dropId+userId
+        // 조합으로 재진입한 사용자에게 아무 영향은 없지만(restore-admission.lua는 admission
+        // 키가 있을 때만 호출되는 경로라 무관), 굳이 남길 이유가 없다는 걸 고정해 둔다.
+        assertThat(redisTemplate.hasKey(RedisKeys.giveUpTombstone(dropId, userId))).isFalse()
+    }
+
+    private fun outstandingOf(dropId: String): Long =
+        redisTemplate.opsForValue().get(RedisKeys.outstanding(dropId))?.toLong() ?: 0
+
+    // 반환 타입을 Double?로 명시한다 - 플랫폼 타입(Double!)을 그대로 넘기면 AssertJ의 원시형
+    // assertThat(double) 오버로드가 선택돼 null 언박싱으로 NPE가 난다.
+    private fun admittedScoreOf(dropId: String, userId: String): Double? =
+        redisTemplate.opsForZSet().score(RedisKeys.admitted(dropId), userId)
+
     // remaining = total - reserved이므로, reserved를 안 건드리는(0 가정) 대부분의 테스트는
     // total만 세팅하면 "자유 재고 remaining개"를 그대로 흉내낼 수 있다.
     private fun seedRemaining(dropId: String, remaining: Long) {
@@ -423,6 +607,7 @@ class WaitingQueueRedisRepositoryTest {
     companion object {
         private const val TTL_SECONDS = 60L
         private const val MAX_SCAN = 50
+        private const val TOMBSTONE_TTL_SECONDS = 60L
 
         @Container
         @JvmStatic

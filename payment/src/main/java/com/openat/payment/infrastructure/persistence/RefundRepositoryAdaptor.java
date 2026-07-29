@@ -56,15 +56,14 @@ public class RefundRepositoryAdaptor implements RefundRepository {
 
     @Override
     public List<Refund> findStalePending(LocalDateTime threshold, ScanCursor cursor, int limit) {
-        // 오래된 순 + 상한 — PaymentRepositoryAdaptor.findStalePending과 동일한 취지((createdAt, id) 복합 커서·정렬).
-        LocalDateTime cursorCreatedAt = cursor == null ? null : cursor.createdAt();
-        UUID cursorId = cursor == null ? null : cursor.id();
-        return refundJpaRepository
-                .findStalePending(threshold, cursorCreatedAt, cursorId,
-                        PageRequest.of(0, limit,
-                                Sort.by(Sort.Order.asc("createdAt"), Sort.Order.asc("id"))))
-                .stream()
-                .map(RefundJpaEntity::toDomain).toList();
+        // 오래된 순 + 상한 — PaymentRepositoryAdaptor.findStalePending과 동일한 취지·이유(첫/후속 페이지 분리로
+        // Postgres 42P18 회피, (createdAt, id) 복합 커서·정렬).
+        PageRequest page = PageRequest.of(0, limit,
+                Sort.by(Sort.Order.asc("createdAt"), Sort.Order.asc("id")));
+        List<RefundJpaEntity> rows = cursor == null
+                ? refundJpaRepository.findStalePendingFirst(threshold, page)
+                : refundJpaRepository.findStalePendingAfter(threshold, cursor.createdAt(), cursor.id(), page);
+        return rows.stream().map(RefundJpaEntity::toDomain).toList();
     }
 
     @Override

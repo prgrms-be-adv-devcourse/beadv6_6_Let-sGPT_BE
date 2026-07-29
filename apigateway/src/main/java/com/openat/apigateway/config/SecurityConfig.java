@@ -2,6 +2,7 @@ package com.openat.apigateway.config;
 
 import com.openat.apigateway.error.ApiErrorResponseWriter;
 import com.openat.common.error.CommonErrorCode;
+import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -25,8 +26,6 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import reactor.core.publisher.Flux;
-
-import java.util.List;
 
 @Configuration
 @EnableWebFluxSecurity
@@ -157,18 +156,35 @@ public class SecurityConfig {
                         .pathMatchers("/api/v1/seller/**").access(authenticatedAndNotScoped())
 
                         // 정산 관리자 전용
-                        .pathMatchers(
-                                HttpMethod.GET,
-                                "/api/v1/settlements/admin", "/api/v1/settlements/admin/**",
-                                "/settlement/api/v1/settlements/admin", "/settlement/api/v1/settlements/admin/**").hasRole("ADMIN")
-                        .pathMatchers(
-                                HttpMethod.POST,
-                                "/api/v1/settlements/admin", "/api/v1/settlements/admin/**",
-                                "/settlement/api/v1/settlements/admin", "/settlement/api/v1/settlements/admin/**").hasRole("ADMIN")
-                        .pathMatchers(
-                                HttpMethod.GET,
-                                "/api/v1/settlements/seller", "/api/v1/settlements/seller/**",
-                                "/settlement/api/v1/settlements/seller", "/settlement/api/v1/settlements/seller/**")
+                        //
+                        // /* 가 아니라 /** 다 — /* 는 단일 세그먼트만 매칭해서 하위 경로가 생기면
+                        // 이 규칙을 벗어나 anyExchange().access(authenticatedAndNotScoped())로 샌다.
+                        // /settlement/api/v1/settlements/admin/** 도 함께 막는다 — 게이트웨이에
+                        // settlement로 가는 라우트가 두 벌이라(settlement-api: /api/v1/settlements/**
+                        // 그대로 프록시, settlement: /settlement/** + StripPrefix=1) 스트립 후 같은
+                        // :9140 컨트롤러에 도달한다. 아래 seller 규칙과 같은 이유.
+                        .pathMatchers(HttpMethod.GET,
+                                "/api/v1/settlements/admin/**",
+                                "/settlement/api/v1/settlements/admin/**").hasRole("ADMIN")
+                        .pathMatchers(HttpMethod.POST,
+                                "/api/v1/settlements/admin/**",
+                                "/settlement/api/v1/settlements/admin/**").hasRole("ADMIN")
+
+                        // 정산 판매자 조회 — scoped 토큰(typ=scoped, aud=openat-settlement)만 허용.
+                        // access 토큰(ROLE_SELLER)은 더 이상 통과하지 못한다 — settlement 쪽 IDOR(다른 판매자
+                        // sellerId를 파라미터로 넘겨 조회) 수정과 짝이다. scoped 토큰의 sub(sellerInfoId)를
+                        // X-Seller-Id로 내려주면 settlement가 그 값을 신뢰해 본인 것만 조회하도록 바뀐다.
+                        // scoped 토큰엔 roles 클레임이 없어 admin 경로로는 새지 않는다.
+                        //
+                        // /settlement/api/v1/settlements/seller/** 도 함께 막는다 — 안 막으면
+                        // /settlement/** + StripPrefix=1 라우트로 우회해 이 규칙 자체를 안 타고
+                        // anyExchange().access(authenticatedAndNotScoped())로 샌다. 그 경로는
+                        // scoped 토큰만 거부할 뿐 access 토큰은 role 검사 없이 통과시키므로,
+                        // ROLE_SELLER조차 없는 아무 로그인 회원이나 이 우회로로 정산을 조회할 수
+                        // 있었다 — 원래 막으려던 구멍보다 넓은 구멍이었다.
+                        .pathMatchers(HttpMethod.GET,
+                                "/api/v1/settlements/seller/**",
+                                "/settlement/api/v1/settlements/seller/**")
                         .access(scopedFor("openat-settlement", "settlement:read"))
 
 //                        // 판매자만
@@ -212,12 +228,10 @@ public class SecurityConfig {
                                 "/product/api/v1/categories", "/product/api/v1/categories/**").hasRole("ADMIN")
 
                         // product 판매자 write — scoped 토큰(typ=scoped, aud=openat-product)만 허용 (GET은 위에서 공개)
-                        .pathMatchers("/product/products", "/product/products/**")
-                        .access(scopedFor("openat-product", "product:write"))
+                        .pathMatchers("/product/products", "/product/products/**").access(scopedFor("openat-product"))
                         .pathMatchers(
                                 "/api/v1/products", "/api/v1/products/**",
-                                "/api/v1/drops", "/api/v1/drops/**")
-                        .access(scopedFor("openat-product", "product:write"))
+                                "/api/v1/drops", "/api/v1/drops/**").access(scopedFor("openat-product"))
 
                         // 개인화 추천 읽기 — 공개 (비회원도 기본 추천 조회 가능)
                         .pathMatchers(HttpMethod.GET, "/api/v1/recommendations").permitAll()
@@ -272,8 +286,21 @@ public class SecurityConfig {
     }
 
     /**
-     * scoped 토큰(typ=scoped)이고 지정 audience와 scope를 포함하는 경우만 허용하는 인가 관리자.
+     * scoped 토큰(typ=scoped)이고 지정 audience를 포함하는 경우만 허용하는 인가 관리자.
      * product write처럼 특정 서비스 전용 scoped 토큰이 필요한 경로에 사용한다.
+     */
+    private ReactiveAuthorizationManager<AuthorizationContext> scopedFor(String audience) {
+        return (authentication, context) ->
+                authentication.<AuthorizationResult>map(auth -> new AuthorizationDecision(
+                        auth instanceof JwtAuthenticationToken jwtAuth
+                        && "scoped".equals(jwtAuth.getToken().getClaimAsString("typ"))
+                        && jwtAuth.getToken().getAudience() != null
+                        && jwtAuth.getToken().getAudience().contains(audience)
+                )).defaultIfEmpty(new AuthorizationDecision(false));
+    }
+
+    /**
+     * scoped 토큰의 type, audience와 필수 scope를 모두 검증한다.
      */
     private ReactiveAuthorizationManager<AuthorizationContext> scopedFor(
             String audience,
