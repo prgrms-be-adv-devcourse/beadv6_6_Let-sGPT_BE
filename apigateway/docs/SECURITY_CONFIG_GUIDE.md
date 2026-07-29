@@ -69,8 +69,9 @@
 )
 ```
 
-현재 카테고리 GET은 공개고 POST/PATCH/DELETE는 별도 matcher가 없어 catch-all을 탄다.
-따라서 카테고리 쓰기는 일반 access JWT만 있으면 가능하며 ADMIN 역할 제한은 없다.
+카테고리 GET은 공개고 POST/PATCH/DELETE는 ADMIN 역할만 허용한다.
+`/api/v1/categories/**`와 `/product/api/v1/categories/**`에 동일한 정책을 적용해
+`StripPrefix=1` 라우트를 통한 우회를 막는다.
 
 정산은 GET `/api/v1/settlements/admin/*`에 ADMIN, GET
 `/api/v1/settlements/seller/*`에 SELLER 역할을 요구한다. 반면

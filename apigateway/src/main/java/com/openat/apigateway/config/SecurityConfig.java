@@ -185,6 +185,20 @@ public class SecurityConfig {
                                 "/api/v1/drops/**",
                                 "/api/v1/categories/**").permitAll()
 
+                        // 카테고리 관리는 ADMIN 전용 (/product 라우트 우회 경로도 동일하게 제한)
+                        .pathMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/categories", "/api/v1/categories/**",
+                                "/product/api/v1/categories", "/product/api/v1/categories/**").hasRole("ADMIN")
+                        .pathMatchers(
+                                HttpMethod.PATCH,
+                                "/api/v1/categories", "/api/v1/categories/**",
+                                "/product/api/v1/categories", "/product/api/v1/categories/**").hasRole("ADMIN")
+                        .pathMatchers(
+                                HttpMethod.DELETE,
+                                "/api/v1/categories", "/api/v1/categories/**",
+                                "/product/api/v1/categories", "/product/api/v1/categories/**").hasRole("ADMIN")
+
                         // product 판매자 write — scoped 토큰(typ=scoped, aud=openat-product)만 허용 (GET은 위에서 공개)
                         .pathMatchers("/product/products", "/product/products/**").access(scopedFor("openat-product"))
                         .pathMatchers(
