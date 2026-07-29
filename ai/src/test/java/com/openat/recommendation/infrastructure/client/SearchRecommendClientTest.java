@@ -295,6 +295,31 @@ class SearchRecommendClientTest {
   }
 
   @Test
+  @DisplayName("null id 후보가 앞쪽에 몰려도 절단 전에 걸러져 유효한 후보로 상한을 채운다")
+  void recommend_withLeadingNullIdCandidates_fillsRecommendationSizeWithValidCandidates() {
+    List<UUID> firstValidIds = ids(15);
+    List<UUID> secondValidIds = ids(15);
+    server
+        .expect(requestTo(RECOMMEND_URI))
+        .andRespond(
+            withSuccess(productsWithLeadingNulls(12, firstValidIds), MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(RECOMMEND_URI))
+        .andRespond(
+            withSuccess(productsWithLeadingNulls(12, secondValidIds), MediaType.APPLICATION_JSON));
+    client = client(2, 3);
+
+    var result = client.recommend(seeds(2));
+
+    assertThat(result).hasSize(20);
+    assertThat(result)
+        .extracting(SearchRecommendClient.SimilarProductResponse::id)
+        .doesNotContainNull()
+        .doesNotHaveDuplicates();
+    server.verify();
+  }
+
+  @Test
   @DisplayName("그룹이 하나면 오버페치도 절단도 하지 않고 설정 크기로 한 번만 호출한다")
   void recommend_withSingleSeed_postsOneRequestWithFullSize() {
     Seed seed = new Seed(UUID.randomUUID(), 0.9, false);
@@ -327,6 +352,24 @@ class SearchRecommendClientTest {
     return IntStream.range(0, count)
         .mapToObj(ignored -> new Seed(UUID.randomUUID(), 0.5, false))
         .toList();
+  }
+
+  private String productsWithLeadingNulls(int nullCount, List<UUID> validIds) {
+    List<String> items = new ArrayList<>();
+    for (int i = 0; i < nullCount; i++) {
+      items.add(
+          """
+          {"id":null,"name":"상품","description":"설명"}
+          """);
+    }
+    for (UUID id : validIds) {
+      items.add(
+          """
+          {"id":"%s","name":"상품","description":"설명"}
+          """
+              .formatted(id));
+    }
+    return "[" + String.join(",", items) + "]";
   }
 
   private String products(List<UUID> ids) {

@@ -114,8 +114,12 @@ public class SearchRecommendClient {
         }
       }
     }
+    // null id는 절단 전에 걸러야 한다. 안 그러면 뒤에 있던 유효한 후보가 잘려 나간다.
     // 오버페치한 행은 여기서 버린다. 상한을 풀면 LLM 프롬프트 입력 토큰이 그만큼 늘어난다.
-    return merged.stream().limit(recommendationSize).toList();
+    return merged.stream()
+        .filter(candidate -> candidate.id() != null)
+        .limit(recommendationSize)
+        .toList();
   }
 
   private RuntimeException unwrap(CompletionException exception) {

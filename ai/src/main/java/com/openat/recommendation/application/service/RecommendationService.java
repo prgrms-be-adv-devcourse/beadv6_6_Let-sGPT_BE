@@ -433,7 +433,7 @@ public class RecommendationService {
       if (mode.isHome()) {
         return fallback(mode, productId, currentProduct, "no-open-candidates");
       }
-      return detailFallback(productId, null, "no-candidates");
+      return detailFallback(productId, currentProduct.categoryId(), "no-candidates");
     }
 
     List<SelectedSection> selected;

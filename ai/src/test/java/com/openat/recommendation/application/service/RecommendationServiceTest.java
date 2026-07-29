@@ -716,15 +716,15 @@ class RecommendationServiceTest {
         .isEqualTo(1);
   }
 
-  /** 그 카테고리에도 열린 드롭이 없을 가능성이 높아 카테고리 드롭 단계를 건너뛴다. */
   @Test
-  void recommend_forDetailWhenAllCandidatesClosed_servesLastResortSkippingCategoryDrops() {
+  void recommend_forDetailWhenAllCandidatesClosed_servesLastResortWhenCategoryHasNoOpenDrops() {
     UUID currentId = UUID.randomUUID();
     UUID closedId = UUID.randomUUID();
-    when(productDetailClient.getProduct(currentId))
-        .thenReturn(product(currentId, UUID.randomUUID()));
+    UUID categoryId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
     when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
     when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of());
     when(lastResortProductsCache.get()).thenReturn(List.of(latestProduct()));
 
     assertThat(service.recommend(currentId).sections())
@@ -737,10 +737,25 @@ class RecommendationServiceTest {
                   .extracting(RecommendationResponse.Product::dropId)
                   .isNull();
             });
-    verify(openDropCache, never()).findByCategory(any(), anyInt());
+    verify(openDropCache).findByCategory(categoryId, 4);
     // 상세 파이프라인 진입 시의 1회 말고 폴백을 위한 추가 상품 조회는 없다.
     verify(productDetailClient, times(1)).getProduct(currentId);
     verify(llmClient, never()).complete(any());
+  }
+
+  @Test
+  void recommend_forDetailWhenAllCandidatesClosed_servesCategoryFallbackWhenCategoryHasOpenDrop() {
+    UUID currentId = UUID.randomUUID();
+    UUID closedId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    DropMeta fallback = drop(UUID.randomUUID(), categoryId);
+    when(productDetailClient.getProduct(currentId)).thenReturn(product(currentId, categoryId));
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(openDropCache.findByCategory(categoryId, 4)).thenReturn(List.of(fallback));
+
+    assertFallback(service.recommend(currentId), "이 카테고리의 다른 드롭", fallback.productId());
+    verify(lastResortProductsCache, never()).get();
   }
 
   @Test
