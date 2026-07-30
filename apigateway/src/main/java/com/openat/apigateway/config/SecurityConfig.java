@@ -134,11 +134,14 @@ public class SecurityConfig {
                         .pathMatchers("/payment/internal/**").hasRole("ADMIN")
 
                         // POST만 공개
+                        // /restore: 탈퇴 유예기간 복구 — login과 동일하게 호출 시점엔 미인증 상태라
+                        // permitAll 필요. 서비스 자체가 email/password로 재인증하므로 안전(§MemberService.restore).
                         .pathMatchers(
                                 HttpMethod.POST,
                                 "/api/v1/members",
                                 "/api/v1/members/login",
-                                "/api/v1/members/refresh").permitAll()
+                                "/api/v1/members/refresh",
+                                "/api/v1/members/restore").permitAll()
 
                         // 판매자 등록 — 아직 ROLE_USER인 회원도 최초 등록 가능.
                         // ※ .authenticated()는 scoped 토큰도 통과시키므로 반드시 access()로 대체
