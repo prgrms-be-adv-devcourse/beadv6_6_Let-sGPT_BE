@@ -131,6 +131,22 @@ class SettlementSellerGatewaySecurityTest {
   }
 
   @Test
+  @DisplayName("정산 audience라도 settlement:read scope가 없으면 정산 판매자 조회를 통과하지 못한다")
+  void sellerSettlement_withoutSettlementReadScope_returnsForbidden() {
+    given(jwtDecoder.decode("wrong-scope-token"))
+        .willReturn(Mono.just(
+            scopedJwt("wrong-scope-token", "openat-settlement", "product:write")));
+
+    webTestClient
+        .get()
+        .uri("/api/v1/settlements/seller/orders")
+        .headers(headers -> headers.setBearerAuth("wrong-scope-token"))
+        .exchange()
+        .expectStatus()
+        .isForbidden();
+  }
+
+  @Test
   @DisplayName("aud=openat-product scoped 토큰은 정산 판매자 조회를 통과하지 못한다 (audience 교차 사용 차단)")
   void sellerSettlement_productScopedToken_returnsForbidden() {
     given(jwtDecoder.decode("product-scoped-token"))
@@ -247,11 +263,17 @@ class SettlementSellerGatewaySecurityTest {
 
   /** RFC 8693 delegation 모델: sub=sellerInfoId, aud=지정 audience, roles 클레임 없음. */
   private Jwt scopedJwt(String tokenValue, String audience) {
+    String scope = "openat-settlement".equals(audience) ? "settlement:read" : "product:write";
+    return scopedJwt(tokenValue, audience, scope);
+  }
+
+  private Jwt scopedJwt(String tokenValue, String audience, String scope) {
     return Jwt.withTokenValue(tokenValue)
         .header("alg", "none")
         .subject(SELLER_INFO_ID)
         .claim("typ", "scoped")
         .claim("aud", List.of(audience))
+        .claim("scope", scope)
         .claim("act", Map.of("sub", "member-id"))
         .build();
   }
