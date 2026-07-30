@@ -58,12 +58,26 @@ class RecommendationPromptBuilderTest {
   }
 
   @Test
-  void build_requiresConcreteProductNounInTitle() {
+  void build_forbidsGenericPlaceholderNounsInTitle() {
+    String prompt = builder.build(RecommendationMode.HOME, null, List.of());
+
+    assertThat(prompt).contains("'아이템·선물·제품·상품·굿즈'");
+  }
+
+  @Test
+  void build_forbidsCategoryLabelStyleTitle() {
+    String prompt = builder.build(RecommendationMode.HOME, null, List.of());
+
+    assertThat(prompt).contains("제목을 '피규어 모음'처럼 상품 종류 이름만 나열한 라벨로 짓지 마세요.");
+  }
+
+  @Test
+  void build_requiresSectionsToDifferFromEachOther() {
     String prompt = builder.build(RecommendationMode.HOME, null, List.of());
 
     assertThat(prompt)
-        .contains("어떤 상품군인지 알 수 있는 구체적인 명사를 반드시 하나")
-        .contains("'아이템·선물·제품·상품·굿즈'");
+        .contains("그룹이 2개 이상이면 각 제목은 서로 다른 취향과 상황을 담아야 하며, "
+            + "같은 카테고리를 억지로 쪼개 비슷한 제목을 반복하지 마세요.");
   }
 
   @Test
