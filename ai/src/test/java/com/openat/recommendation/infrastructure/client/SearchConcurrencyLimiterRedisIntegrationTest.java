@@ -3,13 +3,17 @@ package com.openat.recommendation.infrastructure.client;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -84,6 +88,7 @@ class SearchConcurrencyLimiterRedisIntegrationTest {
 
     assertThat(acquired).isFalse();
     assertThat(elapsed).isGreaterThanOrEqualTo(280L);
+    holder.release("holder");
   }
 
   @Test
@@ -103,6 +108,7 @@ class SearchConcurrencyLimiterRedisIntegrationTest {
     holder.release("holder");
 
     assertThat(waiterAcquired.get()).isTrue();
+    waiter.release("waiter");
   }
 
   @Test
@@ -124,21 +130,104 @@ class SearchConcurrencyLimiterRedisIntegrationTest {
 
     limiterOnPodA.release("pod-a-permit");
     assertThat(limiterOnPodB.tryAcquire("pod-b-permit-retry")).isTrue();
+    limiterOnPodB.release("pod-b-permit-retry");
   }
 
   @Test
   void tryAcquire_afterPermitTtlExpiresWithoutRelease_recoversAutomatically() throws Exception {
     StringRedisTemplate template = newTemplate(true);
-    SearchConcurrencyLimiter crashed =
-        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(200), Duration.ofMillis(0));
+    // 리미터를 거쳐 acquire하면 갱신 스레드가 계속 TTL을 늘려 크래시를 흉내 낼 수 없으므로,
+    // 리미터 없이 permit을 직접 심어 "쓰다가 죽어서 다시는 갱신되지 않는 permit"을 재현한다.
+    template.opsForZSet().add(PERMITS_KEY, "crashed-permit", System.currentTimeMillis());
     SearchConcurrencyLimiter survivor =
-        new SearchConcurrencyLimiter(template, 1, Duration.ofSeconds(5), Duration.ofMillis(0));
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(200), Duration.ofMillis(0));
 
-    assertThat(crashed.tryAcquire("crashed-permit")).isTrue();
     assertThat(survivor.tryAcquire("immediate-retry")).isFalse();
 
     Thread.sleep(250);
 
     assertThat(survivor.tryAcquire("after-ttl-expiry")).isTrue();
+    survivor.release("after-ttl-expiry");
+  }
+
+  @Test
+  void tryAcquire_whileHeldLongerThanPermitTtl_renewsLeaseSoOtherAcquireStaysBlocked()
+      throws Exception {
+    StringRedisTemplate template = newTemplate(true);
+    SearchConcurrencyLimiter holder =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(300), Duration.ofMillis(100));
+    SearchConcurrencyLimiter other =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(300), Duration.ofMillis(100));
+
+    assertThat(holder.tryAcquire("holder")).isTrue();
+    // permitTtl(300ms)보다 오래 붙잡는다. 갱신이 없다면 이 사이 permit이 청소돼 other가 획득했을 것이다.
+    Thread.sleep(700);
+    assertThat(other.tryAcquire("other-while-held")).isFalse();
+
+    holder.release("holder");
+  }
+
+  @Test
+  void release_stopsRenewalThreadSoPermitDoesNotReappear() throws Exception {
+    StringRedisTemplate template = newTemplate(true);
+    SearchConcurrencyLimiter limiter =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(150), Duration.ofMillis(100));
+    SearchConcurrencyLimiter other =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(150), Duration.ofMillis(100));
+
+    assertThat(limiter.tryAcquire("permit")).isTrue();
+    Thread.sleep(120); // 갱신 간격(ttl/3=50ms)보다 길게 기다려 갱신이 최소 한 번은 일어나게 한다.
+    limiter.release("permit");
+
+    // 갱신 스레드가 release 뒤에도 살아있다면 여기서 한 번 더 갱신해 permit을 되살렸을 것이다.
+    Thread.sleep(120);
+    assertThat(other.tryAcquire("other")).isTrue();
+    other.release("other");
+  }
+
+  @Test
+  void tryAcquire_whenContended_pollsFewerTimesThanFixedThirtyMillisIntervalWould()
+      throws Exception {
+    LettuceConnectionFactory factory =
+        new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+    factory.afterPropertiesSet();
+    connectionFactoryA = factory;
+    CountingStringRedisTemplate template = new CountingStringRedisTemplate(factory);
+
+    SearchConcurrencyLimiter holder =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofSeconds(5), Duration.ofMillis(0));
+    assertThat(holder.tryAcquire("holder")).isTrue();
+
+    long acquireTimeoutMillis = 600L;
+    SearchConcurrencyLimiter waiter =
+        new SearchConcurrencyLimiter(
+            template, 1, Duration.ofSeconds(5), Duration.ofMillis(acquireTimeoutMillis));
+
+    assertThat(waiter.tryAcquire("waiter")).isFalse();
+
+    // 고정 30ms 폴링이었다면 600ms 안에 최대 20회 시도했을 것이다. 지수 백오프는 그보다 훨씬 적게 시도해야 한다.
+    long fixedIntervalUpperBound = acquireTimeoutMillis / 30L;
+    assertThat(template.executions()).isLessThan((int) fixedIntervalUpperBound);
+
+    holder.release("holder");
+  }
+
+  private static final class CountingStringRedisTemplate extends StringRedisTemplate {
+
+    private final AtomicInteger executions = new AtomicInteger();
+
+    CountingStringRedisTemplate(RedisConnectionFactory connectionFactory) {
+      super(connectionFactory);
+    }
+
+    @Override
+    public <T> T execute(RedisScript<T> script, List<String> keys, Object... args) {
+      executions.incrementAndGet();
+      return super.execute(script, keys, args);
+    }
+
+    int executions() {
+      return executions.get();
+    }
   }
 }
