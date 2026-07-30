@@ -40,6 +40,16 @@ public class MemberController {
         return ResponseEntity.ok(memberUseCase.refresh(request));
     }
 
+    /**
+     * 탈퇴 유예기간(30일) 중인 계정 복구. login과 동일하게 email/password로 본인 확인 후
+     * 복구 + 즉시 로그인 처리한다. permitAll(로그인과 동일 신뢰 수준 — 호출 시점엔 아직
+     * 인증된 상태가 아니므로 인증 토큰을 요구할 수 없다).
+     */
+    @PostMapping("/restore")
+    public ResponseEntity<TokenResponse> restore(@Valid @RequestBody LoginRequest request) {
+        return ResponseEntity.ok(memberUseCase.restore(request));
+    }
+
     @GetMapping("/me")
     public ResponseEntity<MemberResponse> getMyInfo(@CurrentUser UserContext userContext) {
         UUID memberId = UUID.fromString(userContext.userId());

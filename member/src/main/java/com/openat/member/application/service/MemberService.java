@@ -67,17 +67,45 @@ public class MemberService implements MemberUseCase {
 
     @Override
     public TokenResponse login(LoginRequest request) {
-        Member member = memberRepository.findByEmailIncludingDeleted(request.email())
-                .orElseThrow(() -> new BusinessException(MemberErrorCode.MEMBER_INVALID_CREDENTIALS));
+        Member member = verifyCredentials(request);
 
+        // 비밀번호 검증이 끝난 뒤에만 탈퇴 여부를 판별한다 — 순서를 반대로 하면(탈퇴 여부를 먼저
+        // 확인) 비밀번호를 모르는 제3자도 "이 이메일은 탈퇴한 계정이다"를 알아낼 수 있는
+        // 계정 열거(account enumeration) 취약점이 된다.
         if (member.isDeleted()) {
             throw new BusinessException(MemberErrorCode.MEMBER_WITHDRAWN);
         }
+
+        return issueTokens(member);
+    }
+
+    @Override
+    @Transactional
+    public TokenResponse restore(LoginRequest request) {
+        Member member = verifyCredentials(request);
+
+        // 이미 정상 계정이면(중복 클릭 등) 그냥 로그인과 동일하게 처리 — 멱등.
+        if (member.isDeleted()) {
+            member.restore();
+        }
+
+        return issueTokens(member);
+    }
+
+    /**
+     * email/password를 검증하고 회원을 반환한다. 탈퇴 여부와 무관하게(익명화 전이라면) 조회되므로,
+     * 호출자가 그 다음에 isDeleted()로 분기한다. 실패 사유(존재 안 함/비밀번호 오류)는 항상 동일한
+     * MEMBER_INVALID_CREDENTIALS로 응답해 계정 존재 여부를 노출하지 않는다.
+     */
+    private Member verifyCredentials(LoginRequest request) {
+        Member member = memberRepository.findByEmailIncludingDeleted(request.email())
+                .orElseThrow(() -> new BusinessException(MemberErrorCode.MEMBER_INVALID_CREDENTIALS));
+
         if (!passwordEncoder.matches(request.password(), member.getPassword())) {
             throw new BusinessException(MemberErrorCode.MEMBER_INVALID_CREDENTIALS);
         }
 
-        return issueTokens(member);
+        return member;
     }
 
     @Override
