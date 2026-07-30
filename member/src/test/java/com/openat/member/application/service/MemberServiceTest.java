@@ -116,6 +116,23 @@ class MemberServiceTest {
     }
 
     @Test
+    @DisplayName("복구: 유예기간(30일)이 지났으면 비밀번호가 맞아도 복구하지 않고 MEMBER_WITHDRAWN을 던진다"
+            + " (익명화 스케줄러가 아직 안 돌았어도 deletedAt 기준으로 직접 차단해야 함)")
+    void restore_whenGracePeriodExpired_throwsWithdrawnAndDoesNotRestore() {
+        Member withdrawn = withdrawnMember();
+        ReflectionTestUtils.setField(withdrawn, "deletedAt",
+                java.time.LocalDateTime.now().minusDays(31));
+        when(memberRepository.findByEmailIncludingDeleted("a@b.com")).thenReturn(Optional.of(withdrawn));
+        when(passwordEncoder.matches("correct", withdrawn.getPassword())).thenReturn(true);
+
+        assertThatThrownBy(() -> memberService.restore(new LoginRequest("a@b.com", "correct")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(MemberErrorCode.MEMBER_WITHDRAWN);
+        assertThat(withdrawn.isDeleted()).isTrue();
+    }
+
+    @Test
     @DisplayName("복구: 이미 활성 계정이면(중복 호출) 그냥 로그인처럼 멱등하게 처리한다")
     void restore_whenAlreadyActive_behavesLikeLogin() {
         Member active = activeMember();
