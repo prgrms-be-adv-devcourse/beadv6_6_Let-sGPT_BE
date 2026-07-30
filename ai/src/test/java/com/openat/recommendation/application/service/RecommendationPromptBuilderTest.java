@@ -76,8 +76,7 @@ class RecommendationPromptBuilderTest {
     String prompt = builder.build(RecommendationMode.HOME, null, List.of());
 
     assertThat(prompt)
-        .contains("그룹이 2개 이상이면 각 제목은 서로 다른 취향과 상황을 담아야 하며, "
-            + "같은 카테고리를 억지로 쪼개 비슷한 제목을 반복하지 마세요.");
+        .contains("그룹이 2개 이상이면 각 제목은 서로 다른 취향과 상황을 담아야 하며, " + "같은 카테고리를 억지로 쪼개 비슷한 제목을 반복하지 마세요.");
   }
 
   @Test

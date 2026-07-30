@@ -934,7 +934,8 @@ class RecommendationServiceTest {
             counterCount("recommendation.last-resort", "mode", "detail", "reason", "search-failed"))
         .isEqualTo(1);
     assertThat(
-            counterCount("recommendation.empty", "mode", "detail", "reason", "current-product-only"))
+            counterCount(
+                "recommendation.empty", "mode", "detail", "reason", "current-product-only"))
         .isEqualTo(1);
   }
 
@@ -957,7 +958,8 @@ class RecommendationServiceTest {
             counterCount("recommendation.last-resort", "mode", "detail", "reason", "no-candidates"))
         .isEqualTo(1);
     assertThat(
-            counterCount("recommendation.empty", "mode", "detail", "reason", "current-product-only"))
+            counterCount(
+                "recommendation.empty", "mode", "detail", "reason", "current-product-only"))
         .isEqualTo(1);
   }
 
