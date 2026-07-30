@@ -927,6 +927,40 @@ class RecommendationServiceTest {
                 new RecommendationResponse.Product(currentId, null, "현재", "판매자", 100L, "thumb")));
 
     assertThat(service.recommend(currentId).sections()).isEmpty();
+
+    // last-resort는 파이프라인 관점에서 "제공됨"이라 그대로 남지만, 최종 응답은 현재 상품 제외로
+    // 비었으므로 사용자 관점의 empty도 함께 기록돼야 한다 — 그렇지 않으면 실제 빈 응답이 누락된다.
+    assertThat(
+            counterCount("recommendation.last-resort", "mode", "detail", "reason", "search-failed"))
+        .isEqualTo(1);
+    assertThat(
+            counterCount(
+                "recommendation.empty", "mode", "detail", "reason", "current-product-only"))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void recommend_forDetailWhenAllCandidatesClosedAndLastResortHasOnlyCurrentProduct_countsEmpty() {
+    UUID currentId = UUID.randomUUID();
+    UUID closedId = UUID.randomUUID();
+    when(productDetailClient.getProduct(currentId))
+        .thenReturn(product(currentId, UUID.randomUUID()));
+    when(searchClient.recommend(any())).thenReturn(List.of(candidate(closedId)));
+    when(openDropCache.filterOpenProductIds(List.of(closedId))).thenReturn(List.of());
+    when(lastResortProductsCache.get())
+        .thenReturn(
+            List.of(
+                new RecommendationResponse.Product(currentId, null, "현재", "판매자", 100L, "thumb")));
+
+    assertThat(service.recommend(currentId).sections()).isEmpty();
+
+    assertThat(
+            counterCount("recommendation.last-resort", "mode", "detail", "reason", "no-candidates"))
+        .isEqualTo(1);
+    assertThat(
+            counterCount(
+                "recommendation.empty", "mode", "detail", "reason", "current-product-only"))
+        .isEqualTo(1);
   }
 
   @Test
