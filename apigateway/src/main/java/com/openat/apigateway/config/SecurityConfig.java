@@ -166,6 +166,9 @@ public class SecurityConfig {
                         .pathMatchers(HttpMethod.GET,
                                 "/api/v1/settlements/admin/**",
                                 "/settlement/api/v1/settlements/admin/**").hasRole("ADMIN")
+                        .pathMatchers(HttpMethod.POST,
+                                "/api/v1/settlements/admin/**",
+                                "/settlement/api/v1/settlements/admin/**").hasRole("ADMIN")
 
                         // 정산 판매자 조회 — scoped 토큰(typ=scoped, aud=openat-settlement)만 허용.
                         // access 토큰(ROLE_SELLER)은 더 이상 통과하지 못한다 — settlement 쪽 IDOR(다른 판매자
@@ -182,7 +185,7 @@ public class SecurityConfig {
                         .pathMatchers(HttpMethod.GET,
                                 "/api/v1/settlements/seller/**",
                                 "/settlement/api/v1/settlements/seller/**")
-                        .access(scopedFor("openat-settlement"))
+                        .access(scopedFor("openat-settlement", "settlement:read"))
 
 //                        // 판매자만
 //                        .pathMatchers(
@@ -294,6 +297,30 @@ public class SecurityConfig {
                         && jwtAuth.getToken().getAudience() != null
                         && jwtAuth.getToken().getAudience().contains(audience)
                 )).defaultIfEmpty(new AuthorizationDecision(false));
+    }
+
+    /**
+     * scoped 토큰의 type, audience와 필수 scope를 모두 검증한다.
+     */
+    private ReactiveAuthorizationManager<AuthorizationContext> scopedFor(
+            String audience,
+            String requiredScope
+    ) {
+        return (authentication, context) ->
+                authentication.<AuthorizationResult>map(auth -> new AuthorizationDecision(
+                        auth instanceof JwtAuthenticationToken jwtAuth
+                        && "scoped".equals(jwtAuth.getToken().getClaimAsString("typ"))
+                        && jwtAuth.getToken().getAudience() != null
+                        && jwtAuth.getToken().getAudience().contains(audience)
+                        && containsScope(jwtAuth.getToken().getClaimAsString("scope"), requiredScope)
+                )).defaultIfEmpty(new AuthorizationDecision(false));
+    }
+
+    private boolean containsScope(String scopeClaim, String requiredScope) {
+        if (scopeClaim == null || scopeClaim.isBlank()) {
+            return false;
+        }
+        return List.of(scopeClaim.trim().split("\\s+")).contains(requiredScope);
     }
 
     private ReactiveJwtAuthenticationConverter jwtAuthenticationConverter() {

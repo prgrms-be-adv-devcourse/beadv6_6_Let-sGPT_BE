@@ -145,6 +145,40 @@ class DropStockServiceTest {
     }
 
     @Test
+    @DisplayName("DUPLICATE면 이력을 기록하지 않고 잔여를 반환한다(재고 복구는 주문당 1회)")
+    void rollback_duplicate_returnsWithoutRecording() {
+      // given: L1 멱등키(order:{orderId}:rollback)가 살아있어 Lua가 remaining을 건드리지 않은 경우
+      given(dropCacheRepository.rollback(mutation))
+          .willReturn(new StockCommandResult(StockCommandStatus.DUPLICATE, 5));
+
+      // when
+      Optional<Long> remaining = dropStockService.rollback(command);
+
+      // then
+      assertThat(remaining).contains(5L);
+      then(stockHistoryRecorder).should(never()).record(any(), any());
+    }
+
+    @Test
+    @DisplayName("이력이 이미 존재하면(UNIQUE 위반) 캐시를 역연산해 과복구를 되돌린다")
+    void rollback_insertConflict_compensatesAndReturns() {
+      // given: L1 TTL(1h)이 만료된 뒤 들어온 중복 복구. Lua는 remaining을 한 번 더 올리지만
+      // (order_id, ROLLBACK) UNIQUE 제약이 최종 방어선이라 원장은 1건으로 유지된다.
+      given(dropCacheRepository.rollback(mutation))
+          .willReturn(new StockCommandResult(StockCommandStatus.OK, 5));
+      willThrow(new DataIntegrityViolationException("duplicate"))
+          .given(stockHistoryRecorder)
+          .record(any(), eq(StockChangeType.ROLLBACK));
+
+      // when
+      Optional<Long> remaining = dropStockService.rollback(command);
+
+      // then
+      assertThat(remaining).contains(5L);
+      then(dropCacheRepository).should().compensateRollback(mutation);
+    }
+
+    @Test
     @DisplayName("캐시에 없고 종료된 드롭이면 복원하지 않는다(no-op)")
     void rollback_notCachedAndClosed_noOp() {
       // given

@@ -7,31 +7,26 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-- ../base
+  - ../base
 
 images:
-- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/ai
-  newTag: a4d42f7c4e71850cbed69e7917618b3404083c58
-- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
-  newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
-  newTag: cea7ae7c37eb361cb012b27aad81c2378b14a826
-- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
-  newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
-  newTag: cea7ae7c37eb361cb012b27aad81c2378b14a826
-- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order
-  newTag: a4d42f7c4e71850cbed69e7917618b3404083c58
-- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
-  newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
-  newTag: cea7ae7c37eb361cb012b27aad81c2378b14a826
-- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
-  newTag: 50ecaa46d8117c6fbe1d18a05f59bd275c70a55c
-- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
-  newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
-  newTag: cea7ae7c37eb361cb012b27aad81c2378b14a826
-- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/search
-  newTag: f702e9907e0659f52890e02a448f498d392ddf34
-- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
-  newTag: 50ecaa46d8117c6fbe1d18a05f59bd275c70a55c
-- name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
-  newName: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
-  newTag: 2a8c6296823114e80b2d5693b402bd42cc2cdcff
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/apigateway
+    newTag: cea7ae7c37eb361cb012b27aad81c2378b14a826
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/member
+    newTag: cea7ae7c37eb361cb012b27aad81c2378b14a826
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/product
+    newTag: 50ecaa46d8117c6fbe1d18a05f59bd275c70a55c
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/order
+    newTag: a4d42f7c4e71850cbed69e7917618b3404083c58
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/payment
+    newTag: cea7ae7c37eb361cb012b27aad81c2378b14a826
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/settlement
+    newTag: 50ecaa46d8117c6fbe1d18a05f59bd275c70a55c
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/search
+    newTag: f702e9907e0659f52890e02a448f498d392ddf34
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/queue
+    newTag: cea7ae7c37eb361cb012b27aad81c2378b14a826
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_be/ai
+    newTag: a4d42f7c4e71850cbed69e7917618b3404083c58
+  - name: ghcr.io/prgrms-be-adv-devcourse/beadv6_6_let-sgpt_fe/frontend
+    newTag: 2a8c6296823114e80b2d5693b402bd42cc2cdcff

@@ -4,6 +4,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
 import com.openat.apigateway.error.ApiErrorResponseWriter;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -55,6 +56,17 @@ class SettlementSellerGatewaySecurityTest {
   @MockitoBean ReactiveJwtDecoder jwtDecoder;
 
   @MockitoBean RouteLocator routeLocator;
+
+  // ConcurrencyLimitFilter도 WebFilter라 @WebFluxTest 슬라이스 스캔에 함께 포함된다(actuator
+  // 자동설정은 슬라이스 테스트에 없어 MeterRegistry 빈이 없으면 컨텍스트 기동 자체가 실패한다) -
+  // 실제 게이트/카운터 동작을 검증하는 테스트가 아니므로 그냥 실제 SimpleMeterRegistry로 채운다.
+  @org.springframework.boot.test.context.TestConfiguration
+  static class MeterRegistryTestConfig {
+    @org.springframework.context.annotation.Bean
+    io.micrometer.core.instrument.MeterRegistry meterRegistry() {
+      return new SimpleMeterRegistry();
+    }
+  }
 
   @BeforeEach
   void setUpRoute() {
@@ -116,6 +128,22 @@ class SettlementSellerGatewaySecurityTest {
         .exchange()
         .expectStatus()
         .isOk();
+  }
+
+  @Test
+  @DisplayName("정산 audience라도 settlement:read scope가 없으면 정산 판매자 조회를 통과하지 못한다")
+  void sellerSettlement_withoutSettlementReadScope_returnsForbidden() {
+    given(jwtDecoder.decode("wrong-scope-token"))
+        .willReturn(Mono.just(
+            scopedJwt("wrong-scope-token", "openat-settlement", "product:write")));
+
+    webTestClient
+        .get()
+        .uri("/api/v1/settlements/seller/orders")
+        .headers(headers -> headers.setBearerAuth("wrong-scope-token"))
+        .exchange()
+        .expectStatus()
+        .isForbidden();
   }
 
   @Test
@@ -235,11 +263,17 @@ class SettlementSellerGatewaySecurityTest {
 
   /** RFC 8693 delegation 모델: sub=sellerInfoId, aud=지정 audience, roles 클레임 없음. */
   private Jwt scopedJwt(String tokenValue, String audience) {
+    String scope = "openat-settlement".equals(audience) ? "settlement:read" : "product:write";
+    return scopedJwt(tokenValue, audience, scope);
+  }
+
+  private Jwt scopedJwt(String tokenValue, String audience, String scope) {
     return Jwt.withTokenValue(tokenValue)
         .header("alg", "none")
         .subject(SELLER_INFO_ID)
         .claim("typ", "scoped")
         .claim("aud", List.of(audience))
+        .claim("scope", scope)
         .claim("act", Map.of("sub", "member-id"))
         .build();
   }

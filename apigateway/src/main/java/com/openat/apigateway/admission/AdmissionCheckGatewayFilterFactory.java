@@ -255,14 +255,17 @@ public class AdmissionCheckGatewayFilterFactory
 
     /**
      * 다운스트림 장애(5xx/연결오류)로 실패한 주문의 입장권을 남은 TTL로 되살린다
-     * (restore-admission.lua - 스위퍼가 이미 회수했거나 만료 임박이면 복구하지 않는 멱등 처리).
-     * outstanding은 건드리지 않는다 - 티켓이 살아있는 한 그 수량의 점유는 유효해야
-     * available 계산이 안 깨진다.
+     * (restore-admission.lua - 스위퍼가 이미 회수했거나 만료 임박이거나, 그 사이 사용자가
+     * GIVE_UP해서 queue가 giveup:{dropId}:{userId} tombstone을 남겼으면 복구하지 않는
+     * 멱등 처리). tombstone 없이는 "GETDEL로 소진된 뒤 GIVE_UP → 이 주문이 5xx로 실패"
+     * 순서에서 포기했던 사용자가 다시 READY로 보이는 lost-update가 있었다(queue의
+     * release-admission.lua 헤더 주석 참고). outstanding은 건드리지 않는다 - 티켓이
+     * 살아있는 한 그 수량의 점유는 유효해야 available 계산이 안 깨진다.
      */
     private Mono<Long> restoreAdmission(String dropId, String userId, int quantity) {
         return redisTemplate.execute(
                 restoreAdmissionScript,
-                List.of("admitted:" + dropId, "admission:" + dropId + ":" + userId),
+                List.of("admitted:" + dropId, "admission:" + dropId + ":" + userId, "giveup:" + dropId + ":" + userId),
                 List.of(userId, String.valueOf(quantity), String.valueOf(System.currentTimeMillis()))
         ).next().doOnNext(restored -> {
             if (restored > 0) {

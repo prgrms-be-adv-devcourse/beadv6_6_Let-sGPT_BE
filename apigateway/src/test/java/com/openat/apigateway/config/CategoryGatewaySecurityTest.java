@@ -4,6 +4,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
 import com.openat.apigateway.error.ApiErrorResponseWriter;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,6 +46,17 @@ class CategoryGatewaySecurityTest {
   @MockitoBean ReactiveJwtDecoder jwtDecoder;
 
   @MockitoBean RouteLocator routeLocator;
+
+  // ConcurrencyLimitFilter도 WebFilter라 @WebFluxTest 슬라이스 스캔에 함께 포함된다(actuator
+  // 자동설정은 슬라이스 테스트에 없어 MeterRegistry 빈이 없으면 컨텍스트 기동 자체가 실패한다) -
+  // 실제 게이트/카운터 동작을 검증하는 테스트가 아니므로 그냥 실제 SimpleMeterRegistry로 채운다.
+  @org.springframework.boot.test.context.TestConfiguration
+  static class MeterRegistryTestConfig {
+    @org.springframework.context.annotation.Bean
+    io.micrometer.core.instrument.MeterRegistry meterRegistry() {
+      return new SimpleMeterRegistry();
+    }
+  }
 
   @BeforeEach
   void setUpRoute() {
