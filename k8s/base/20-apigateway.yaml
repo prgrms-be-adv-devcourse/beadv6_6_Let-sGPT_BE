@@ -35,10 +35,11 @@ spec:
           envFrom:
             - configMapRef: { name: app-config }
           env:
-            # k3s_memory_mitigation_plan.md §7-5(WS-M5) — 고정 Xmx 제거, limit 비례 힙(WebFlux
-            # 오프힙 감안 비율 최저 50%) + InitialRAMPercentage(콜드부트 GC 빈발 절충) + codecache 캡.
-            # MaxMetaspaceSize 캡 제거(qna.md Q116) — 서브리밋 안 걸고 pod limit 하나로 통제.
-            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=50.0 -XX:InitialRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m" }
+            # limit 512Mi 내 결정론적 배분: 힙 50%(<=256Mi) + 다이렉트 96m + codecache 64m
+            # + 메타스페이스(무캡, 실측 상한 ~60Mi) + 스택/네이티브 ~35Mi ≒ 511Mi.
+            # MaxDirectMemorySize 명시 이유: 미지정 시 기본값이 최대 힙(≈256Mi)과 같아
+            # 힙+다이렉트만으로 limit에 도달 → 스파이크 시 Netty 버퍼 적체로 OOMKilled(exit137).
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=50.0 -XX:InitialRAMPercentage=25.0 -XX:MaxDirectMemorySize=96m -XX:ReservedCodeCacheSize=64m" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
           # 기동 완료까지 최대 300초 유예(2vCPU에서 6개 JVM 동시 부팅 + kubelet/kube 예약 감안, 실측 최악 251s) — 이후 liveness로 전환. k3s_node_coldboot_contention_plan §2-B/§2-A 동시 적용 전제
           startupProbe:
@@ -55,8 +56,8 @@ spec:
             timeoutSeconds: 3    # k3s_memory_mitigation_plan §4(WS-M3) — GC pause/CPU 기아 오탐 흡수
             failureThreshold: 5  # 3→5, kill 유예 30s→50s
           resources:
-            limits: { memory: "320Mi" }   # gate2 A-3: 실사용 237Mi 초과·재기동 종식 (MaxRAMPercentage 힙 여유)
-            requests: { cpu: "300m", memory: "256Mi" }   # cpu 50m→300m: 노드 CPU 포화 시 CFS 지분 부족으로 liveness 응답 못 해 킬당하는 문제 완화(memory는 gate2 A-3 유지)
+            limits: { memory: "512Mi" }   # 320Mi→512Mi: 스파이크 시 다이렉트 메모리 적체로 OOMKilled(exit137) 방어. 힙+다이렉트+메타스페이스 명시 배분 수렴
+            requests: { cpu: "300m", memory: "320Mi" }   # 256Mi→320Mi: 스파이크 정점 RSS 313Mi 커버(노드 request 합 여유 ~2.2Gi 내 소폭 상향). cpu 300m 유지
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }
