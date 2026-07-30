@@ -101,7 +101,13 @@ public class RecommendationService {
   public RecommendationResponse recommend(UUID productId) {
     RecommendationMode mode = RecommendationMode.fromProductId(productId);
     // 결과 경로가 여럿이라 현재 상품 제외는 경로마다 걸지 않고 조립된 응답에서 한 번에 처리한다.
-    return withoutCurrentProduct(productId, compute(mode, productId));
+    RecommendationResponse computed = compute(mode, productId);
+    RecommendationResponse response = withoutCurrentProduct(productId, computed);
+    // compute()가 이미 비어서 나온 경로는 그 안에서 metrics.empty()를 불렀다 — 여기서 또 세면 이중 계상.
+    if (!computed.sections().isEmpty() && response.sections().isEmpty()) {
+      metrics.empty(mode, "current-product-only");
+    }
+    return response;
   }
 
   private RecommendationResponse compute(RecommendationMode mode, UUID productId) {

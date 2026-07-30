@@ -3,6 +3,7 @@ package com.openat.recommendation.infrastructure.client;
 import static com.openat.recommendation.infrastructure.client.RestClientResponses.requireBody;
 
 import com.openat.recommendation.domain.model.Seed;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -18,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -32,18 +34,25 @@ public class SearchRecommendClient {
   private final int maxGroups;
   private final int overfetch;
   private final Executor executor;
+  private final SearchConcurrencyLimiter searchConcurrencyLimiter;
 
   public SearchRecommendClient(
       @Qualifier("searchRestClient") RestClient restClient,
       @Value("${services.search.recommendation-size}") int recommendationSize,
       @Value("${recommendation.search.max-groups:5}") int maxGroups,
       @Value("${recommendation.search.overfetch:3}") int overfetch,
+      @Value("${recommendation.search.max-concurrency:20}") int maxConcurrency,
+      @Value("${recommendation.search.acquire-timeout:2500ms}") Duration acquireTimeout,
+      @Value("${recommendation.search.permit-ttl:5s}") Duration permitTtl,
+      StringRedisTemplate redisTemplate,
       @Qualifier("recommendationExecutor") Executor executor) {
     this.restClient = restClient;
     this.recommendationSize = recommendationSize;
     this.maxGroups = Math.max(1, maxGroups);
     this.overfetch = Math.max(1, overfetch);
     this.executor = executor;
+    this.searchConcurrencyLimiter =
+        new SearchConcurrencyLimiter(redisTemplate, maxConcurrency, permitTtl, acquireTimeout);
   }
 
   // 한 요청으로 합치면 검색이 시드 임베딩을 가중 합산해 KNN을 한 번만 돌려 소수 종류가 사라진다.
@@ -134,14 +143,23 @@ public class SearchRecommendClient {
   }
 
   private List<SimilarProductResponse> post(List<Seed> seeds, int size) {
-    return requireBody(
-        restClient
-            .post()
-            .uri("/api/v1/searchs/recommand")
-            .body(buildRequest(seeds, size))
-            .retrieve()
-            .body(new ParameterizedTypeReference<List<SimilarProductResponse>>() {}),
-        "Search recommendation response body is empty");
+    String permitId = UUID.randomUUID().toString();
+    if (!searchConcurrencyLimiter.tryAcquire(permitId)) {
+      throw new SearchConcurrencyLimitedException(
+          "search concurrency limit reached, shedding this search call");
+    }
+    try {
+      return requireBody(
+          restClient
+              .post()
+              .uri("/api/v1/searchs/recommand")
+              .body(buildRequest(seeds, size))
+              .retrieve()
+              .body(new ParameterizedTypeReference<List<SimilarProductResponse>>() {}),
+          "Search recommendation response body is empty");
+    } finally {
+      searchConcurrencyLimiter.release(permitId);
+    }
   }
 
   private SearchRecommendationRequest buildRequest(List<Seed> seeds, int size) {
@@ -159,4 +177,10 @@ public class SearchRecommendClient {
 
   public record SimilarProductResponse(
       UUID id, String name, String description, String imgDescription) {}
+
+  public static class SearchConcurrencyLimitedException extends RuntimeException {
+    SearchConcurrencyLimitedException(String message) {
+      super(message);
+    }
+  }
 }
