@@ -41,6 +41,11 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-webflux-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
+    // restore-admission.lua 등 Redis Lua 스크립트를 실제 Redis로 검증 - queue의
+    // WaitingQueueRedisRepositoryTest/product의 DropCacheRedisAdaptorTest와 동일한 관례
+    // (버전 고정 이유도 동일: Testcontainers 2.x가 Spring BOM에 없어 명시적으로 고정해야 함).
+    testImplementation("org.springframework.boot:spring-boot-testcontainers")
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter:2.0.5")
 }
 
 dependencyManagement {

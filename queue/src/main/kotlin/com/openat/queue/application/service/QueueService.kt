@@ -20,6 +20,7 @@ import com.openat.queue.domain.repository.WaitingQueueRepository
 import com.openat.queue.infrastructure.config.QueueProperties
 import com.openat.queue.infrastructure.persistence.QueueEventPublisher
 import java.time.Instant
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
 /**
@@ -52,6 +53,8 @@ class QueueService(
     private val queueProperties: QueueProperties,
     private val queueEventPublisher: QueueEventPublisher,
 ) : EnterQueueUseCase, GetQueueStatusUseCase, AdmitWaitersUseCase, DecideQueueUseCase {
+
+    private val log = LoggerFactory.getLogger(javaClass)
 
     override suspend fun admitBatch(dropId: String): List<AdmittedEntry> =
         waitingQueueRepository.admitBatch(
@@ -117,7 +120,30 @@ class QueueService(
                     maxAtConfirm = max,
                 )
             }
-            DecisionChoice.GIVE_UP -> waitingQueueRepository.removeFromQueue(dropId, userId)
+            // 대기열 자리와 입장권은 서로 다른 상태라 둘 다 정리해야 한다 - 대기 중이면
+            // 전자만, 이미 READY면 후자만 실제로 회수된다(둘 다 멱등이라 항상 같이 호출한다).
+            //
+            // 호출 순서가 의미를 갖는다: removeFromQueue가 반드시 먼저다. 뒤집으면 두 호출
+            // 사이에 1초 주기 admit tick이 아직 대기열에 남아있는 이 사용자를 다시 입장시켜
+            // 새 입장권을 발급할 수 있고, 그 입장권은 아무도 회수하지 않아 TTL까지 샌다.
+            //
+            // 두 Lua를 하나로 합치지 않는 이유: remove-from-queue.lua는 SSE 커넥션 끊김 시의
+            // 즉시 회수(QueueStreamService.attemptReclaim)와 공유된다. 합치면 잠깐 끊긴
+            // 사용자의 입장권까지 파괴돼 restore-admission.lua의 설계 의도와 어긋난다.
+            DecisionChoice.GIVE_UP -> {
+                val removed = waitingQueueRepository.removeFromQueue(dropId, userId)
+                val releasedQty = waitingQueueRepository.releaseAdmission(
+                    dropId, userId, queueProperties.admission.giveUpTombstoneTtlSeconds,
+                )
+                // 이 경로는 원래 로그/메트릭/이벤트가 전무해서 "정말로 나갔는지"를 서버에서
+                // 확인할 방법이 없었다(Redis 키는 삭제가 정상이라 부재로는 증명이 안 됨).
+                // removed=1 -> 대기 중이던 사람이 줄에서 빠짐 / releasedQty>0 -> READY였던
+                // 사람이 입장권을 반납해 그만큼 재고가 다시 풀림.
+                log.info(
+                    "[queue-give-up] dropId={} userId={} removed={} releasedQty={}",
+                    dropId, userId, removed, releasedQty,
+                )
+            }
             // 실패(그 사이 재고가 완전히 사라짐)해도 별도 처리 불필요 - 아래 resolveStatus가
             // 최신 상태를 다시 계산해서 보여준다(예: WAITING 또는 다시 DECISION_REQUIRED).
             DecisionChoice.PARTIAL -> waitingQueueRepository.admitSingle(dropId, userId, queueProperties.admission.ttlSeconds)
