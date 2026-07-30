@@ -4,6 +4,8 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -16,6 +18,7 @@ import org.springframework.data.redis.core.script.RedisScript;
  */
 class SearchConcurrencyLimiter {
 
+  private static final Logger log = LoggerFactory.getLogger(SearchConcurrencyLimiter.class);
   private static final String PERMITS_KEY = "recommendation:search:permits";
   private static final long INITIAL_POLL_DELAY_MILLIS = 15L;
   private static final long MAX_POLL_DELAY_MILLIS = 200L;
@@ -34,6 +37,8 @@ class SearchConcurrencyLimiter {
       RedisScript.of(new ClassPathResource("redis/acquire-search-permit.lua"), Long.class);
   private final RedisScript<Long> releaseScript =
       RedisScript.of(new ClassPathResource("redis/release-search-permit.lua"), Long.class);
+  private final RedisScript<Long> renewScript =
+      RedisScript.of(new ClassPathResource("redis/renew-search-permit.lua"), Long.class);
 
   SearchConcurrencyLimiter(
       StringRedisTemplate redisTemplate,
@@ -102,7 +107,20 @@ class SearchConcurrencyLimiter {
     try {
       while (true) {
         Thread.sleep(renewalIntervalMillis);
-        redisTemplate.opsForZSet().add(PERMITS_KEY, permitId, System.currentTimeMillis());
+        try {
+          Long renewed =
+              redisTemplate.execute(
+                  renewScript,
+                  List.of(PERMITS_KEY),
+                  Long.toString(System.currentTimeMillis()),
+                  Long.toString(permitTtlMillis),
+                  permitId);
+          if (!Long.valueOf(1L).equals(renewed)) {
+            log.warn("search concurrency permit {} lease already lost before renewal", permitId);
+          }
+        } catch (RuntimeException exception) {
+          log.warn("failed to renew search concurrency permit {}", permitId, exception);
+        }
       }
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();

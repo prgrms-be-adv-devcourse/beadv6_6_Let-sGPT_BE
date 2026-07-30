@@ -168,6 +168,49 @@ class SearchConcurrencyLimiterRedisIntegrationTest {
   }
 
   @Test
+  void tryAcquire_duringRenewalCycleGap_neverSucceedsForCompetitor() throws Exception {
+    StringRedisTemplate template = newTemplate(true);
+    SearchConcurrencyLimiter holder =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(200), Duration.ofMillis(100));
+    SearchConcurrencyLimiter competitor =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(200), Duration.ofMillis(0));
+
+    assertThat(holder.tryAcquire("holder")).isTrue();
+
+    long deadline = System.currentTimeMillis() + 500;
+    int attempts = 0;
+    while (System.currentTimeMillis() < deadline) {
+      attempts++;
+      assertThat(competitor.tryAcquire("competitor-" + attempts)).isFalse();
+    }
+    assertThat(attempts).isGreaterThan(50);
+
+    holder.release("holder");
+  }
+
+  @Test
+  void renewLoop_survivesTransientRedisExceptionsAndKeepsPermitAlive() throws Exception {
+    LettuceConnectionFactory factory =
+        new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+    factory.afterPropertiesSet();
+    connectionFactoryA = factory;
+    FlakyStringRedisTemplate template = new FlakyStringRedisTemplate(factory);
+    template.afterPropertiesSet();
+
+    SearchConcurrencyLimiter holder =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(300), Duration.ofMillis(100));
+    SearchConcurrencyLimiter other =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(300), Duration.ofMillis(100));
+
+    assertThat(holder.tryAcquire("holder")).isTrue();
+    Thread.sleep(700);
+    assertThat(other.tryAcquire("other-while-held")).isFalse();
+    assertThat(template.renewFailures()).isGreaterThanOrEqualTo(2);
+
+    holder.release("holder");
+  }
+
+  @Test
   void release_stopsRenewalThreadSoPermitDoesNotReappear() throws Exception {
     StringRedisTemplate template = newTemplate(true);
     SearchConcurrencyLimiter limiter =
@@ -228,6 +271,32 @@ class SearchConcurrencyLimiterRedisIntegrationTest {
 
     int executions() {
       return executions.get();
+    }
+  }
+
+  private static final class FlakyStringRedisTemplate extends StringRedisTemplate {
+
+    // acquire=4개 인자, release=1개 — renew만 3개라 이걸로 구분한다. 스크립트 인자 수가 바뀌면 갱신해야 한다.
+    private static final int RENEW_SCRIPT_ARG_COUNT = 3;
+
+    private final AtomicInteger renewAttempts = new AtomicInteger();
+    private final AtomicInteger renewFailures = new AtomicInteger();
+
+    FlakyStringRedisTemplate(RedisConnectionFactory connectionFactory) {
+      super(connectionFactory);
+    }
+
+    @Override
+    public <T> T execute(RedisScript<T> script, List<String> keys, Object... args) {
+      if (args.length == RENEW_SCRIPT_ARG_COUNT && renewAttempts.incrementAndGet() % 2 == 1) {
+        renewFailures.incrementAndGet();
+        throw new RuntimeException("simulated transient redis failure");
+      }
+      return super.execute(script, keys, args);
+    }
+
+    int renewFailures() {
+      return renewFailures.get();
     }
   }
 }
