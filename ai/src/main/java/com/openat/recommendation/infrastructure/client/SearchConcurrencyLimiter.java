@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
@@ -31,7 +32,7 @@ class SearchConcurrencyLimiter {
   private final long permitTtlMillis;
   private final long acquireTimeoutMillis;
   private final long renewalIntervalMillis;
-  private final ConcurrentHashMap<String, Thread> renewalThreads = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<String, PermitLease> permitLeases = new ConcurrentHashMap<>();
 
   private final RedisScript<Long> acquireScript =
       RedisScript.of(new ClassPathResource("redis/acquire-search-permit.lua"), Long.class);
@@ -98,14 +99,15 @@ class SearchConcurrencyLimiter {
   }
 
   private void startRenewal(String permitId) {
-    Thread renewer = Thread.ofVirtual().unstarted(() -> renewLoop(permitId));
-    renewalThreads.put(permitId, renewer);
+    AtomicBoolean cancelled = new AtomicBoolean(false);
+    Thread renewer = Thread.ofVirtual().unstarted(() -> renewLoop(permitId, cancelled));
+    permitLeases.put(permitId, new PermitLease(renewer, cancelled));
     renewer.start();
   }
 
-  private void renewLoop(String permitId) {
+  private void renewLoop(String permitId, AtomicBoolean cancelled) {
     try {
-      while (true) {
+      while (!cancelled.get()) {
         Thread.sleep(renewalIntervalMillis);
         try {
           Long renewed =
@@ -117,6 +119,7 @@ class SearchConcurrencyLimiter {
                   permitId);
           if (!Long.valueOf(1L).equals(renewed)) {
             log.warn("search concurrency permit {} lease already lost before renewal", permitId);
+            return;
           }
         } catch (RuntimeException exception) {
           log.warn("failed to renew search concurrency permit {}", permitId, exception);
@@ -128,16 +131,20 @@ class SearchConcurrencyLimiter {
   }
 
   private void stopRenewal(String permitId) {
-    Thread renewer = renewalThreads.remove(permitId);
-    if (renewer == null) {
+    PermitLease lease = permitLeases.remove(permitId);
+    if (lease == null) {
       return;
     }
-    renewer.interrupt();
+    // interrupt보다 먼저 세워야 broad catch가 삼켜도 다음 순회에서 멈춘다.
+    lease.cancelled().set(true);
+    lease.renewer().interrupt();
     try {
       // join 없이 지우면 release 직후 갱신 스레드가 permit을 되살리는 좀비 permit이 생길 수 있다.
-      renewer.join(RENEWAL_JOIN_TIMEOUT_MILLIS);
+      lease.renewer().join(RENEWAL_JOIN_TIMEOUT_MILLIS);
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
     }
   }
+
+  private record PermitLease(Thread renewer, AtomicBoolean cancelled) {}
 }

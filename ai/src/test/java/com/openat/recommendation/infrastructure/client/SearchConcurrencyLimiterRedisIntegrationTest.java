@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -229,6 +231,61 @@ class SearchConcurrencyLimiterRedisIntegrationTest {
   }
 
   @Test
+  void release_whenRenewalCallSwallowsInterruptAsRuntimeException_stopsRetryingAfterJoinTimeout()
+      throws Exception {
+    LettuceConnectionFactory factory =
+        new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+    factory.afterPropertiesSet();
+    connectionFactoryA = factory;
+    StuckRenewalStringRedisTemplate template = new StuckRenewalStringRedisTemplate(factory);
+    template.afterPropertiesSet();
+
+    SearchConcurrencyLimiter holder =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(300), Duration.ofMillis(100));
+    SearchConcurrencyLimiter competitor =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofSeconds(10), Duration.ofMillis(100));
+
+    assertThat(holder.tryAcquire("holder")).isTrue();
+    assertThat(template.renewalStarted().await(2, TimeUnit.SECONDS)).isTrue();
+
+    long releaseStart = System.currentTimeMillis();
+    holder.release("holder");
+    long releaseElapsed = System.currentTimeMillis() - releaseStart;
+
+    assertThat(releaseElapsed).isGreaterThanOrEqualTo(900L);
+    assertThat(competitor.tryAcquire("competitor")).isTrue();
+    competitor.release("competitor");
+
+    Thread.sleep(600);
+    assertThat(template.renewAttempts()).isEqualTo(1);
+  }
+
+  @Test
+  void renewLoop_whenLeaseAlreadyLost_stopsRenewingInsteadOfRetryingForever() throws Exception {
+    LettuceConnectionFactory factory =
+        new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+    factory.afterPropertiesSet();
+    connectionFactoryA = factory;
+    CountingRenewStringRedisTemplate template = new CountingRenewStringRedisTemplate(factory);
+    template.afterPropertiesSet();
+
+    SearchConcurrencyLimiter holder =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(200), Duration.ofMillis(100));
+
+    assertThat(holder.tryAcquire("holder")).isTrue();
+    template.opsForZSet().remove(PERMITS_KEY, "holder");
+
+    Thread.sleep(300);
+    int attemptsAfterLeaseLost = template.renewAttempts();
+    assertThat(attemptsAfterLeaseLost).isGreaterThanOrEqualTo(1);
+
+    Thread.sleep(500);
+    assertThat(template.renewAttempts()).isEqualTo(attemptsAfterLeaseLost);
+
+    holder.release("holder");
+  }
+
+  @Test
   void tryAcquire_whenContended_pollsFewerTimesThanFixedThirtyMillisIntervalWould()
       throws Exception {
     LettuceConnectionFactory factory =
@@ -297,6 +354,72 @@ class SearchConcurrencyLimiterRedisIntegrationTest {
 
     int renewFailures() {
       return renewFailures.get();
+    }
+  }
+
+  /**
+   * 갱신 호출마다 interrupt를 흡수하며 STUCK_BLOCK_MILLIS만큼 버틴 뒤 RuntimeException을 던져, "interrupt가 일반
+   * RuntimeException으로 소비되는" 상황을 흉내 낸다.
+   */
+  private static final class StuckRenewalStringRedisTemplate extends StringRedisTemplate {
+
+    private static final int RENEW_SCRIPT_ARG_COUNT = 3;
+    private static final long STUCK_BLOCK_MILLIS = 1300L;
+
+    private final CountDownLatch renewalStarted = new CountDownLatch(1);
+    private final AtomicInteger renewAttempts = new AtomicInteger();
+
+    StuckRenewalStringRedisTemplate(RedisConnectionFactory connectionFactory) {
+      super(connectionFactory);
+    }
+
+    @Override
+    public <T> T execute(RedisScript<T> script, List<String> keys, Object... args) {
+      if (args.length == RENEW_SCRIPT_ARG_COUNT) {
+        renewAttempts.incrementAndGet();
+        renewalStarted.countDown();
+        long deadline = System.currentTimeMillis() + STUCK_BLOCK_MILLIS;
+        while (System.currentTimeMillis() < deadline) {
+          try {
+            Thread.sleep(Math.max(1, deadline - System.currentTimeMillis()));
+          } catch (InterruptedException interrupted) {
+            // 소켓 레벨 interrupt 흡수를 흉내 낸다: 예외를 삼키고 원래 블로킹 시간만큼 계속 버틴다.
+          }
+        }
+        throw new RuntimeException("simulated stuck redis call swallowing interrupt");
+      }
+      return super.execute(script, keys, args);
+    }
+
+    CountDownLatch renewalStarted() {
+      return renewalStarted;
+    }
+
+    int renewAttempts() {
+      return renewAttempts.get();
+    }
+  }
+
+  private static final class CountingRenewStringRedisTemplate extends StringRedisTemplate {
+
+    private static final int RENEW_SCRIPT_ARG_COUNT = 3;
+
+    private final AtomicInteger renewAttempts = new AtomicInteger();
+
+    CountingRenewStringRedisTemplate(RedisConnectionFactory connectionFactory) {
+      super(connectionFactory);
+    }
+
+    @Override
+    public <T> T execute(RedisScript<T> script, List<String> keys, Object... args) {
+      if (args.length == RENEW_SCRIPT_ARG_COUNT) {
+        renewAttempts.incrementAndGet();
+      }
+      return super.execute(script, keys, args);
+    }
+
+    int renewAttempts() {
+      return renewAttempts.get();
     }
   }
 }
