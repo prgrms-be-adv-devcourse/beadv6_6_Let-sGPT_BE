@@ -9,26 +9,59 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.openat.recommendation.domain.model.Seed;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.IntStream;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
+@Testcontainers(disabledWithoutDocker = true)
 class SearchRecommendClientTest {
 
   private static final String BASE_URL = "http://search-service";
   private static final String RECOMMEND_URI = BASE_URL + "/api/v1/searchs/recommand";
+
+  @Container
+  static final GenericContainer<?> redis =
+      new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine")).withExposedPorts(6379);
+
+  private static LettuceConnectionFactory connectionFactory;
+  private static StringRedisTemplate redisTemplate;
+
   private RestClient.Builder builder;
   private MockRestServiceServer server;
   private SearchRecommendClient client;
+
+  @BeforeAll
+  static void setUpRedis() {
+    connectionFactory = new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+    connectionFactory.afterPropertiesSet();
+    redisTemplate = new StringRedisTemplate(connectionFactory);
+    redisTemplate.afterPropertiesSet();
+  }
+
+  @AfterAll
+  static void closeConnectionFactory() {
+    if (connectionFactory != null) {
+      connectionFactory.destroy();
+    }
+  }
 
   @BeforeEach
   void setUp() {
@@ -42,7 +75,16 @@ class SearchRecommendClientTest {
   }
 
   private SearchRecommendClient client(int maxGroups, int overfetch) {
-    return new SearchRecommendClient(builder.build(), 20, maxGroups, overfetch, Runnable::run);
+    return new SearchRecommendClient(
+        builder.build(),
+        20,
+        maxGroups,
+        overfetch,
+        100,
+        Duration.ofSeconds(2),
+        Duration.ofSeconds(5),
+        redisTemplate,
+        Runnable::run);
   }
 
   @Test
