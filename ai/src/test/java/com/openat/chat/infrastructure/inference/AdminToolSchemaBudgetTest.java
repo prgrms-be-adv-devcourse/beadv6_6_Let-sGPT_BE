@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openat.chat.application.dto.ChatCommand;
 import com.openat.chat.application.port.AdminDataQueryPort;
 import com.openat.chat.application.port.CryptoPricePort;
 import com.openat.chat.application.port.WeatherPort;
@@ -18,6 +19,7 @@ import com.openat.chat.infrastructure.inference.tool.InternalDataSchemaSelector;
 import com.openat.chat.infrastructure.inference.tool.OperationContextTools;
 import com.openat.chat.infrastructure.inference.tool.WeatherTools;
 import com.openat.chat.infrastructure.inference.tool.WebSearchTools;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -25,10 +27,13 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tokenizer.JTokkitTokenCountEstimator;
 import tools.jackson.databind.json.JsonMapper;
 
 class AdminToolSchemaBudgetTest {
@@ -112,7 +117,28 @@ class AdminToolSchemaBudgetTest {
             .inputSchema();
     assertThat(requiredProperties(weatherSchema))
         .containsExactlyInAnyOrder("location", "latitude", "longitude", "day");
-    assertThat(wireDefinitionCharacters + prompts.routingSystem().length()).isLessThan(6_000);
+    ChatInferenceProperties properties = new ChatInferenceProperties();
+    var estimator = new JTokkitTokenCountEstimator();
+    var budget =
+        new ChatPromptBudgetGuard(
+            estimator,
+            properties,
+            new ChatInferenceMetrics(new SimpleMeterRegistry()));
+    ChatCommand maximumCommand =
+        new ChatCommand(
+            UUID.randomUUID(),
+            "admin",
+            Set.of("ROLE_ADMIN"),
+            "가".repeat(2_000),
+            new ChatCommand.PreviousTurn("나".repeat(300), "다".repeat(800)));
+    int estimatedInputTokens =
+        budget.estimate(
+            prompts.routingSystem(),
+            prompts.routingUser(maximumCommand.withoutPreviousTurn()),
+            Arrays.asList(callbacks));
+    System.out.printf("ADMIN_ROUTING_INPUT_BUDGET|estimatedTokens=%d%n", estimatedInputTokens);
+    assertThat(estimatedInputTokens)
+        .isLessThanOrEqualTo(properties.getContext().getInputTokenLimit());
   }
 
   private ToolCallback[] productionToolCallbacks(OperationContextRegistry operationContexts) {

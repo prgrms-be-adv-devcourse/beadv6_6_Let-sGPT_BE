@@ -26,6 +26,7 @@
 | 영속 어댑터·매핑 | 슬라이스 통합 | `@DataJpaTest` + **Testcontainers(PostgreSQL)** | `ProductRepositoryAdaptorTest` |
 | 컨트롤러·웹 | 슬라이스 | `@WebMvcTest` + **MockMvc** | `CategoryControllerTest` |
 | 재고·동시성 | 통합/동시성 | Testcontainers(Redis) + `ExecutorService` | `DropCacheRedisAdaptorTest` |
+| DB 참조 잠금 | 슬라이스/동시성 | `@DataJpaTest` + Testcontainers(PostgreSQL) + `ExecutorService` | `PostgresSearchProjectionReferenceLockTest` |
 | 부하 | 성능 E2E | **k6** (test 밖, 빌드와 분리) | `loadtest/*.js` |
 
 **네이밍 한 줄**: 메서드명 `메서드_상황_결과`(lowerCamelCase + 언더바 구획) + 한글 `@DisplayName`.
@@ -42,7 +43,7 @@
 클린 아키텍처라 계층 경계가 또렷하다. **계층 성격에 맞는 도구를 쓴다.**
 
 - **비즈니스 규칙·분기**는 컨텍스트를 띄우지 않고 **Mockito 단위**로 빠르게 — 피드백 루프를 짧게.
-- **영속 정합성·동시성**은 우리 도메인의 본질(정합성·성능)이므로 **실제 PostgreSQL·Redis(Testcontainers)** 로 검증 — H2로는 PostgreSQL UUID·`@SoftDelete`·FK 동작이 달라 거짓 통과/실패가 난다.
+- **영속 정합성·동시성**은 우리 도메인의 본질(정합성·성능)이므로 **실제 PostgreSQL·Redis(Testcontainers)** 로 검증 — H2로는 PostgreSQL UUID·`@SoftDelete`·FK·transaction advisory lock 동작이 달라 거짓 통과/실패가 난다.
 - **우선순위**: PROJECT §7대로 **재고·정합성·핵심 비즈니스 규칙을 우선**한다.
 
 ---
@@ -313,5 +314,3 @@ void deduct_concurrentRequests_neverOversells() throws InterruptedException {
 - 결정 근거: [`DECISIONS.md`](DECISIONS.md)
 - 재고 게이트키퍼 설계: [`STOCK_GATEKEEPER.md`](STOCK_GATEKEEPER.md)
 - 전역 정보·컨벤션: [`../../docs/PROJECT.md`](../../docs/PROJECT.md)
-</content>
-</invoke>

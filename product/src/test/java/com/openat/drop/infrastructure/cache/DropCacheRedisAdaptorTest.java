@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -190,6 +191,45 @@ class DropCacheRedisAdaptorTest {
     assertThat(result.remaining()).isEqualTo(5);
     Object remaining = redisTemplate.opsForHash().get("drop:" + dropId, "remaining");
     assertThat(remaining).isEqualTo("5");
+  }
+
+  @Test
+  @DisplayName("차감 보상은 역연산 뒤 실제 캐시 잔여를 반환한다")
+  void compensateDeduct_returnsActualRemaining() {
+    // given
+    UUID dropId = UUID.randomUUID();
+    UUID orderId = UUID.randomUUID();
+    UUID buyerId = UUID.randomUUID();
+    StockMutation mutation = new StockMutation(dropId, orderId, buyerId, 2);
+    adaptor.warm(openState(dropId, 5, null));
+    adaptor.deduct(mutation, now());
+
+    // when
+    Optional<Long> remaining = adaptor.compensateDeduct(mutation);
+
+    // then
+    assertThat(remaining).contains(5L);
+    assertThat(redisTemplate.opsForHash().get("drop:" + dropId, "remaining")).isEqualTo("5");
+  }
+
+  @Test
+  @DisplayName("롤백 보상은 역연산 뒤 실제 캐시 잔여를 반환한다")
+  void compensateRollback_returnsActualRemaining() {
+    // given
+    UUID dropId = UUID.randomUUID();
+    UUID orderId = UUID.randomUUID();
+    UUID buyerId = UUID.randomUUID();
+    StockMutation mutation = new StockMutation(dropId, orderId, buyerId, 2);
+    adaptor.warm(openState(dropId, 5, null));
+    adaptor.deduct(mutation, now());
+    adaptor.rollback(mutation);
+
+    // when
+    Optional<Long> remaining = adaptor.compensateRollback(mutation);
+
+    // then
+    assertThat(remaining).contains(3L);
+    assertThat(redisTemplate.opsForHash().get("drop:" + dropId, "remaining")).isEqualTo("3");
   }
 
   @Test

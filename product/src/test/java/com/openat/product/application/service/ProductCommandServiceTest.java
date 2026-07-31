@@ -3,345 +3,145 @@ package com.openat.product.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 
-import com.openat.category.application.usecase.CategoryQueryUseCase;
 import com.openat.category.domain.error.CategoryErrorCode;
-import com.openat.category.domain.model.Category;
 import com.openat.common.exception.BusinessException;
 import com.openat.product.application.dto.ProductCreateCommand;
 import com.openat.product.application.dto.ProductUpdateCommand;
 import com.openat.product.application.usecase.ImageStorageUseCase;
-import com.openat.product.domain.error.ProductErrorCode;
-import com.openat.product.domain.event.ProductCreatedEvent;
-import com.openat.product.domain.event.ProductDeletedEvent;
-import com.openat.product.domain.event.ProductUpdatedEvent;
-import com.openat.product.domain.model.Product;
-import com.openat.product.domain.repository.ProductRepository;
-import com.openat.product.fixture.ProductFixture;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("상품 명령 서비스")
 class ProductCommandServiceTest {
 
   @InjectMocks private ProductCommandService productCommandService;
-  @Mock private ProductRepository productRepository;
-  @Mock private CategoryQueryUseCase categoryQueryUseCase;
   @Mock private ImageStorageUseCase imageStorageUseCase;
-  @Mock private ApplicationEventPublisher eventPublisher;
+  @Mock private ProductCommandTransaction commandTransaction;
 
-  @Nested
-  @DisplayName("상품 등록")
-  class Create {
+  @Test
+  @DisplayName("등록 입력을 먼저 검증하고 이미지를 승격한 뒤 쓰기 트랜잭션에 전달한다")
+  void create_withImages_promotesBeforeWriteTransaction() {
+    UUID sellerId = UUID.randomUUID();
+    UUID categoryId = UUID.randomUUID();
+    UUID productId = UUID.randomUUID();
+    String stagingThumbnail = "staging/thumb.png";
+    String stagingImage = "staging/detail.png";
+    ProductCreateCommand command =
+        new ProductCreateCommand(
+            sellerId,
+            "상품",
+            "설명",
+            categoryId,
+            10_000L,
+            stagingThumbnail,
+            List.of(stagingImage));
+    given(imageStorageUseCase.promote(stagingThumbnail)).willReturn("final/thumb.png");
+    given(imageStorageUseCase.promote(stagingImage)).willReturn("final/detail.png");
+    given(
+            commandTransaction.create(
+                command, "final/thumb.png", List.of("final/detail.png")))
+        .willReturn(productId);
 
-    @Test
-    @DisplayName("카테고리 없이 등록하면 미분류 상품으로 저장한다")
-    void create_categoryNull_savesUncategorized() {
-      // given
-      UUID sellerId = UUID.randomUUID();
-      UUID savedId = UUID.randomUUID();
-      ProductCreateCommand command = uncategorizedCommand(sellerId);
-      given(productRepository.save(any(Product.class)))
-          .willReturn(ProductFixture.persisted(savedId, sellerId));
+    UUID result = productCommandService.create(command);
 
-      // when
-      UUID result = productCommandService.create(command);
-
-      // then
-      assertThat(result).isEqualTo(savedId);
-      then(categoryQueryUseCase).should(never()).getById(any());
-      then(imageStorageUseCase).shouldHaveNoInteractions();
-
-      ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
-      then(productRepository).should().save(productCaptor.capture());
-      assertThat(productCaptor.getValue().getCategory()).isNull();
-    }
-
-    @Test
-    @DisplayName("카테고리를 지정하면 조회한 카테고리로 상품을 저장한다")
-    void create_categoryGiven_savesWithCategory() {
-      // given
-      UUID sellerId = UUID.randomUUID();
-      UUID categoryId = UUID.randomUUID();
-      UUID savedId = UUID.randomUUID();
-      Category category = Category.create().name("의류").build();
-      given(categoryQueryUseCase.getById(categoryId)).willReturn(category);
-      given(productRepository.save(any(Product.class)))
-          .willReturn(ProductFixture.persisted(savedId, sellerId));
-      ProductCreateCommand command = categorizedCommand(sellerId, categoryId);
-
-      // when
-      UUID result = productCommandService.create(command);
-
-      // then
-      assertThat(result).isEqualTo(savedId);
-
-      ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
-      then(productRepository).should().save(productCaptor.capture());
-      assertThat(productCaptor.getValue().getCategory()).isEqualTo(category);
-    }
-
-    @Test
-    @DisplayName("이미지 키를 함께 등록하면 승격된 final 키로 저장한다")
-    void create_withImageKeys_savesPromotedKeys() {
-      // given
-      UUID sellerId = UUID.randomUUID();
-      String stagingThumbnailKey = "staging/thumb.png";
-      String stagingImageKey = "staging/img-1.png";
-      String finalImageKey = "img-2.png";
-      given(imageStorageUseCase.promote(stagingThumbnailKey)).willReturn("thumb.png");
-      given(imageStorageUseCase.promote(stagingImageKey)).willReturn("img-1.png");
-      given(imageStorageUseCase.promote(finalImageKey)).willReturn(finalImageKey);
-      given(productRepository.save(any(Product.class)))
-          .willReturn(ProductFixture.persisted(UUID.randomUUID(), sellerId));
-      ProductCreateCommand command =
-          new ProductCreateCommand(
-              sellerId,
-              "갤러리 상품",
-              "설명",
-              null,
-              10_000L,
-              stagingThumbnailKey,
-              List.of(stagingImageKey, finalImageKey));
-
-      // when
-      productCommandService.create(command);
-
-      // then
-      ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
-      then(productRepository).should().save(productCaptor.capture());
-      assertThat(productCaptor.getValue().getThumbnailKey()).isEqualTo("thumb.png");
-      assertThat(productCaptor.getValue().getImageKeys())
-          .containsExactly("img-1.png", finalImageKey);
-    }
-
-    @Test
-    @DisplayName("없는 카테고리를 지정하면 예외가 전파되고 저장하지 않는다")
-    void create_categoryNotFound_throwsException() {
-      // given
-      UUID sellerId = UUID.randomUUID();
-      UUID missingCategoryId = UUID.randomUUID();
-      given(categoryQueryUseCase.getById(missingCategoryId))
-          .willThrow(new BusinessException(CategoryErrorCode.NOT_FOUND));
-      ProductCreateCommand command = categorizedCommand(sellerId, missingCategoryId);
-
-      // when & then
-      assertThatThrownBy(() -> productCommandService.create(command))
-          .isInstanceOf(BusinessException.class)
-          .hasFieldOrPropertyWithValue("errorCode", CategoryErrorCode.NOT_FOUND);
-      then(productRepository).should(never()).save(any());
-    }
-
-    @Test
-    @DisplayName("상품을 등록하면 저장된 상품의 생성 이벤트를 발행한다")
-    void create_validProduct_publishesCreatedEvent() {
-      // given
-      UUID sellerId = UUID.randomUUID();
-      UUID productId = UUID.randomUUID();
-      Product savedProduct = ProductFixture.persisted(productId, sellerId);
-      ProductCreateCommand command = uncategorizedCommand(sellerId);
-      given(productRepository.save(any(Product.class))).willReturn(savedProduct);
-
-      // when
-      productCommandService.create(command);
-
-      // then
-      ArgumentCaptor<ProductCreatedEvent> eventCaptor =
-          ArgumentCaptor.forClass(ProductCreatedEvent.class);
-      then(eventPublisher).should().publishEvent(eventCaptor.capture());
-      assertThat(eventCaptor.getValue().product()).isSameAs(savedProduct);
-    }
+    assertThat(result).isEqualTo(productId);
+    InOrder order = inOrder(commandTransaction, imageStorageUseCase);
+    order.verify(commandTransaction).validateCreate(categoryId);
+    order.verify(imageStorageUseCase).promote(stagingThumbnail);
+    order.verify(imageStorageUseCase).promote(stagingImage);
+    order.verify(commandTransaction)
+        .create(command, "final/thumb.png", List.of("final/detail.png"));
   }
 
-  @Nested
-  @DisplayName("상품 수정")
-  class Update {
+  @Test
+  @DisplayName("등록 사전 검증에 실패하면 이미지를 승격하거나 쓰기를 시작하지 않는다")
+  void create_invalidCategory_stopsBeforeImagePromotion() {
+    UUID categoryId = UUID.randomUUID();
+    ProductCreateCommand command =
+        new ProductCreateCommand(
+            UUID.randomUUID(), "상품", null, categoryId, null, "staging/thumb.png", null);
+    BusinessException failure = new BusinessException(CategoryErrorCode.NOT_FOUND);
+    willThrow(failure).given(commandTransaction).validateCreate(categoryId);
 
-    @Test
-    @DisplayName("소유자가 수정하면 상품 정보가 갱신된다")
-    void update_validOwner_updatesProduct() {
-      // given
-      UUID sellerId = UUID.randomUUID();
-      UUID productId = UUID.randomUUID();
-      Product product = ProductFixture.persisted(productId, sellerId);
-      given(productRepository.findById(productId)).willReturn(Optional.of(product));
-      ProductUpdateCommand command =
-          new ProductUpdateCommand(
-              productId, sellerId, "수정된 상품", "수정 설명", null, 5_000L, null, null);
+    assertThatThrownBy(() -> productCommandService.create(command)).isSameAs(failure);
 
-      // when
-      productCommandService.update(command);
-
-      // then
-      assertThat(product.getName()).isEqualTo("수정된 상품");
-      assertThat(product.getPrice()).isEqualTo(5_000L);
-    }
-
-    @Test
-    @DisplayName("이미지 키를 함께 수정하면 승격된 final 키로 갱신한다")
-    void update_withImageKeys_updatesPromotedKeys() {
-      // given
-      UUID sellerId = UUID.randomUUID();
-      UUID productId = UUID.randomUUID();
-      Product product = ProductFixture.persisted(productId, sellerId);
-      String stagingThumbnailKey = "staging/thumb.png";
-      String stagingImageKey = "staging/img-1.png";
-      String finalImageKey = "img-2.png";
-      given(productRepository.findById(productId)).willReturn(Optional.of(product));
-      given(imageStorageUseCase.promote(stagingThumbnailKey)).willReturn("thumb.png");
-      given(imageStorageUseCase.promote(stagingImageKey)).willReturn("img-1.png");
-      given(imageStorageUseCase.promote(finalImageKey)).willReturn(finalImageKey);
-      ProductUpdateCommand command =
-          new ProductUpdateCommand(
-              productId,
-              sellerId,
-              "수정된 상품",
-              "수정 설명",
-              null,
-              5_000L,
-              stagingThumbnailKey,
-              List.of(stagingImageKey, finalImageKey));
-
-      // when
-      productCommandService.update(command);
-
-      // then
-      assertThat(product.getThumbnailKey()).isEqualTo("thumb.png");
-      assertThat(product.getImageKeys()).containsExactly("img-1.png", finalImageKey);
-    }
-
-    @Test
-    @DisplayName("없는 상품을 수정하면 NOT_FOUND 예외를 던진다")
-    void update_notFound_throwsException() {
-      // given
-      UUID productId = UUID.randomUUID();
-      given(productRepository.findById(productId)).willReturn(Optional.empty());
-      ProductUpdateCommand command =
-          new ProductUpdateCommand(
-              productId, UUID.randomUUID(), "수정", null, null, null, null, null);
-
-      // when & then
-      assertThatThrownBy(() -> productCommandService.update(command))
-          .isInstanceOf(BusinessException.class)
-          .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.NOT_FOUND);
-    }
-
-    @Test
-    @DisplayName("소유자가 아니면 NOT_OWNER 예외를 던진다")
-    void update_notOwner_throwsException() {
-      // given
-      UUID productId = UUID.randomUUID();
-      UUID ownerId = UUID.randomUUID();
-      UUID otherSellerId = UUID.randomUUID();
-      Product product = ProductFixture.persisted(productId, ownerId);
-      given(productRepository.findById(productId)).willReturn(Optional.of(product));
-      ProductUpdateCommand command =
-          new ProductUpdateCommand(productId, otherSellerId, "수정", null, null, null, null, null);
-
-      // when & then
-      assertThatThrownBy(() -> productCommandService.update(command))
-          .isInstanceOf(BusinessException.class)
-          .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.NOT_OWNER);
-    }
-
-    @Test
-    @DisplayName("상품을 수정하면 갱신된 상품의 수정 이벤트를 발행한다")
-    void update_validOwner_publishesUpdatedEvent() {
-      // given
-      UUID sellerId = UUID.randomUUID();
-      UUID productId = UUID.randomUUID();
-      Product product = ProductFixture.persisted(productId, sellerId);
-      given(productRepository.findById(productId)).willReturn(Optional.of(product));
-      ProductUpdateCommand command =
-          new ProductUpdateCommand(
-              productId, sellerId, "수정 상품", "수정 설명", null, 20_000L, null, null);
-
-      // when
-      productCommandService.update(command);
-
-      // then
-      ArgumentCaptor<ProductUpdatedEvent> eventCaptor =
-          ArgumentCaptor.forClass(ProductUpdatedEvent.class);
-      then(eventPublisher).should().publishEvent(eventCaptor.capture());
-      assertThat(eventCaptor.getValue().product()).isSameAs(product);
-      assertThat(eventCaptor.getValue().product().getName()).isEqualTo("수정 상품");
-    }
+    then(imageStorageUseCase).shouldHaveNoInteractions();
+    then(commandTransaction).should(never()).create(any(), anyString(), anyList());
   }
 
-  @Nested
-  @DisplayName("상품 삭제")
-  class Delete {
+  @Test
+  @DisplayName("수정 입력을 먼저 검증하고 이미지를 승격한 뒤 쓰기 트랜잭션에 전달한다")
+  void update_withImages_promotesBeforeWriteTransaction() {
+    UUID productId = UUID.randomUUID();
+    UUID sellerId = UUID.randomUUID();
+    ProductUpdateCommand command =
+        new ProductUpdateCommand(
+            productId,
+            sellerId,
+            "수정 상품",
+            "수정 설명",
+            null,
+            20_000L,
+            "staging/thumb.png",
+            List.of("staging/detail.png"));
+    given(imageStorageUseCase.promote("staging/thumb.png")).willReturn("final/thumb.png");
+    given(imageStorageUseCase.promote("staging/detail.png")).willReturn("final/detail.png");
 
-    @Test
-    @DisplayName("소유자가 삭제하면 상품을 삭제한다")
-    void delete_validOwner_deletesProduct() {
-      // given
-      UUID sellerId = UUID.randomUUID();
-      UUID productId = UUID.randomUUID();
-      Product product = ProductFixture.persisted(productId, sellerId);
-      given(productRepository.findById(productId)).willReturn(Optional.of(product));
+    productCommandService.update(command);
 
-      // when
-      productCommandService.delete(productId, sellerId);
-
-      // then
-      then(productRepository).should().delete(product);
-      ArgumentCaptor<ProductDeletedEvent> eventCaptor =
-          ArgumentCaptor.forClass(ProductDeletedEvent.class);
-      then(eventPublisher).should().publishEvent(eventCaptor.capture());
-      assertThat(eventCaptor.getValue().productId()).isEqualTo(productId);
-      assertThat(eventCaptor.getValue().deletedAt()).isNotNull();
-    }
-
-    @Test
-    @DisplayName("없는 상품을 삭제하면 NOT_FOUND 예외를 던지고 삭제하지 않는다")
-    void delete_notFound_throwsException() {
-      // given
-      UUID productId = UUID.randomUUID();
-      given(productRepository.findById(productId)).willReturn(Optional.empty());
-
-      // when & then
-      assertThatThrownBy(() -> productCommandService.delete(productId, UUID.randomUUID()))
-          .isInstanceOf(BusinessException.class)
-          .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.NOT_FOUND);
-      then(productRepository).should(never()).delete(any());
-    }
-
-    @Test
-    @DisplayName("소유자가 아니면 NOT_OWNER 예외를 던지고 삭제하지 않는다")
-    void delete_notOwner_throwsException() {
-      // given
-      UUID productId = UUID.randomUUID();
-      Product product = ProductFixture.persisted(productId, UUID.randomUUID());
-      given(productRepository.findById(productId)).willReturn(Optional.of(product));
-
-      // when & then
-      assertThatThrownBy(() -> productCommandService.delete(productId, UUID.randomUUID()))
-          .isInstanceOf(BusinessException.class)
-          .hasFieldOrPropertyWithValue("errorCode", ProductErrorCode.NOT_OWNER);
-      then(productRepository).should(never()).delete(any());
-    }
+    InOrder order = inOrder(commandTransaction, imageStorageUseCase);
+    order.verify(commandTransaction).validateUpdate(productId, sellerId, null);
+    order.verify(imageStorageUseCase).promote("staging/thumb.png");
+    order.verify(imageStorageUseCase).promote("staging/detail.png");
+    order.verify(commandTransaction)
+        .update(command, "final/thumb.png", List.of("final/detail.png"));
   }
 
-  private ProductCreateCommand uncategorizedCommand(UUID sellerId) {
-    return new ProductCreateCommand(sellerId, "기본 굿즈", "설명", null, 10_000L, null, null);
+  @Test
+  @DisplayName("수정 사전 검증에 실패하면 이미지를 승격하거나 쓰기를 시작하지 않는다")
+  void update_invalidOwner_stopsBeforeImagePromotion() {
+    UUID productId = UUID.randomUUID();
+    UUID sellerId = UUID.randomUUID();
+    ProductUpdateCommand command =
+        new ProductUpdateCommand(
+            productId, sellerId, "수정", null, null, null, "staging/thumb.png", null);
+    BusinessException failure =
+        new BusinessException(com.openat.product.domain.error.ProductErrorCode.NOT_OWNER);
+    willThrow(failure)
+        .given(commandTransaction)
+        .validateUpdate(productId, sellerId, null);
+
+    assertThatThrownBy(() -> productCommandService.update(command)).isSameAs(failure);
+
+    then(imageStorageUseCase).shouldHaveNoInteractions();
+    then(commandTransaction).should(never()).update(any(), anyString(), anyList());
   }
 
-  private ProductCreateCommand categorizedCommand(UUID sellerId, UUID categoryId) {
-    return new ProductCreateCommand(sellerId, "기본 굿즈", "설명", categoryId, 10_000L, null, null);
+  @Test
+  @DisplayName("삭제는 이미지 외부 호출 없이 쓰기 트랜잭션에 위임한다")
+  void delete_delegatesToWriteTransaction() {
+    UUID productId = UUID.randomUUID();
+    UUID sellerId = UUID.randomUUID();
+
+    productCommandService.delete(productId, sellerId);
+
+    then(commandTransaction).should().delete(productId, sellerId);
+    then(imageStorageUseCase).shouldHaveNoInteractions();
   }
 }

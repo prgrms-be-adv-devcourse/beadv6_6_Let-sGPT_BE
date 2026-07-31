@@ -61,6 +61,7 @@ class ProductRepositoryAdaptorTest {
     // then
     assertThat(saved.getId()).isNotNull();
     assertThat(saved.getCreatedAt()).isNotNull();
+    assertThat(saved.currentSearchSnapshotSequence()).isEqualTo(1L);
   }
 
   @Test
@@ -233,6 +234,36 @@ class ProductRepositoryAdaptorTest {
       assertThat(result.getTotalElements()).isEqualTo(3);
       assertThat(result.getContent()).hasSize(2);
       assertThat(result.getTotalPages()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("생성 시각이 같아도 id 내림차순 보조 정렬로 페이지 순서가 안정적이다")
+    void search_sameCreatedAt_ordersByIdDescending() {
+      // given
+      UUID sellerId = UUID.randomUUID();
+      Product first =
+          productRepository.save(
+              Product.create().sellerId(sellerId).name("첫 상품").price(1_000L).build());
+      Product second =
+          productRepository.save(
+              Product.create().sellerId(sellerId).name("둘째 상품").price(1_000L).build());
+      entityManager.flush();
+      Instant sameCreatedAt = Instant.parse("2026-07-01T00:00:00Z");
+      setChangeTimestamps(first.getId(), sameCreatedAt, sameCreatedAt);
+      setChangeTimestamps(second.getId(), sameCreatedAt, sameCreatedAt);
+      entityManager.clear();
+
+      // when
+      Page<Product> result =
+          productRepository.search(
+              new ProductSearchCondition(null, null, null), PageRequest.of(0, 10));
+
+      // then
+      assertThat(result.getContent())
+          .extracting(Product::getId)
+          .containsExactly(
+              first.getId().compareTo(second.getId()) > 0 ? first.getId() : second.getId(),
+              first.getId().compareTo(second.getId()) > 0 ? second.getId() : first.getId());
     }
   }
 

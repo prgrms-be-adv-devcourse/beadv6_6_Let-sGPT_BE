@@ -39,6 +39,21 @@ public class ProductRepositoryAdaptor implements ProductRepository {
   }
 
   @Override
+  public Optional<Product> findByIdForUpdate(UUID id) {
+    return productJpaRepository.findByIdForUpdate(id);
+  }
+
+  @Override
+  public List<Product> findAllBySellerIdForUpdate(UUID sellerId) {
+    return productJpaRepository.findAllBySellerIdForUpdate(sellerId);
+  }
+
+  @Override
+  public List<Product> findAllByCategoryIdForUpdate(UUID categoryId) {
+    return productJpaRepository.findAllByCategoryIdForUpdate(categoryId);
+  }
+
+  @Override
   public Page<Product> search(ProductSearchCondition condition, Pageable pageable) {
     QProduct product = QProduct.product;
 
@@ -59,7 +74,7 @@ public class ProductRepositoryAdaptor implements ProductRepository {
             .leftJoin(product.category)
             .fetchJoin()
             .where(where)
-            .orderBy(product.createdAt.desc())
+            .orderBy(product.createdAt.desc(), product.id.desc())
             .offset(pageable.getOffset())
             .limit(pageable.getPageSize())
             .fetch();

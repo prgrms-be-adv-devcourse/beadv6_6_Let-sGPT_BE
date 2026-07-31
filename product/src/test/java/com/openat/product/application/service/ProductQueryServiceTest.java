@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.never;
 
 import com.openat.common.exception.BusinessException;
 import com.openat.product.application.dto.ProductChangeInfo;
@@ -11,11 +13,12 @@ import com.openat.product.application.dto.ProductChangeOperation;
 import com.openat.product.application.dto.ProductInfo;
 import com.openat.product.domain.error.ProductErrorCode;
 import com.openat.product.domain.model.Product;
+import com.openat.product.domain.model.SellerStoreProjection;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.domain.repository.ProductSearchCondition;
 import com.openat.product.domain.repository.ProductTombstone;
+import com.openat.product.domain.repository.SellerStoreProjectionRepository;
 import com.openat.product.fixture.ProductFixture;
-import com.openat.seller.application.usecase.SellerStoreQueryUseCase;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -39,7 +42,7 @@ class ProductQueryServiceTest {
 
   @InjectMocks private ProductQueryService productQueryService;
   @Mock private ProductRepository productRepository;
-  @Mock private SellerStoreQueryUseCase sellerStoreQueryUseCase;
+  @Mock private SellerStoreProjectionRepository sellerStoreProjectionRepository;
 
   @Test
   @DisplayName("존재하는 상품을 조회하면 상품 정보를 반환한다")
@@ -49,7 +52,8 @@ class ProductQueryServiceTest {
     UUID sellerId = UUID.randomUUID();
     Product product = ProductFixture.persisted(id, sellerId);
     given(productRepository.findById(id)).willReturn(Optional.of(product));
-    given(sellerStoreQueryUseCase.findStoreNames(any())).willReturn(Map.of(sellerId, "오픈앳 스튜디오"));
+    given(sellerStoreProjectionRepository.findAllById(any()))
+        .willReturn(List.of(sellerStoreProjection(sellerId, "오픈앳 스튜디오")));
 
     // when
     ProductInfo info = productQueryService.getById(id);
@@ -84,7 +88,8 @@ class ProductQueryServiceTest {
     Pageable pageable = PageRequest.of(0, 10);
     given(productRepository.search(condition, pageable))
         .willReturn(new PageImpl<>(List.of(product), pageable, 1));
-    given(sellerStoreQueryUseCase.findStoreNames(any())).willReturn(Map.of(sellerId, "오픈앳 스튜디오"));
+    given(sellerStoreProjectionRepository.findAllById(any()))
+        .willReturn(List.of(sellerStoreProjection(sellerId, "오픈앳 스튜디오")));
 
     // when
     Page<ProductInfo> result = productQueryService.searchProducts(condition, pageable);
@@ -93,6 +98,33 @@ class ProductQueryServiceTest {
     assertThat(result.getTotalElements()).isEqualTo(1);
     assertThat(result.getContent()).hasSize(1);
     assertThat(result.getContent().get(0).sellerId()).isEqualTo(sellerId);
+  }
+
+  @Test
+  @DisplayName("판매자 식별자 목록으로 투영된 표시명을 배치 조회한다")
+  void findSellerNames_projected_returnsMapById() {
+    // given
+    UUID sellerId = UUID.randomUUID();
+    List<UUID> sellerIds = List.of(sellerId);
+    SellerStoreProjection projection = sellerStoreProjection(sellerId, "오픈앳 스튜디오");
+    given(sellerStoreProjectionRepository.findAllById(sellerIds)).willReturn(List.of(projection));
+
+    // when
+    Map<UUID, String> sellerNames = productQueryService.findSellerNames(sellerIds);
+
+    // then
+    assertThat(sellerNames).containsEntry(sellerId, "오픈앳 스튜디오");
+  }
+
+  @Test
+  @DisplayName("판매자 식별자 목록이 비었으면 저장소를 조회하지 않는다")
+  void findSellerNames_empty_returnsEmptyMapWithoutQuery() {
+    // when
+    Map<UUID, String> sellerNames = productQueryService.findSellerNames(List.of());
+
+    // then
+    assertThat(sellerNames).isEmpty();
+    then(sellerStoreProjectionRepository).should(never()).findAllById(any());
   }
 
   @Test
@@ -163,7 +195,8 @@ class ProductQueryServiceTest {
     given(productRepository.searchChangedAliveSince(changedAfter))
         .willReturn(List.of(inserted, updated));
     given(productRepository.searchTombstonesSince(changedAfter)).willReturn(List.of(tombstone));
-    given(sellerStoreQueryUseCase.findStoreNames(any())).willReturn(Map.of(sellerId, "오픈앳 스튜디오"));
+    given(sellerStoreProjectionRepository.findAllById(any()))
+        .willReturn(List.of(sellerStoreProjection(sellerId, "오픈앳 스튜디오")));
 
     // when
     List<ProductChangeInfo> changes = productQueryService.searchChanges(changedAfter);
@@ -191,7 +224,6 @@ class ProductQueryServiceTest {
         new ProductTombstone(UUID.randomUUID(), Instant.parse("2026-06-04T00:00:00Z"));
     given(productRepository.searchChangedAliveSince(changedAfter)).willReturn(List.of());
     given(productRepository.searchTombstonesSince(changedAfter)).willReturn(List.of(tombstone));
-    given(sellerStoreQueryUseCase.findStoreNames(any())).willReturn(Map.of());
 
     // when
     ProductChangeInfo deletion = productQueryService.searchChanges(changedAfter).get(0);
@@ -221,7 +253,8 @@ class ProductQueryServiceTest {
             Instant.parse("2026-06-02T00:00:00Z"));
     given(productRepository.searchChangedAliveSince(changedAfter)).willReturn(List.of(noThumbnail));
     given(productRepository.searchTombstonesSince(changedAfter)).willReturn(List.of());
-    given(sellerStoreQueryUseCase.findStoreNames(any())).willReturn(Map.of(sellerId, "오픈앳 스튜디오"));
+    given(sellerStoreProjectionRepository.findAllById(any()))
+        .willReturn(List.of(sellerStoreProjection(sellerId, "오픈앳 스튜디오")));
 
     // when
     ProductChangeInfo change = productQueryService.searchChanges(changedAfter).get(0);
@@ -243,5 +276,9 @@ class ProductQueryServiceTest {
     ReflectionTestUtils.setField(product, "createdAt", createdAt);
     ReflectionTestUtils.setField(product, "updatedAt", updatedAt);
     return product;
+  }
+
+  private SellerStoreProjection sellerStoreProjection(UUID sellerInfoId, String storeName) {
+    return SellerStoreProjection.project().sellerInfoId(sellerInfoId).storeName(storeName).build();
   }
 }

@@ -20,6 +20,7 @@ import com.openat.chat.infrastructure.inference.tool.CryptoPriceTools;
 import com.openat.chat.infrastructure.inference.tool.OperationContextTools;
 import com.openat.chat.infrastructure.inference.tool.WeatherTools;
 import com.openat.chat.infrastructure.inference.tool.WebSearchTools;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -28,8 +29,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,12 +48,14 @@ class InitialToolCallbackRegistryTest {
 
   private AdminDataQueryPort dataQueryPort;
   private ExecutorService executor;
+  private ChatInferenceProperties properties;
   private InitialToolCallbackRegistry registry;
 
   @BeforeEach
   void setUp() {
     dataQueryPort = mock(AdminDataQueryPort.class);
     executor = Executors.newFixedThreadPool(4);
+    properties = new ChatInferenceProperties();
     registry =
         new InitialToolCallbackRegistry(
             new AdminDataTools(dataQueryPort),
@@ -62,7 +67,8 @@ class InitialToolCallbackRegistryTest {
                 new ExternalSearchPolicy()),
             JsonMapper.builder().findAndAddModules().build(),
             executor,
-            new ChatInferenceProperties());
+            properties,
+            new ChatInferenceMetrics(new SimpleMeterRegistry()));
   }
 
   @AfterEach
@@ -120,6 +126,48 @@ class InitialToolCallbackRegistryTest {
             com.openat.chat.application.dto.EvidenceSegment.Status.FAILED,
             com.openat.chat.application.dto.EvidenceSegment.Status.SUCCESS);
     verify(dataQueryPort).countExpiredPaymentPendingOrders();
+  }
+
+  @Test
+  @DisplayName("한 도구가 stage timeout이어도 완료된 형제 도구 결과를 입력 순서로 보존한다")
+  void execute_timedOutTool_keepsSuccessfulSibling() throws Exception {
+    properties.setStageTimeout(Duration.ofMillis(500));
+    given(dataQueryPort.isAvailable()).willReturn(true);
+    CountDownLatch toolStarted = new CountDownLatch(1);
+    CountDownLatch interrupted = new CountDownLatch(1);
+    given(dataQueryPort.countExpiredPaymentPendingOrders())
+        .willAnswer(
+            ignored -> {
+              toolStarted.countDown();
+              try {
+                new CountDownLatch(1).await();
+                throw new AssertionError("중단되지 않은 도구 작업");
+              } catch (InterruptedException exception) {
+                interrupted.countDown();
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(exception);
+              }
+            });
+
+    var result =
+        registry.execute(
+            command(),
+            List.of(
+                new ToolInvocation("call-1", "countExpiredPaymentPendingOrders", "{}"),
+                new ToolInvocation(
+                    "call-2",
+                    "getOpenAtOperationsContext",
+                    "{\"contextIds\":[\"PLATFORM\"]}")),
+            new RecordingSink(),
+            deadline());
+
+    assertThat(toolStarted.getCount()).isZero();
+    assertThat(result.evidence())
+        .extracting(segment -> segment.status())
+        .containsExactly(
+            com.openat.chat.application.dto.EvidenceSegment.Status.FAILED,
+            com.openat.chat.application.dto.EvidenceSegment.Status.SUCCESS);
+    assertThat(interrupted.await(1, TimeUnit.SECONDS)).isTrue();
   }
 
   private ChatCommand command() {

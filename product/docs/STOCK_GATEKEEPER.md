@@ -77,6 +77,9 @@
 - `POST /internal/drops/{dropId}/stock-deductions`, body `{orderId, buyerId, quantity}`.
 - **Lua 원자 처리:** ⓪ 캐시 존재 확인(`drop:{id}` 없으면 `DROP_NOT_CACHED` 거절 — 워밍 전/비활성) → ① 멱등(`order:{orderId}` 존재 시 기존 결과 반환) → ② 오픈 판정(`openAt ≤ now < closeAt`) → ③ 1인 한도(`buyers[buyerId] + quantity > limit`) → ④ 재고(`remaining ≥ quantity`) → ⑤ 차감(`remaining-`, `buyers[buyerId]+`, 멱등키 SET).
 - **동기 기록:** Lua 성공 → `stock_histories` INSERT(DEDUCT) 커밋 → `200 {remainingQuantity}`.
+- **중복 완료 판정:** Lua의 `DUPLICATE`는 Redis 처리 흔적일 뿐 완료 증거가 아니다. 같은 `orderId`·변경 유형의 L2 원장이 커밋돼 있고 `dropId`·`buyerId`·`quantity`까지 일치할 때만 기존 성공을 반환한다. 원장이 아직 보이지 않으면 `503 DROP_STOCK_CHANGE_IN_PROGRESS`, 튜플이 다르면 `409 DROP_STOCK_REQUEST_MISMATCH`로 거절한다.
+- **L1 만료 뒤 L2 충돌:** Redis 멱등키가 만료·유실되어 Lua가 다시 `OK`를 반환해도 DB UNIQUE 충돌을 곧바로 성공으로 간주하지 않는다. 방금 적용한 캐시 변경을 먼저 보상하고 기존 원장의 전체 요청 튜플을 검증한다. 일치할 때만 멱등 성공, 불일치는 `409 DROP_STOCK_REQUEST_MISMATCH`, 충돌 원장이 조회되지 않는 비정상 제약 실패는 원래 저장 예외를 전파한다.
+- **라이브 재고 지표:** 성공한 라이브 재고 요청이 drop별 Gauge를 한 번만 등록하고, 측정 시점마다 권위 있는 Redis 현재 잔여를 읽는다. 응답·DB 커밋 완료 순서가 Redis 변경 순서와 달라도 과거 응답값으로 Gauge가 역행하지 않으며, 캐시가 없거나 조회할 수 없으면 `NaN`으로 노출한다.
 - **거절:** `409 DROP_SOLD_OUT`·`DROP_NOT_CACHED`·`DROP_CLOSED` / `400 DROP_NOT_OPEN`·`DROP_LIMIT_EXCEEDED`. RDB 미도달(thundering herd 차단).
 - **INSERT 실패(UNIQUE 외):** Redis 보상 롤백(역연산) 후 `5xx`.
 - 현재시각(`now`)은 앱이 ARGV로 전달(다중 인스턴스는 NTP 동기화 가정).
@@ -86,9 +89,10 @@
 ## 7. 재고 롤백 (내부 API)
 - `POST /internal/drops/{dropId}/stock-rollbacks`, body `{orderId, buyerId, quantity}`.
 - **주문(order)이 트리거** — 결제 실패·타임아웃·환불(결제 완료 후 취소)에 공용으로 호출.
-- **오픈 중:** Lua 복원(`remaining+`, `buyers[buyerId]-`) + `stock_histories` INSERT(ROLLBACK).
+- **선행 차감 검증:** RDB의 DEDUCT 이력을 권위 있게 조회하고 `orderId`·`dropId`·`buyerId`·`quantity`가 요청과 모두 같을 때만 복원을 시작한다. 이력이 없거나 튜플이 다르면 Redis를 변경하지 않고 `409 DROP_ROLLBACK_NOT_ALLOWED`로 거절한다.
+- **오픈 중:** 선행 차감 검증 후 Lua 복원(`remaining+`, `buyers[buyerId]-`) + `stock_histories` INSERT(ROLLBACK).
 - **종료(CLOSE) 후:** close가 캐시를 `markClosed`만 하고 즉시 evict하지 않으므로, **drain 창(캐시 TTL) 동안 in-flight 롤백은 라이브 캐시로 정상 복원·기록**된다(신규만 차단, in-flight 취소 허용 — §8). 캐시 만료 뒤엔 `NOT_CACHED`로 떨어지고 DB `status = CLOSE`면 **no-op**(복원·기록 안 함 — 재판매 없어 무의미, 주문 측은 환불로 사후 처리). 활성 드롭에서 캐시만 유실된 경우에는 ROLLBACK 이력을 DB에 기록하지만 즉시 재워밍하지는 않으며 다음 부팅 워밍 때 원장 합계로 복구한다.
-- **멱등:** L1(`order:{orderId}:rollback` — 차감 키와 분리) + L2(`UNIQUE(order_id, ROLLBACK)`). 한 주문당 롤백 1회.
+- **멱등:** L1(`order:{orderId}:rollback` — 차감 키와 분리) + L2(`UNIQUE(order_id, ROLLBACK)`). L1 중복도 커밋된 L2 원장과 요청 튜플을 확인한 뒤에만 성공한다. 한 주문당 롤백 1회이며, Redis 멱등키가 만료된 뒤 L2 중복이 검출되면 방금 적용한 캐시 변경을 보상하고 원장 튜플이 일치할 때만 보상 Lua가 반환한 실제 잔여를 응답한다. 불일치는 `409 DROP_STOCK_REQUEST_MISMATCH`다.
 
 ---
 
@@ -103,13 +107,14 @@
 ## 9. 내부 API 계약
 - **경로 prefix 우회:** `@InternalApi` 마커를 붙인 컨트롤러를 `WebConfig`의 `/api/v1` prefix predicate에서 제외함(외부는 `/api/v1`, 내부는 `/internal` 원형). 외부 차단은 게이트웨이가 담당.
 - **인증:** 내부 호출이라 `@CurrentUser`(헤더) 대신 호출 측(order)이 `buyerId`를 body로 전달(게이트웨이 외부 차단 + order가 인증된 주문자 검증).
-- **응답:** 성공 `200 {remainingQuantity}` — 단, 롤백이 라이브 캐시 없이 처리되면(종료 후 no-op 등) 복원할 라이브 잔여가 없어 **본문 없이 `204 No Content`**로 응답한다(`PROJECT §8`·`PRODUCT §8`의 "본문 없는 응답=204" 컨벤션). 실패는 HTTP 상태로 구분 — `4xx`(영구 실패: 품절·미오픈·한도·종료 → 보상) / `5xx`(일시 오류 → 재시도)로 사가가 분기. 본문은 전역 `ErrorResponse`.
+- **응답:** 성공 `200 {remainingQuantity}` — 단, 롤백이 라이브 캐시 없이 처리되면(종료 후 no-op 등) 복원할 라이브 잔여가 없어 **본문 없이 `204 No Content`**로 응답한다(`PROJECT §8`·`PRODUCT §8`의 "본문 없는 응답=204" 컨벤션). product는 `4xx`를 영구 실패(품절·미오픈·한도·종료·선행 차감 불일치·중복 요청 튜플 불일치), `5xx`를 일시 오류(원장 커밋 전 중복 포함) 의미로 제공하며 본문은 전역 `ErrorResponse`다. 현재 order 호출자는 새 정합성 오류 코드를 세밀하게 매핑하지 않으므로, 호출자 계약이 보강되기 전에는 일부 `4xx`가 통합 실패·재시도로 축약될 수 있다.
 
 ---
 
 ## 10. 정합성·안전 원칙
 - **오버셀 불가:** Lua 단일 스레드 원자 실행으로 `remaining < quantity`면 차감하지 않음.
-- **멱등 2계층:** L1 Redis 멱등키(핫패스 빠른 멱등, 재고 이중 차감·보상 회피) + L2 DB `UNIQUE`(권위·영속 안전망).
+- **멱등 2계층:** L1 Redis 멱등키(핫패스 빠른 중복 감지, 재고 이중 차감·보상 회피) + L2 DB `UNIQUE`(권위 있는 완료 판정·영속 안전망). 성공 응답은 L2 커밋 뒤에만 확정한다.
+- **복원 상한 보호:** 롤백은 권위 있는 DEDUCT 이력과 요청 튜플의 완전 일치를 선행 조건으로 삼아, 존재하지 않거나 다른 주문의 차감으로 재고를 늘리지 않는다.
 - **안전 편향:** 모든 예외/모호는 거절(undercount)로 기울고 오버셀로는 절대 가지 않음.
 - **매진 가역:** 선점 → 롤백 → 복원이 정상 흐름. product의 이력은 "선점 추적"이고,
   확정 판매량 조정은 `order.stock.adjusted.events`, 정산 적재는
@@ -131,9 +136,10 @@
   주입한다. 실행 후 원장·잔여를 대조하는 오버셀 단언과 Redis 중단·재워밍 실험은
   스크립트에 포함돼 있지 않다.
 - **정합성 테스트:** `DropCacheRedisAdaptorTest`가 Testcontainers Redis +
-  `ExecutorService`로 동시 차감·1인 한도·중복 차감을 검증한다. PostgreSQL 원장 제약은
-  별도 repository·애플리케이션 통합 테스트에서 검증하며, Redis와 DB를 한 테스트에서 함께
-  경합시키는 end-to-end 정합성 테스트는 아니다(`TEST_CONVENTION` §8).
+  `ExecutorService`로 동시 차감·1인 한도·중복 차감과 보상 후 실제 잔여를 검증한다.
+  PostgreSQL 원장 조회·제약과 application의 선행 DEDUCT 튜플 검증은 각각 repository·service
+  테스트로 검증하며, Redis와 DB를 한 테스트에서 함께 경합시키는 end-to-end 정합성 테스트는
+  아니다(`TEST_CONVENTION` §8).
 
 ---
 
@@ -145,8 +151,8 @@
 - Lua: `redis/deduct.lua`, `rollback.lua`, `compensate.lua`, `close.lua`. 차감은 drop·buyers·order 키와 buyerId·quantity·현재 epoch ms·멱등 TTL을, 롤백은 같은 앞의 두 키와 rollback 키 및 buyerId·quantity·멱등 TTL을 사용한다.
 - 기본 설정: `warm-before=5m`, `close-margin=10m`, `null-close-ttl=7d`, `idempotency-ttl=1h`.
 - `TaskScheduler` pool size는 2다. 등록·삭제·종료 도메인 이벤트를 트랜잭션 커밋 후 받아 예약을 갱신한다.
-- 차감·롤백 이력은 `UNIQUE(order_id, change_type)`로 L2 멱등성을 보장한다. Redis 효과와 DB 기록이 충돌하면 Lua 역연산으로 캐시를 보상한다.
-- `DropErrorCode`는 `DROP_NOT_OPEN`, `DROP_SOLD_OUT`, `DROP_LIMIT_EXCEEDED`, `DROP_CLOSED`, `DROP_NOT_CACHED`를 실제 응답 코드로 사용한다.
+- 차감·롤백 이력은 `UNIQUE(order_id, change_type)`로 L2 멱등성을 보장한다. Redis 효과와 DB 기록이 충돌하면 Lua 역연산으로 캐시를 보상하고, L1 중복은 L2 원장 커밋과 튜플 일치를 확인한다.
+- `DropErrorCode`는 `DROP_NOT_OPEN`, `DROP_SOLD_OUT`, `DROP_LIMIT_EXCEEDED`, `DROP_CLOSED`, `DROP_NOT_CACHED`, `DROP_STOCK_CHANGE_IN_PROGRESS`, `DROP_STOCK_REQUEST_MISMATCH`, `DROP_ROLLBACK_NOT_ALLOWED`를 실제 응답 코드로 사용한다.
 - 단일 `DELETE` 경로는 오픈 전 soft delete, 오픈 뒤 `CLOSE` 전이로 동작한다. 구매자 목록·상세 조회와 seller 소유 검증도 구현돼 있다.
 
 ### 남은 운영 위험

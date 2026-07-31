@@ -13,6 +13,12 @@ public interface ProductRepository {
 
   Optional<Product> findById(UUID id);
 
+  Optional<Product> findByIdForUpdate(UUID id);
+
+  List<Product> findAllBySellerIdForUpdate(UUID sellerId);
+
+  List<Product> findAllByCategoryIdForUpdate(UUID categoryId);
+
   Page<Product> search(ProductSearchCondition condition, Pageable pageable);
 
   List<Product> searchChangedAliveSince(Instant changedAfter);

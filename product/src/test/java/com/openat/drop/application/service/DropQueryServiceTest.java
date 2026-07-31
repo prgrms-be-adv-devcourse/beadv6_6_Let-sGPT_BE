@@ -14,9 +14,9 @@ import com.openat.drop.domain.model.DropStatus;
 import com.openat.drop.domain.repository.DropCacheRepository;
 import com.openat.drop.domain.repository.DropRepository;
 import com.openat.drop.domain.repository.DropSearchCondition;
+import com.openat.product.application.usecase.ProductQueryUseCase;
 import com.openat.product.domain.model.Product;
 import com.openat.product.fixture.ProductFixture;
-import com.openat.seller.application.usecase.SellerStoreQueryUseCase;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +41,7 @@ class DropQueryServiceTest {
   @InjectMocks private DropQueryService dropQueryService;
   @Mock private DropRepository dropRepository;
   @Mock private DropCacheRepository dropCacheRepository;
-  @Mock private SellerStoreQueryUseCase sellerStoreQueryUseCase;
+  @Mock private ProductQueryUseCase productQueryUseCase;
 
   @Test
   @DisplayName("오픈 구간 드롭은 캐시 잔여로 OPEN 상태와 잔여 수량을 채워 반환한다")
@@ -51,7 +51,7 @@ class DropQueryServiceTest {
     Drop drop = liveDrop(dropId);
     given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
     given(dropCacheRepository.findRemaining(any())).willReturn(Map.of(dropId, 37L));
-    given(sellerStoreQueryUseCase.findStoreNames(any())).willReturn(Map.of());
+    given(productQueryUseCase.findSellerNames(any())).willReturn(Map.of());
 
     // when
     DropInfo info = dropQueryService.getDrop(dropId);
@@ -83,7 +83,7 @@ class DropQueryServiceTest {
     Drop drop = dropOf(dropId, Instant.now().plusSeconds(3600), null);
     given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
     given(dropCacheRepository.findRemaining(any())).willReturn(Map.of());
-    given(sellerStoreQueryUseCase.findStoreNames(any())).willReturn(Map.of());
+    given(productQueryUseCase.findSellerNames(any())).willReturn(Map.of());
 
     // when
     DropInfo info = dropQueryService.getDrop(dropId);
@@ -105,7 +105,7 @@ class DropQueryServiceTest {
                 any(DropSearchCondition.class), any(Instant.class), any(Pageable.class)))
         .willReturn(new PageImpl<>(List.of(drop), pageable, 1));
     given(dropCacheRepository.findRemaining(any())).willReturn(Map.of(dropId, 0L));
-    given(sellerStoreQueryUseCase.findStoreNames(any())).willReturn(Map.of());
+    given(productQueryUseCase.findSellerNames(any())).willReturn(Map.of());
 
     // when
     Page<DropInfo> result =

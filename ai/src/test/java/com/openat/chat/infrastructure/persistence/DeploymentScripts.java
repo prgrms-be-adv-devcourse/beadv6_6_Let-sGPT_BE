@@ -23,7 +23,10 @@ final class DeploymentScripts {
   record Result(int exitCode, String output) {}
 
   static String python() throws IOException, InterruptedException {
-    return locate("python3", List.of("python3", "python"), "Python 3");
+    return locate(
+        "python3",
+        windows() ? List.of("python3", "python", "py") : List.of("python3", "python"),
+        "Python 3");
   }
 
   static String bash() throws IOException, InterruptedException {
@@ -69,6 +72,7 @@ final class DeploymentScripts {
     processBuilder.directory(workingDirectory.toFile());
     processBuilder.redirectErrorStream(true);
     processBuilder.environment().putAll(environment);
+    processBuilder.environment().putIfAbsent("PYTHONUTF8", "1");
     Process process = processBuilder.start();
     if (!process.waitFor(Duration.ofSeconds(60).toMillis(), TimeUnit.MILLISECONDS)) {
       process.destroyForcibly();
@@ -78,12 +82,16 @@ final class DeploymentScripts {
   }
 
   /** Git Bash는 드라이브 문자 경로를 못 받으므로 POSIX 경로로 바꿔 넘긴다. */
-  static String toScriptPath(Path path) {
+  static String toBashPath(Path path) {
     String normalized = path.toAbsolutePath().normalize().toString().replace('\\', '/');
     if (normalized.length() >= 3 && normalized.charAt(1) == ':') {
       return "/" + Character.toLowerCase(normalized.charAt(0)) + normalized.substring(2);
     }
     return normalized;
+  }
+
+  static String toNativePath(Path path) {
+    return path.toAbsolutePath().normalize().toString();
   }
 
   private static boolean windows() {

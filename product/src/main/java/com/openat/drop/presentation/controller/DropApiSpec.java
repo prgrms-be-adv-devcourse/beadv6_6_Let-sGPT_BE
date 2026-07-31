@@ -67,7 +67,4 @@ public interface DropApiSpec {
   //   게이트웨이가 scoped JWT를 검증한 뒤 X-Seller-Id로 주입하고 CurrentUserArgumentResolver가 이를 바인딩한다.
   //   상세: FE docs/auth.md.
 
-  // TODO(fe-api): DropResponse 에 판매자 표시명(sellerName/storeName) 미포함 → 드롭 카드·상세 벤더 표기에 필요.
-  //   출처는 member SellerInfo.storeName. ProductResponse 와 동일 이슈(ProductApiSpec 참고). (현재 FE 는 MSW
-  // provisional)
 }

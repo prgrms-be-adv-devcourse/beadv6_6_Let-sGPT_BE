@@ -41,4 +41,26 @@ class ChatInferencePropertiesTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("reasoning-effort");
   }
+
+  @Test
+  @DisplayName("입력·답변·안전 여유 합계가 컨텍스트 창을 넘으면 기동을 거부한다")
+  void contextBudgetOverWindow_isRejected() {
+    ChatInferenceProperties properties = new ChatInferenceProperties();
+    properties.getContext().setInputTokenLimit(6_001);
+
+    assertThatThrownBy(properties::validate)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("컨텍스트 창");
+  }
+
+  @Test
+  @DisplayName("단계 출력 토큰이 답변 예약 토큰을 넘으면 기동을 거부한다")
+  void outputBudgetOverReserve_isRejected() {
+    ChatInferenceProperties properties = new ChatInferenceProperties();
+    properties.setAnswerMaxTokens(1_501);
+
+    assertThatThrownBy(properties::validate)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("답변 예약");
+  }
 }
