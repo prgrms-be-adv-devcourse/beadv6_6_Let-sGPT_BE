@@ -1,6 +1,7 @@
 package com.openat.member.infrastructure.scheduler;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.openat.member.domain.model.Member;
 import com.openat.member.domain.model.PlatformType;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -81,6 +83,9 @@ class MemberAnonymizeIntegrationTest {
     MemberAnonymizeScheduler scheduler;
 
     @Autowired
+    MemberAnonymizeService memberAnonymizeService;
+
+    @Autowired
     MemberRepository memberRepository;
 
     @Test
@@ -123,6 +128,45 @@ class MemberAnonymizeIntegrationTest {
         Member reloaded = memberRepository.findByIdIncludingDeleted(saved.getId()).orElseThrow();
         assertThat(reloaded.getEmail()).isEqualTo("fresh@b.com");
         assertThat(reloaded.getAnonymizedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("복구와 익명화가 동시에 같은 회원을 변경하려 하면, 나중에 커밋되는 쪽이 낙관적 락"
+            + " 충돌로 실패해 식별정보가 뒤섞이는 lost-update가 나지 않는다")
+    void concurrentRestoreAndAnonymize_secondCommitFailsInsteadOfCorruptingState() {
+        Member member = Member.builder()
+                .platformType(PlatformType.LOCAL)
+                .email("race@b.com")
+                .password("encoded")
+                .nickname("race-nick")
+                .build();
+        member.withdraw();
+        Member saved = memberRepository.save(member);
+        LocalDateTime cutoff = LocalDateTime.now();
+        backdateDeletedAt(saved.getId(), cutoff.minusDays(1));
+
+        // "동시에 읽은" 두 트랜잭션을 흉내: 복구 쪽이 먼저 행을 읽어 자기 세션에 들고 있는다
+        // (이 시점의 version은 아직 익명화 전 값 — 진짜 동시 요청이면 이 상태로 대기하다 나중에
+        // 커밋을 시도하는 상황과 같다).
+        Member staleSnapshotForRestore = memberRepository.findByIdIncludingDeleted(saved.getId()).orElseThrow();
+
+        // 익명화가 그 사이 먼저 커밋된다(별도 트랜잭션 — MemberAnonymizeService가 직접 조회부터
+        // 커밋까지 자체적으로 처리하므로 위 stale 스냅샷과는 완전히 독립된 세션이다).
+        boolean anonymized = memberAnonymizeService.anonymize(saved.getId(), cutoff);
+        assertThat(anonymized).isTrue();
+
+        // 미리 읽어둔(버전 stale) 스냅샷으로 뒤늦게 복구를 커밋하려 하면 낙관적 락 충돌로
+        // 실패해야 한다 — 실패하지 않고 성공해버리면 그 순간 익명화된 email/nickname이
+        // 복구 스냅샷의 옛 값(원본 email 등)으로 덮어써진다(=lost-update, 이번 수정 전 버그).
+        assertThatThrownBy(() -> {
+            staleSnapshotForRestore.restore();
+            memberRepository.save(staleSnapshotForRestore);
+        }).isInstanceOf(OptimisticLockingFailureException.class);
+
+        // 최종 DB 상태는 익명화된 상태 그대로 — 실패한 복구 커밋이 이를 덮어쓰지 않았다.
+        Member reloaded = memberRepository.findByIdIncludingDeleted(saved.getId()).orElseThrow();
+        assertThat(reloaded.getEmail()).startsWith("deleted_");
+        assertThat(reloaded.isDeleted()).isTrue();
     }
 
     // 테스트 전용 백데이트 — 프로덕션 코드에는 deletedAt을 임의로 되돌리는 경로가 없어야 하므로

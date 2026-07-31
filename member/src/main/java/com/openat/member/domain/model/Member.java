@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -63,6 +64,21 @@ public class Member extends BaseTimeEntity {
     // 별도 만료 체크 없이도 자연히 복구 불가 상태가 된다).
     @Column
     private LocalDateTime anonymizedAt;
+
+    /**
+     * 낙관적 락. restore()(로그인 시 복구)와 anonymize()(익명화 스케줄러)가 같은 회원 행을
+     * 조회 후 각자 변경할 수 있는데, 잠금·조건부 UPDATE 없이 둘 다 "조회한 시점의 스냅샷"을
+     * 그대로 저장하면 나중에 커밋되는 쪽이 먼저 커밋된 변경을 덮어써 버린다(예: 익명화가 먼저
+     * 커밋된 뒤 그 사실을 모르는 복구 트랜잭션이 커밋되면, Hibernate는 기본적으로 매핑된 모든
+     * 컬럼을 갱신하므로 복구 스냅샷에 남아있던 옛 email/nickname으로 되돌려 익명화 결과를
+     * 잃어버릴 수 있다 — 반대 순서도 마찬가지). @Version을 두면 두 트랜잭션 중 나중에 커밋되는
+     * 쪽의 UPDATE가 WHERE version=? 불일치로 0행 갱신 → Hibernate가
+     * ObjectOptimisticLockingFailureException을 던져 커밋을 막는다. 즉 둘 중 하나만 반영되고,
+     * 반영 안 된 쪽은 데이터를 조용히 망가뜨리는 대신 안전하게 실패한다(호출자가 재시도하면
+     * 그 시점의 최신 상태를 다시 판단).
+     */
+    @Version
+    private Long version;
 
     @Builder
     private Member(PlatformType platformType, String email, String password, String nickname) {
