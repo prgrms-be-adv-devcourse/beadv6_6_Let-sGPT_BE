@@ -2,9 +2,12 @@ package com.openat.member.infrastructure.persistence;
 
 import com.openat.member.domain.model.Member;
 import com.openat.member.domain.repository.MemberRepository;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -21,6 +24,11 @@ public class MemberRepositoryAdaptor implements MemberRepository {
     @Override
     public Optional<Member> findById(UUID id) {
         return memberJpaRepository.findByIdAndDeletedAtIsNull(id);
+    }
+
+    @Override
+    public Optional<Member> findByIdIncludingDeleted(UUID id) {
+        return memberJpaRepository.findById(id);
     }
 
     @Override
@@ -41,5 +49,11 @@ public class MemberRepositoryAdaptor implements MemberRepository {
     @Override
     public boolean existsByNickname(String nickname) {
         return memberJpaRepository.existsByNickname(nickname);
+    }
+
+    @Override
+    public List<Member> findWithdrawnBefore(LocalDateTime cutoff, int limit) {
+        return memberJpaRepository.findByDeletedAtLessThanEqualAndAnonymizedAtIsNullOrderByDeletedAtAsc(
+                cutoff, PageRequest.of(0, limit));
     }
 }
