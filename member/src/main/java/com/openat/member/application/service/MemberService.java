@@ -22,6 +22,7 @@ import com.openat.member.infrastructure.security.JwtTokenProvider;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -85,14 +86,22 @@ public class MemberService implements MemberUseCase {
         Member member = verifyCredentials(request);
 
         if (member.isDeleted()) {
-            // "익명화가 아직 안 됐으니 원래 이메일로 조회됐다"는 사실에만 기대지 않고, deletedAt
-            // 기준으로 유예기간을 직접 재확인한다 — 익명화 스케줄러는 매일 새벽 1회·최대 100건
-            // 배치라 지연되거나 적체될 수 있고, 그 사이 시간차 동안은 30일이 지난 계정도 이
-            // 메서드까지는 도달할 수 있기 때문이다.
-            if (!member.isRestorable()) {
+            // 조회 후 판단해서 저장하는 대신, "조건 확인 + deletedAt 해제"를 한 원자적 UPDATE로
+            // 묶는다(MemberRepository.restoreIfWithinGracePeriod). 이 회원 행은 익명화
+            // 스케줄러도 동시에 건드릴 수 있는데, 여기서 읽은 스냅샷을 그대로 다시 저장하는
+            // 방식이면 나중에 커밋되는 쪽이 상대 변경을 덮어쓰는 lost-update가 생긴다. 원자적
+            // UPDATE는 그 순간의 DB 실제 상태(유예기간 안인지, 이미 익명화됐는지)를 직접
+            // 재검증하므로 그 문제가 없다 — 0건이면 유예기간이 지났거나 그 사이 이미
+            // 익명화됐다는 뜻이라 복구 불가로 처리한다.
+            LocalDateTime cutoff = LocalDateTime.now().minus(Member.WITHDRAWAL_GRACE_PERIOD);
+            int restored = memberRepository.restoreIfWithinGracePeriod(member.getId(), cutoff);
+            if (restored == 0) {
                 throw new BusinessException(MemberErrorCode.MEMBER_WITHDRAWN);
             }
-            member.restore();
+            // UPDATE는 이 세션의 1차 캐시를 거치지 않으므로(clearAutomatically) 최신 상태를
+            // 다시 조회한다 — member는 여전히 deletedAt이 채워진 stale 스냅샷이다.
+            member = memberRepository.findByIdIncludingDeleted(member.getId())
+                    .orElseThrow(() -> new BusinessException(MemberErrorCode.MEMBER_NOT_FOUND));
         }
         // 이미 정상 계정이면(중복 클릭 등) 그냥 로그인과 동일하게 처리 — 멱등.
 
