@@ -56,4 +56,14 @@ public class MemberRepositoryAdaptor implements MemberRepository {
         return memberJpaRepository.findByDeletedAtLessThanEqualAndAnonymizedAtIsNullOrderByDeletedAtAsc(
                 cutoff, PageRequest.of(0, limit));
     }
+
+    @Override
+    public int restoreIfWithinGracePeriod(UUID id, LocalDateTime cutoff) {
+        return memberJpaRepository.restoreIfWithinGracePeriod(id, cutoff);
+    }
+
+    @Override
+    public int anonymizeIfEligible(UUID id, LocalDateTime cutoff, LocalDateTime now) {
+        return memberJpaRepository.anonymizeIfEligible(id, cutoff, now);
+    }
 }

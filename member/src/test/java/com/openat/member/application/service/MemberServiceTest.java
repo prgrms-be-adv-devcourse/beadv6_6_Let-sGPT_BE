@@ -3,6 +3,7 @@ package com.openat.member.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -88,17 +89,35 @@ class MemberServiceTest {
     }
 
     @Test
-    @DisplayName("복구: 탈퇴 유예기간 중 본인 확인에 성공하면 deletedAt이 풀리고 토큰이 발급된다")
+    @DisplayName("복구: 탈퇴 유예기간 중 본인 확인에 성공하면 원자적 UPDATE로 복구하고 토큰을 발급한다")
     void restore_whenDeletedAndCredentialsValid_restoresAndIssuesTokens() {
         Member withdrawn = withdrawnMember();
+        Member restored = activeMemberWithSameId(withdrawn);
         when(memberRepository.findByEmailIncludingDeleted("a@b.com")).thenReturn(Optional.of(withdrawn));
         when(passwordEncoder.matches("correct", withdrawn.getPassword())).thenReturn(true);
-        stubTokenIssuance(withdrawn);
+        // restore()는 조회한 엔티티를 직접 mutate하지 않고 조건부 UPDATE 건수로 판단한다 —
+        // 1건 갱신됐다고 응답하면 최신 상태를 다시 조회해 issueTokens에 쓴다.
+        when(memberRepository.restoreIfWithinGracePeriod(eq(withdrawn.getId()), any())).thenReturn(1);
+        when(memberRepository.findByIdIncludingDeleted(withdrawn.getId())).thenReturn(Optional.of(restored));
+        stubTokenIssuance(restored);
 
         TokenResponse response = memberService.restore(new LoginRequest("a@b.com", "correct"));
 
-        assertThat(withdrawn.isDeleted()).isFalse();
         assertThat(response.accessToken()).isEqualTo("access-token");
+    }
+
+    @Test
+    @DisplayName("복구: 조건부 UPDATE가 0건이면(그 사이 익명화되는 등) MEMBER_WITHDRAWN을 던진다")
+    void restore_whenConditionalUpdateAffectsNoRows_throwsWithdrawn() {
+        Member withdrawn = withdrawnMember();
+        when(memberRepository.findByEmailIncludingDeleted("a@b.com")).thenReturn(Optional.of(withdrawn));
+        when(passwordEncoder.matches("correct", withdrawn.getPassword())).thenReturn(true);
+        when(memberRepository.restoreIfWithinGracePeriod(eq(withdrawn.getId()), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> memberService.restore(new LoginRequest("a@b.com", "correct")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(MemberErrorCode.MEMBER_WITHDRAWN);
     }
 
     @Test
@@ -112,23 +131,6 @@ class MemberServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(MemberErrorCode.MEMBER_INVALID_CREDENTIALS);
-        assertThat(withdrawn.isDeleted()).isTrue();
-    }
-
-    @Test
-    @DisplayName("복구: 유예기간(30일)이 지났으면 비밀번호가 맞아도 복구하지 않고 MEMBER_WITHDRAWN을 던진다"
-            + " (익명화 스케줄러가 아직 안 돌았어도 deletedAt 기준으로 직접 차단해야 함)")
-    void restore_whenGracePeriodExpired_throwsWithdrawnAndDoesNotRestore() {
-        Member withdrawn = withdrawnMember();
-        ReflectionTestUtils.setField(withdrawn, "deletedAt",
-                java.time.LocalDateTime.now().minusDays(31));
-        when(memberRepository.findByEmailIncludingDeleted("a@b.com")).thenReturn(Optional.of(withdrawn));
-        when(passwordEncoder.matches("correct", withdrawn.getPassword())).thenReturn(true);
-
-        assertThatThrownBy(() -> memberService.restore(new LoginRequest("a@b.com", "correct")))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(MemberErrorCode.MEMBER_WITHDRAWN);
         assertThat(withdrawn.isDeleted()).isTrue();
     }
 
@@ -169,6 +171,18 @@ class MemberServiceTest {
     private Member withdrawnMember() {
         Member member = activeMember();
         member.withdraw();
+        return member;
+    }
+
+    /** restore()가 조건부 UPDATE 이후 다시 조회하는 "복구 완료 상태"를 흉내낸다(같은 id, deletedAt 없음). */
+    private Member activeMemberWithSameId(Member withdrawn) {
+        Member member = Member.builder()
+                .platformType(PlatformType.LOCAL)
+                .email(withdrawn.getEmail())
+                .password(withdrawn.getPassword())
+                .nickname(withdrawn.getNickname())
+                .build();
+        ReflectionTestUtils.setField(member, "id", withdrawn.getId());
         return member;
     }
 }

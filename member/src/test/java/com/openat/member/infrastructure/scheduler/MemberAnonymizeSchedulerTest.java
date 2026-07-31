@@ -82,6 +82,23 @@ class MemberAnonymizeSchedulerTest {
         verify(memberAnonymizeService).anonymize(eq(healthy.getId()), any(LocalDateTime.class));
     }
 
+    @Test
+    @DisplayName("가득 찬 배치가 계속 한 건도 익명화하지 못하면 무제한 재시도 대신 서킷브레이커로 일찍 멈춘다")
+    void anonymizeWithdrawnMembers_whenNoProgressRepeatedly_stopsEarlyInsteadOfHammeringDb() {
+        // 매번 같은 100건이 다시 뽑히는 상황을 흉내낸다(아무도 익명화되지 않아 anonymizedAt이
+        // 안 채워지므로 다음 조회에서도 계속 뽑힘) — 서킷브레이커 없이는 이론상 MAX_BATCH_ITERATIONS
+        // (100)회까지 계속 재시도할 상황.
+        List<Member> alwaysSameBatch = membersOf(100);
+        when(memberRepository.findWithdrawnBefore(any(), anyInt())).thenReturn(alwaysSameBatch);
+        when(memberAnonymizeService.anonymize(any(UUID.class), any(LocalDateTime.class)))
+                .thenThrow(new IllegalStateException("계속 실패"));
+
+        scheduler.anonymizeWithdrawnMembers();
+
+        // MAX_CONSECUTIVE_NO_PROGRESS(3)회만 조회하고 멈춘다 — 100회까지 안 감.
+        verify(memberRepository, times(3)).findWithdrawnBefore(any(), eq(100));
+    }
+
     private List<Member> membersOf(int count) {
         List<Member> members = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
