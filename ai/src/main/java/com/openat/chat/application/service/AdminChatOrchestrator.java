@@ -5,6 +5,8 @@ import com.openat.chat.application.dto.ChatRequestDeadline;
 import com.openat.chat.application.dto.ChatStreamEvent;
 import com.openat.chat.application.dto.ChatStreamEvent.ChatStage;
 import com.openat.chat.application.dto.EvidenceSegment;
+import com.openat.chat.application.exception.AdminChatExecutionException;
+import com.openat.chat.application.exception.AdminChatExecutionException.Reason;
 import com.openat.chat.application.port.AdminAnalyticsExecutionPort;
 import com.openat.chat.application.port.AdminChatInferencePort;
 import com.openat.chat.application.port.AdminChatInferencePort.BindingResponse;
@@ -46,7 +48,12 @@ public class AdminChatOrchestrator {
     RoutingResponse routing = inference.route(command, deadline);
     if (!routing.hasTools()) {
       if (routing.content().isBlank()) {
-        throw new IllegalStateException("1차 추론 응답에 답변과 도구 호출이 모두 없어요.");
+        throw new AdminChatExecutionException(
+            Reason.SELECTION_FAILED, "1차 추론 응답에 답변과 도구 호출이 모두 없어요.");
+      }
+      if (!routing.hasCompletedAnswer()) {
+        throw new AdminChatExecutionException(
+            Reason.SELECTION_FAILED, "1차 추론이 완결된 일반 답변을 반환하지 않았어요.");
       }
       emitBuffered(command, sink, routing.content());
       sink.terminate(ChatStreamEvent.done(command.requestId()));
@@ -56,8 +63,15 @@ public class AdminChatOrchestrator {
     sink.emit(ChatStreamEvent.status(command.requestId(), ChatStage.CALLING_TOOL));
     InitialToolResult initial =
         initialTools.execute(command, routing.toolInvocations(), sink, deadline);
-    if (initial.schemaSelectionRequested() && initial.domains().isEmpty()) {
-      throw new IllegalStateException("내부 데이터 영역을 결정하지 못했어요.");
+    boolean usableLightEvidence =
+        initial.evidence().stream()
+            .anyMatch(evidence -> evidence.status() != EvidenceSegment.Status.FAILED);
+    if (initial.schemaSelectionRequested()
+        && initial.schemaSelectionFailed()
+        && initial.domains().isEmpty()
+        && !usableLightEvidence) {
+      throw new AdminChatExecutionException(
+          Reason.SELECTION_FAILED, "내부 데이터 영역을 결정하지 못했어요.");
     }
 
     List<EvidenceSegment> evidence = new ArrayList<>(initial.evidence());
@@ -77,7 +91,11 @@ public class AdminChatOrchestrator {
         emitEarlyAnswer(
             command, sink, binding.earlyAnswer(), naturalAnswerStarted, answerCharacters);
     if (earlyAnswerDelivered) {
-      evidence.replaceAll(EvidenceSegment::deliveredCopy);
+      evidence.replaceAll(
+          segment ->
+              binding.deliveredEvidenceIds().contains(segment.id())
+                  ? segment.deliveredCopy()
+                  : segment);
     }
 
     evidence.addAll(analytics.execute(binding.bindings(), deadline));

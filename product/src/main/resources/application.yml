@@ -43,6 +43,15 @@ drop:
   idempotency-ttl: 1h # order 멱등키 TTL
 
 product:
+  search-projection-refresh:
+    batch-size: 100
+    fixed-delay-ms: 5000
+  outbox:
+    relay:
+      batch-size: 100
+      fixed-delay-ms: 3000
+      claim-timeout: 30s
+      send-timeout: 10s
   image:
     s3:
       bucket: ${PRODUCT_IMAGE_S3_BUCKET} # 이미지 객체를 저장하는 단일 버킷
@@ -59,7 +68,7 @@ product:
       product-created: product.created.events
       product-updated: product.updated.events
       product-deleted: product.deleted.events
-      # member 발행 스토어 이벤트 소비(SellerStore 표시명 투영). 발행 측 토픽명은 member 와 합의 필요.
+      # member 발행 스토어 이벤트 소비(SellerStoreProjection 표시명 로컬 투영)
       seller-registered: seller_registered_events
       seller-updated: seller_updated_events
 

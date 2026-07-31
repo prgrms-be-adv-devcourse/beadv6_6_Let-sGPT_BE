@@ -13,6 +13,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ClassPathResource;
@@ -35,8 +36,8 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
       RedisScript.of(new ClassPathResource("redis/deduct.lua"), String.class);
   private final RedisScript<String> rollbackScript =
       RedisScript.of(new ClassPathResource("redis/rollback.lua"), String.class);
-  private final RedisScript<String> compensateScript =
-      RedisScript.of(new ClassPathResource("redis/compensate.lua"), String.class);
+  private final RedisScript<Long> compensateScript =
+      RedisScript.of(new ClassPathResource("redis/compensate.lua"), Long.class);
   private final RedisScript<String> closeScript =
       RedisScript.of(new ClassPathResource("redis/close.lua"), String.class);
 
@@ -155,8 +156,8 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
   }
 
   @Override
-  public void compensateDeduct(StockMutation mutation) {
-    compensate(
+  public Optional<Long> compensateDeduct(StockMutation mutation) {
+    return compensate(
         mutation.dropId(),
         orderKey(mutation.orderId()),
         mutation.buyerId(),
@@ -165,8 +166,8 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
   }
 
   @Override
-  public void compensateRollback(StockMutation mutation) {
-    compensate(
+  public Optional<Long> compensateRollback(StockMutation mutation) {
+    return compensate(
         mutation.dropId(),
         rollbackKey(mutation.orderId()),
         mutation.buyerId(),
@@ -174,14 +175,16 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
         mutation.quantity());
   }
 
-  private void compensate(
+  private Optional<Long> compensate(
       UUID dropId, String idemKey, UUID buyerId, int remainingDelta, int buyerDelta) {
-    redisTemplate.execute(
-        compensateScript,
-        List.of(dropKey(dropId), buyersKey(dropId), idemKey),
-        buyerId.toString(),
-        Integer.toString(remainingDelta),
-        Integer.toString(buyerDelta));
+    Long remaining =
+        redisTemplate.execute(
+            compensateScript,
+            List.of(dropKey(dropId), buyersKey(dropId), idemKey),
+            buyerId.toString(),
+            Integer.toString(remainingDelta),
+            Integer.toString(buyerDelta));
+    return Optional.ofNullable(remaining);
   }
 
   private StockCommandResult parse(String raw) {

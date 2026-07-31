@@ -97,6 +97,7 @@ chat:
       input-token-limit: ${CHAT_INFERENCE_INPUT_TOKEN_LIMIT:6000}
       answer-token-reserve: ${CHAT_INFERENCE_ANSWER_TOKEN_RESERVE:1500}
       safety-token-reserve: ${CHAT_INFERENCE_SAFETY_TOKEN_RESERVE:692}
+      context-window-token-limit: ${CHAT_INFERENCE_CONTEXT_WINDOW_TOKEN_LIMIT:8192}
       max-schema-shards: ${CHAT_INFERENCE_MAX_SCHEMA_SHARDS:6}
       previous-question-max-characters: 300
       previous-answer-max-characters: 800

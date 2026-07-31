@@ -111,6 +111,11 @@ public class ChatInferenceProperties {
       throw new IllegalStateException("단계별 출력 토큰은 1 이상이어야 해요.");
     }
     context.validate();
+    int maximumOutputTokens =
+        Math.max(routingMaxTokens, Math.max(bindingMaxTokens, answerMaxTokens));
+    if (maximumOutputTokens > context.getAnswerTokenReserve()) {
+      throw new IllegalStateException("단계별 출력 토큰은 답변 예약 토큰을 넘을 수 없어요.");
+    }
   }
 
   private boolean isLoopback(String value) {
@@ -127,6 +132,7 @@ public class ChatInferenceProperties {
     private int inputTokenLimit = 6000;
     private int answerTokenReserve = 1500;
     private int safetyTokenReserve = 692;
+    private int contextWindowTokenLimit = 8192;
     private int maxSchemaShards = 6;
     private int previousQuestionMaxCharacters = 300;
     private int previousAnswerMaxCharacters = 800;
@@ -155,6 +161,14 @@ public class ChatInferenceProperties {
       this.safetyTokenReserve = safetyTokenReserve;
     }
 
+    public int getContextWindowTokenLimit() {
+      return contextWindowTokenLimit;
+    }
+
+    public void setContextWindowTokenLimit(int contextWindowTokenLimit) {
+      this.contextWindowTokenLimit = contextWindowTokenLimit;
+    }
+
     public int getMaxSchemaShards() {
       return maxSchemaShards;
     }
@@ -180,8 +194,15 @@ public class ChatInferenceProperties {
     }
 
     private void validate() {
-      if (inputTokenLimit < 1 || answerTokenReserve < 1 || safetyTokenReserve < 0) {
+      if (inputTokenLimit < 1
+          || answerTokenReserve < 1
+          || safetyTokenReserve < 0
+          || contextWindowTokenLimit < 1) {
         throw new IllegalStateException("chat.inference.context 토큰 예산이 올바르지 않아요.");
+      }
+      if (inputTokenLimit + answerTokenReserve + safetyTokenReserve
+          > contextWindowTokenLimit) {
+        throw new IllegalStateException("입력·답변·안전 토큰 합계가 모델 컨텍스트 창을 넘을 수 없어요.");
       }
       if (maxSchemaShards < 1 || maxSchemaShards > InternalDataDomain.values().length) {
         throw new IllegalStateException(

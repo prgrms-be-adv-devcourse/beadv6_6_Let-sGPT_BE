@@ -5,23 +5,30 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 
 import com.openat.category.application.dto.CategoryCreateCommand;
 import com.openat.category.application.dto.CategoryUpdateCommand;
 import com.openat.category.domain.error.CategoryErrorCode;
+import com.openat.category.domain.event.CategoryDeletingEvent;
+import com.openat.category.domain.event.CategoryUpdatedEvent;
 import com.openat.category.domain.model.Category;
 import com.openat.category.domain.repository.CategoryRepository;
 import com.openat.common.exception.BusinessException;
+import com.openat.support.lock.SearchProjectionReferenceLock;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -30,6 +37,8 @@ class CategoryCommandServiceTest {
 
   @InjectMocks private CategoryCommandService categoryCommandService;
   @Mock private CategoryRepository categoryRepository;
+  @Mock private ApplicationEventPublisher eventPublisher;
+  @Mock private SearchProjectionReferenceLock searchProjectionReferenceLock;
 
   @Nested
   @DisplayName("카테고리 생성")
@@ -88,6 +97,7 @@ class CategoryCommandServiceTest {
 
       // then
       then(categoryRepository).should(never()).existsByName(any());
+      then(eventPublisher).shouldHaveNoInteractions();
       assertThat(category.getName()).isEqualTo(sameName);
     }
 
@@ -122,6 +132,15 @@ class CategoryCommandServiceTest {
 
       // then
       assertThat(category.getName()).isEqualTo(newName);
+      InOrder lockOrder = inOrder(searchProjectionReferenceLock, categoryRepository);
+      lockOrder
+          .verify(searchProjectionReferenceLock)
+          .lockCategoryForReferenceWrite(category.getId());
+      lockOrder.verify(categoryRepository).findById(category.getId());
+      ArgumentCaptor<CategoryUpdatedEvent> eventCaptor =
+          ArgumentCaptor.forClass(CategoryUpdatedEvent.class);
+      then(eventPublisher).should().publishEvent(eventCaptor.capture());
+      assertThat(eventCaptor.getValue().categoryId()).isEqualTo(category.getId());
     }
   }
 
@@ -141,6 +160,16 @@ class CategoryCommandServiceTest {
 
       // then
       then(categoryRepository).should().delete(category);
+      InOrder lockOrder = inOrder(searchProjectionReferenceLock, categoryRepository);
+      lockOrder
+          .verify(searchProjectionReferenceLock)
+          .lockCategoryForReferenceWrite(category.getId());
+      lockOrder.verify(categoryRepository).findById(category.getId());
+      lockOrder.verify(categoryRepository).delete(category);
+      ArgumentCaptor<CategoryDeletingEvent> eventCaptor =
+          ArgumentCaptor.forClass(CategoryDeletingEvent.class);
+      then(eventPublisher).should().publishEvent(eventCaptor.capture());
+      assertThat(eventCaptor.getValue().categoryId()).isEqualTo(category.getId());
     }
 
     @Test

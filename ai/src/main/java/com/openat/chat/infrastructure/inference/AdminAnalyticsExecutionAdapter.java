@@ -3,6 +3,8 @@ package com.openat.chat.infrastructure.inference;
 import com.openat.chat.application.dto.AdminAnalyticsQueryResult;
 import com.openat.chat.application.dto.ChatRequestDeadline;
 import com.openat.chat.application.dto.EvidenceSegment;
+import com.openat.chat.application.exception.AdminChatExecutionException;
+import com.openat.chat.application.exception.AdminChatExecutionException.Reason;
 import com.openat.chat.application.port.AdminAnalyticsExecutionPort;
 import com.openat.chat.application.port.AdminAnalyticsQueryPort;
 import com.openat.chat.application.port.AdminChatInferencePort.BindingStatus;
@@ -10,15 +12,19 @@ import com.openat.chat.application.port.AdminChatInferencePort.QueryBinding;
 import com.openat.chat.application.service.AdminAnalyticsPlanFactory;
 import com.openat.chat.application.service.AdminAnalyticsPlanFactory.PreparedQuery;
 import com.openat.chat.domain.query.AdminAnalyticsQueryPlan.Query;
+import com.openat.chat.infrastructure.inference.ChatInferenceMetrics.EvidenceStage;
 import com.openat.chat.infrastructure.inference.tool.AdminAnalyticsFacts;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
@@ -36,18 +42,21 @@ public class AdminAnalyticsExecutionAdapter implements AdminAnalyticsExecutionPo
   private final AdminAnalyticsResultMapper resultMapper;
   private final ExecutorService taskExecutor;
   private final ChatInferenceProperties properties;
+  private final ChatInferenceMetrics metrics;
 
   public AdminAnalyticsExecutionAdapter(
       AdminAnalyticsQueryPort queryPort,
       AdminAnalyticsPlanFactory planFactory,
       AdminAnalyticsResultMapper resultMapper,
       @Qualifier("chatTaskExecutor") ExecutorService taskExecutor,
-      ChatInferenceProperties properties) {
+      ChatInferenceProperties properties,
+      ChatInferenceMetrics metrics) {
     this.queryPort = queryPort;
     this.planFactory = planFactory;
     this.resultMapper = resultMapper;
     this.taskExecutor = taskExecutor;
     this.properties = properties;
+    this.metrics = metrics;
   }
 
   @Override
@@ -79,16 +88,11 @@ public class AdminAnalyticsExecutionAdapter implements AdminAnalyticsExecutionPo
     if (!prepared.isEmpty() && !queryPort.isAvailable()) {
       prepared.forEach(
           binding -> immediate.add(failed(binding.binding(), "내부 분석 데이터 조회가 현재 비활성화되어 있어요.")));
-      return stable(bindings, immediate);
+      return record(bindings, immediate);
     }
 
-    List<IndexedFuture> futures = new ArrayList<>();
-    for (int index = 0; index < prepared.size(); index++) {
-      PreparedBinding binding = prepared.get(index);
-      futures.add(new IndexedFuture(index, taskExecutor.submit(() -> executeOne(binding))));
-    }
-    immediate.addAll(await(futures, deadline));
-    return stable(bindings, immediate);
+    immediate.addAll(executeAll(prepared, deadline));
+    return record(bindings, immediate);
   }
 
   private EvidenceSegment executeOne(PreparedBinding binding) {
@@ -128,29 +132,71 @@ public class AdminAnalyticsExecutionAdapter implements AdminAnalyticsExecutionPo
     }
   }
 
-  private List<EvidenceSegment> await(List<IndexedFuture> futures, ChatRequestDeadline deadline) {
-    List<EvidenceSegment> results = new ArrayList<>();
+  private List<EvidenceSegment> executeAll(
+      List<PreparedBinding> prepared, ChatRequestDeadline deadline) {
+    if (prepared.isEmpty()) {
+      return List.of();
+    }
+    StageBudget budget = stageBudget(deadline);
+    List<Callable<EvidenceSegment>> tasks =
+        prepared.stream()
+            .<Callable<EvidenceSegment>>map(binding -> () -> executeOne(binding))
+            .toList();
+    List<Future<EvidenceSegment>> futures;
     try {
-      for (IndexedFuture indexed : futures) {
-        Duration timeout = deadline.boundedBy(properties.getStageTimeout());
-        results.add(indexed.future().get(timeout.toMillis(), TimeUnit.MILLISECONDS));
-      }
-      return results;
+      futures =
+          taskExecutor.invokeAll(tasks, budget.timeout().toNanos(), TimeUnit.NANOSECONDS);
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
-      cancel(futures);
-      throw new IllegalStateException("내부 데이터 조회가 취소됐어요.", exception);
-    } catch (ExecutionException exception) {
-      cancel(futures);
-      throw new IllegalStateException("내부 데이터 조회를 완료하지 못했어요.", exception.getCause());
+      throw new AdminChatExecutionException(
+          Reason.CANCELLED, "내부 데이터 조회가 취소됐어요.", exception);
+    } catch (RejectedExecutionException exception) {
+      throw new AdminChatExecutionException(
+          Reason.BUSY, "내부 데이터 조회 실행기가 포화됐어요.", exception);
+    }
+
+    boolean timedOut = futures.stream().anyMatch(Future::isCancelled);
+    if (timedOut && budget.requestDeadlineBound()) {
+      throw new AdminChatExecutionException(
+          Reason.TIMEOUT, "내부 데이터 조회 중 요청 기한이 지났어요.");
+    }
+
+    List<EvidenceSegment> results = new ArrayList<>();
+    for (int index = 0; index < futures.size(); index++) {
+      PreparedBinding binding = prepared.get(index);
+      try {
+        results.add(futures.get(index).get());
+      } catch (CancellationException exception) {
+        results.add(failed(binding.binding(), "내부 데이터 조회 시간이 초과됐어요."));
+      } catch (ExecutionException exception) {
+        results.add(failed(binding.binding(), "내부 데이터 조회를 완료하지 못했어요."));
+      } catch (InterruptedException exception) {
+        Thread.currentThread().interrupt();
+        throw new AdminChatExecutionException(
+            Reason.CANCELLED, "내부 데이터 조회 결과 수집이 취소됐어요.", exception);
+      }
+    }
+    return List.copyOf(results);
+  }
+
+  private StageBudget stageBudget(ChatRequestDeadline deadline) {
+    try {
+      Duration remaining = deadline.remaining();
+      Duration stageTimeout = properties.getStageTimeout();
+      return new StageBudget(
+          remaining.compareTo(stageTimeout) <= 0 ? remaining : stageTimeout,
+          remaining.compareTo(stageTimeout) <= 0);
     } catch (TimeoutException exception) {
-      cancel(futures);
-      throw new IllegalStateException("내부 데이터 조회 시간이 초과됐어요.", exception);
+      throw new AdminChatExecutionException(
+          Reason.TIMEOUT, "내부 데이터 조회 전 요청 기한이 지났어요.", exception);
     }
   }
 
-  private void cancel(List<IndexedFuture> futures) {
-    futures.forEach(indexed -> indexed.future().cancel(true));
+  private List<EvidenceSegment> record(
+      List<QueryBinding> bindings, List<EvidenceSegment> evidence) {
+    List<EvidenceSegment> stable = stable(bindings, evidence);
+    metrics.recordEvidence(EvidenceStage.ANALYTICS, stable);
+    return stable;
   }
 
   private List<EvidenceSegment> stable(
@@ -196,5 +242,5 @@ public class AdminAnalyticsExecutionAdapter implements AdminAnalyticsExecutionPo
 
   private record PreparedBinding(QueryBinding binding, PreparedQuery query) {}
 
-  private record IndexedFuture(int index, Future<EvidenceSegment> future) {}
+  private record StageBudget(Duration timeout, boolean requestDeadlineBound) {}
 }

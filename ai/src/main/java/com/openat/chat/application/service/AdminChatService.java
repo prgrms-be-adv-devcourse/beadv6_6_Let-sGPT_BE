@@ -6,6 +6,7 @@ import com.openat.chat.application.dto.ChatCapabilityInfo.Availability;
 import com.openat.chat.application.dto.ChatCommand;
 import com.openat.chat.application.dto.ChatRequestDeadline;
 import com.openat.chat.application.dto.ChatStreamEvent;
+import com.openat.chat.application.exception.AdminChatExecutionException;
 import com.openat.chat.application.port.AdminDataQueryPort;
 import com.openat.chat.application.port.ChatEventSink;
 import com.openat.chat.application.port.ChatStreamClosedException;
@@ -78,6 +79,8 @@ public class AdminChatService {
       orchestrator.execute(safeCommand, sink, deadline);
     } catch (ChatStreamClosedException ignored) {
       // The client has already disconnected, so there is no terminal event to send.
+    } catch (AdminChatExecutionException exception) {
+      handleExpectedFailure(command, sink, exception);
     } catch (RuntimeException exception) {
       log.warn("Admin chat request failed. requestId={}", command.requestId(), exception);
       sink.terminate(
@@ -89,6 +92,49 @@ public class AdminChatService {
                   true,
                   partial));
     }
+  }
+
+  private void handleExpectedFailure(
+      ChatCommand command, ChatEventSink sink, AdminChatExecutionException exception) {
+    if (exception.reason() == AdminChatExecutionException.Reason.CANCELLED && sink.isClosed()) {
+      return;
+    }
+    FailureResponse failure =
+        switch (exception.reason()) {
+          case SELECTION_FAILED ->
+              new FailureResponse(
+                  "CHAT_SELECTION_FAILED",
+                  "질문에 필요한 조회 범위를 정하지 못했어. 내용을 조금 더 구체적으로 적어 줘.",
+                  false);
+          case INPUT_BUDGET_EXCEEDED ->
+              new FailureResponse(
+                  "CHAT_INPUT_BUDGET_EXCEEDED",
+                  "한 번에 처리할 내용이 너무 많아. 질문 범위를 조금 줄여 줘.",
+                  false);
+          case TIMEOUT ->
+              new FailureResponse(
+                  "CHAT_TIMEOUT", "처리 시간이 길어져 요청을 종료했어. 다시 시도해 줘.", true);
+          case BUSY ->
+              new FailureResponse(
+                  "CHAT_BUSY", "현재 처리 중인 요청이 많아. 잠시 후 다시 시도해 줘.", true);
+          case CANCELLED ->
+              new FailureResponse(
+                  "CHAT_PROCESSING_FAILED",
+                  "답변을 만드는 작업이 중단됐어. 잠시 후 다시 시도해 줘.",
+                  true);
+        };
+    log.info(
+        "Admin chat request ended with expected failure. requestId={} reason={}",
+        command.requestId(),
+        exception.reason());
+    sink.terminate(
+        partial ->
+            ChatStreamEvent.error(
+                command.requestId(),
+                failure.code(),
+                failure.message(),
+                failure.retryable(),
+                partial));
   }
 
   public ChatCapabilitiesInfo getCapabilities() {
@@ -180,4 +226,6 @@ public class AdminChatService {
       default -> "질문을 처리할 수 없어. 내용을 확인해서 다시 적어 줘.";
     };
   }
+
+  private record FailureResponse(String code, String message, boolean retryable) {}
 }

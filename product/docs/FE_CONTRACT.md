@@ -32,7 +32,7 @@
 |---|---|---|---|---|
 | `id` | UUID | N | ✅ | |
 | `sellerId` | UUID | N | ✅ | 판매자 인증 변경 후 **스토어 `sellerInfoId`** 의미(§5·5) → `sellerName` 출처와 정합 |
-| `sellerName` | string | Y | ✅ | member 스토어 이벤트를 소비한 로컬 `SellerStore` 투영에서 조회 |
+| `sellerName` | string | Y | ✅ | member 스토어 이벤트를 소비한 product 로컬 `SellerStoreProjection`에서 조회 |
 | `name` | string | N | ✅ | |
 | `description` | string | Y | ✅ | 등록·수정 body에서 선택값. 카드엔 미표시, 상세·폼에서 사용 |
 | `categoryId` | UUID | Y | ✅ | null = 미분류 |
@@ -223,7 +223,7 @@ ProductWriteBody { name, description?, categoryId?, price?, thumbnailKey?, image
 ## 5. 현재 구현과 연동 확인
 
 1. **`DropResponse` 필드명 정합** — `id`(not `dropId`), `remainingQuantity`(not `remaining`)로 구현됐다.
-2. **`sellerName` 구현 완료** — member의 스토어 이벤트를 product가 `SellerStore`로 투영하고 product/drop 응답에 노출한다.
+2. **`sellerName` 구현 완료** — member의 스토어 이벤트를 product가 `SellerStoreProjection`으로 투영하고 product/drop 응답에 노출한다.
 3. **`thumbnailKey` URL 전략** — 결정: 신규 이미지는 presigned PUT으로 staging에 직접 업로드하고, 상품 등록·수정 시 BE가 final로 승격한다. 상품 응답은 **final key**를 주며 FE `resolveImageSrc`가 `GET /api/v1/products/images/{key}`로 해석한다(seed/목의 풀 URL은 패스스루). staging 이미지는 blob URL로 즉시 미리보기한다. 조회는 §1.5대로 presigned GET 리다이렉트로 전환했고, CDN은 별도 과제로 둔다.
 4. **조회 API 현황** — `/drops`·`/drops/{id}`·`/drops/me`·`/products/me`·`/categories`·`/wallet` 모두 구현 완료다.
 5. **`sellerId` = 스토어 `sellerInfoId`** — 상품/드롭 write·`/me` 소유 필터와 `ProductResponse.sellerId`는 게이트웨이가 판매자 scoped JWT에서 주입한 `sellerInfoId` 기준이다.

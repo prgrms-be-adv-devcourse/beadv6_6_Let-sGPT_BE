@@ -10,6 +10,8 @@ import static org.mockito.Mockito.verify;
 import com.openat.chat.application.dto.ChatCommand;
 import com.openat.chat.application.dto.ChatRequestDeadline;
 import com.openat.chat.application.dto.ChatStreamEvent.ErrorPayload;
+import com.openat.chat.application.exception.AdminChatExecutionException;
+import com.openat.chat.application.exception.AdminChatExecutionException.Reason;
 import com.openat.chat.application.port.AdminDataQueryPort;
 import com.openat.chat.application.port.WeatherPort;
 import com.openat.chat.application.port.WebSearchPort;
@@ -19,10 +21,14 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -150,6 +156,52 @@ class AdminChatServiceTest {
     assertThat(error.code()).isEqualTo("CHAT_PROCESSING_FAILED");
     assertThat(error.retryable()).isTrue();
     assertThat(error.partial()).isFalse();
+  }
+
+  @ParameterizedTest(name = "{0} 실패는 {1}로 종료한다")
+  @MethodSource("expectedFailures")
+  @DisplayName("예상 가능한 실패 원인을 안정적인 SSE 오류 계약으로 변환한다")
+  void execute_expectedFailure_usesStableErrorContract(
+      Reason reason, String expectedCode, boolean retryable) {
+    ChatCommand command = command("지난달 주문 수는?");
+    RecordingChatEventSink sink = new RecordingChatEventSink();
+    ChatRequestDeadline deadline = deadline();
+    given(orchestrator.isAvailable()).willReturn(true);
+    doThrow(new AdminChatExecutionException(reason, "internal"))
+        .when(orchestrator)
+        .execute(command, sink, deadline);
+
+    service.execute(command, sink, deadline);
+
+    ErrorPayload error = (ErrorPayload) sink.events().getLast().data();
+    assertThat(error.code()).isEqualTo(expectedCode);
+    assertThat(error.retryable()).isEqualTo(retryable);
+    assertThat(error.partial()).isFalse();
+  }
+
+  @Test
+  @DisplayName("닫힌 스트림의 취소는 일반 처리 오류를 추가로 만들지 않는다")
+  void execute_cancelledClosedStream_doesNotAddTerminalError() {
+    ChatCommand command = command("지난달 주문 수는?");
+    RecordingChatEventSink sink = new RecordingChatEventSink();
+    ChatRequestDeadline deadline = deadline();
+    sink.terminate(com.openat.chat.application.dto.ChatStreamEvent.done(command.requestId()));
+    given(orchestrator.isAvailable()).willReturn(true);
+    doThrow(new AdminChatExecutionException(Reason.CANCELLED, "cancelled"))
+        .when(orchestrator)
+        .execute(command, sink, deadline);
+
+    service.execute(command, sink, deadline);
+
+    assertThat(sink.eventNames()).containsExactly("done");
+  }
+
+  private static Stream<Arguments> expectedFailures() {
+    return Stream.of(
+        Arguments.of(Reason.SELECTION_FAILED, "CHAT_SELECTION_FAILED", false),
+        Arguments.of(Reason.INPUT_BUDGET_EXCEEDED, "CHAT_INPUT_BUDGET_EXCEEDED", false),
+        Arguments.of(Reason.TIMEOUT, "CHAT_TIMEOUT", true),
+        Arguments.of(Reason.BUSY, "CHAT_BUSY", true));
   }
 
   private ChatCommand command(String message) {

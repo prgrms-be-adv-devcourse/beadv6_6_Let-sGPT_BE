@@ -84,7 +84,7 @@ public class ChatStreamMetrics {
       if ("CHAT_BUSY".equals(errorCode)) {
         return TerminalOutcome.BUSY;
       }
-      if ("CHAT_TIMEOUT".equals(errorCode) || "CHAT_FIRST_TOKEN_TIMEOUT".equals(errorCode)) {
+      if ("CHAT_TIMEOUT".equals(errorCode)) {
         return TerminalOutcome.TIMEOUT;
       }
       return TerminalOutcome.ERROR;
@@ -97,11 +97,11 @@ public class ChatStreamMetrics {
       if (errorCode != null && errorCode.startsWith("CHAT_INFERENCE")) {
         return ErrorReason.INFERENCE;
       }
-      if ("CHAT_EMPTY_RESPONSE".equals(errorCode)) {
-        return ErrorReason.EMPTY_RESPONSE;
+      if ("CHAT_SELECTION_FAILED".equals(errorCode)) {
+        return ErrorReason.SELECTION;
       }
-      if ("CHAT_REQUEST_REJECTED".equals(errorCode)) {
-        return ErrorReason.REQUEST_REJECTED;
+      if ("CHAT_INPUT_BUDGET_EXCEEDED".equals(errorCode)) {
+        return ErrorReason.INPUT_BUDGET;
       }
       return ErrorReason.OTHER;
     }
@@ -123,8 +123,8 @@ public class ChatStreamMetrics {
   private enum ErrorReason {
     SECURITY_POLICY("security_policy"),
     INFERENCE("inference"),
-    EMPTY_RESPONSE("empty_response"),
-    REQUEST_REJECTED("request_rejected"),
+    SELECTION("selection"),
+    INPUT_BUDGET("input_budget"),
     OTHER("other");
 
     private final String tagValue;

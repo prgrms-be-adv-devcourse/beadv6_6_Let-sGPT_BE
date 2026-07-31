@@ -31,24 +31,33 @@ public interface AdminChatInferencePort {
       Consumer<String> chunkConsumer,
       ChatRequestDeadline deadline);
 
-  record RoutingResponse(String content, List<ToolInvocation> toolInvocations) {
+  record RoutingResponse(
+      String content, List<ToolInvocation> toolInvocations, String finishReason) {
 
     public RoutingResponse {
       content = content == null ? "" : content;
       toolInvocations = toolInvocations == null ? List.of() : List.copyOf(toolInvocations);
+      finishReason = finishReason == null ? "" : finishReason;
     }
 
     public boolean hasTools() {
       return !toolInvocations.isEmpty();
     }
+
+    public boolean hasCompletedAnswer() {
+      return "stop".equalsIgnoreCase(finishReason);
+    }
   }
 
   record ToolInvocation(String callId, String name, String arguments) {}
 
-  record BindingResponse(String earlyAnswer, List<QueryBinding> bindings) {
+  record BindingResponse(
+      String earlyAnswer, Set<String> deliveredEvidenceIds, List<QueryBinding> bindings) {
 
     public BindingResponse {
       earlyAnswer = earlyAnswer == null ? "" : earlyAnswer.strip();
+      deliveredEvidenceIds =
+          deliveredEvidenceIds == null ? Set.of() : Set.copyOf(deliveredEvidenceIds);
       bindings = bindings == null ? List.of() : List.copyOf(bindings);
     }
   }

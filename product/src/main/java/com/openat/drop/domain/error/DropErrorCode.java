@@ -15,7 +15,19 @@ public enum DropErrorCode implements ErrorCode {
   SOLD_OUT(HttpStatus.CONFLICT, "DROP_SOLD_OUT", "재고가 없습니다."),
   LIMIT_EXCEEDED(HttpStatus.BAD_REQUEST, "DROP_LIMIT_EXCEEDED", "1인 구매 한도를 초과했습니다."),
   CLOSED(HttpStatus.CONFLICT, "DROP_CLOSED", "종료된 드롭입니다."),
-  NOT_CACHED(HttpStatus.CONFLICT, "DROP_NOT_CACHED", "현재 활성화되지 않은 드롭입니다.");
+  NOT_CACHED(HttpStatus.CONFLICT, "DROP_NOT_CACHED", "현재 활성화되지 않은 드롭입니다."),
+  STOCK_CHANGE_IN_PROGRESS(
+      HttpStatus.SERVICE_UNAVAILABLE,
+      "DROP_STOCK_CHANGE_IN_PROGRESS",
+      "재고 변경을 처리하고 있습니다. 잠시 후 다시 시도해주세요."),
+  STOCK_REQUEST_MISMATCH(
+      HttpStatus.CONFLICT,
+      "DROP_STOCK_REQUEST_MISMATCH",
+      "이미 처리된 재고 변경 요청과 요청 정보가 일치하지 않습니다."),
+  ROLLBACK_NOT_ALLOWED(
+      HttpStatus.CONFLICT,
+      "DROP_ROLLBACK_NOT_ALLOWED",
+      "일치하는 재고 차감 이력이 없어 롤백할 수 없습니다.");
 
   private final HttpStatus httpStatus;
   private final String code;

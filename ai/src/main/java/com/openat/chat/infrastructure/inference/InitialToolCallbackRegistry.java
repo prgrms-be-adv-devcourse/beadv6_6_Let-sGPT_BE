@@ -3,10 +3,13 @@ package com.openat.chat.infrastructure.inference;
 import com.openat.chat.application.dto.ChatCommand;
 import com.openat.chat.application.dto.ChatRequestDeadline;
 import com.openat.chat.application.dto.EvidenceSegment;
+import com.openat.chat.application.exception.AdminChatExecutionException;
+import com.openat.chat.application.exception.AdminChatExecutionException.Reason;
 import com.openat.chat.application.port.AdminChatInferencePort.ToolInvocation;
 import com.openat.chat.application.port.AdminInitialToolPort;
 import com.openat.chat.application.port.ChatEventSink;
 import com.openat.chat.domain.query.InternalDataDomain;
+import com.openat.chat.infrastructure.inference.ChatInferenceMetrics.EvidenceStage;
 import com.openat.chat.infrastructure.inference.tool.AdminDataTools;
 import com.openat.chat.infrastructure.inference.tool.AdminToolExecutionContext;
 import com.openat.chat.infrastructure.inference.tool.CryptoPriceTools;
@@ -22,9 +25,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.springframework.ai.chat.model.ToolContext;
@@ -44,6 +50,7 @@ public class InitialToolCallbackRegistry implements AdminInitialToolPort {
   private final ObjectMapper objectMapper;
   private final ExecutorService taskExecutor;
   private final ChatInferenceProperties properties;
+  private final ChatInferenceMetrics metrics;
 
   public InitialToolCallbackRegistry(
       AdminDataTools adminDataTools,
@@ -53,7 +60,8 @@ public class InitialToolCallbackRegistry implements AdminInitialToolPort {
       WebSearchTools webSearchTools,
       ObjectMapper objectMapper,
       @Qualifier("chatTaskExecutor") ExecutorService taskExecutor,
-      ChatInferenceProperties properties) {
+      ChatInferenceProperties properties,
+      ChatInferenceMetrics metrics) {
     Map<String, ToolCallback> registered = new LinkedHashMap<>();
     Arrays.stream(
             ToolCallbacks.from(
@@ -67,6 +75,7 @@ public class InitialToolCallbackRegistry implements AdminInitialToolPort {
     this.objectMapper = objectMapper;
     this.taskExecutor = taskExecutor;
     this.properties = properties;
+    this.metrics = metrics;
   }
 
   @Override
@@ -76,8 +85,8 @@ public class InitialToolCallbackRegistry implements AdminInitialToolPort {
       ChatEventSink sink,
       ChatRequestDeadline deadline) {
     Set<InternalDataDomain> domains = EnumSet.noneOf(InternalDataDomain.class);
-    List<EvidenceSegment> evidence = new ArrayList<>();
-    List<IndexedFuture> futures = new ArrayList<>();
+    List<IndexedEvidence> evidence = new ArrayList<>();
+    List<IndexedInvocation> toolInvocations = new ArrayList<>();
     boolean selectionRequested = false;
     boolean selectionFailed = false;
 
@@ -95,20 +104,26 @@ public class InitialToolCallbackRegistry implements AdminInitialToolPort {
         domains.addAll(selection.domains());
         if (selection.failed()) {
           selectionFailed = true;
-          evidence.add(failure(segmentId, "INTERNAL_SCHEMA_SELECTION", "내부 데이터 영역을 구조화하지 못했어요."));
+          evidence.add(
+              new IndexedEvidence(
+                  index,
+                  failure(
+                      segmentId, "INTERNAL_SCHEMA_SELECTION", "내부 데이터 영역을 구조화하지 못했어요.")));
         }
         continue;
       }
 
-      Future<EvidenceSegment> future =
-          taskExecutor.submit(() -> executeOne(segmentId, invocation, toolContext));
-      futures.add(new IndexedFuture(index, future));
+      toolInvocations.add(new IndexedInvocation(index, segmentId, invocation));
     }
 
-    futures.sort(java.util.Comparator.comparingInt(IndexedFuture::index));
-    evidence.addAll(await(futures, deadline));
+    evidence.addAll(executeAll(toolInvocations, toolContext, deadline));
+    evidence.sort(java.util.Comparator.comparingInt(IndexedEvidence::index));
+    List<EvidenceSegment> stableEvidence =
+        evidence.stream().map(IndexedEvidence::evidence).toList();
+    metrics.recordSelection(invocations.size(), domains.size());
+    metrics.recordEvidence(EvidenceStage.INITIAL_TOOL, stableEvidence);
     return new InitialToolResult(
-        Set.copyOf(domains), List.copyOf(evidence), selectionRequested, selectionFailed);
+        Set.copyOf(domains), stableEvidence, selectionRequested, selectionFailed);
   }
 
   private EvidenceSegment executeOne(
@@ -171,29 +186,81 @@ public class InitialToolCallbackRegistry implements AdminInitialToolPort {
     }
   }
 
-  private List<EvidenceSegment> await(List<IndexedFuture> futures, ChatRequestDeadline deadline) {
-    List<EvidenceSegment> results = new ArrayList<>();
+  private List<IndexedEvidence> executeAll(
+      List<IndexedInvocation> invocations,
+      ToolContext toolContext,
+      ChatRequestDeadline deadline) {
+    if (invocations.isEmpty()) {
+      return List.of();
+    }
+    StageBudget budget = stageBudget(deadline);
+    List<Callable<EvidenceSegment>> tasks =
+        invocations.stream()
+            .<Callable<EvidenceSegment>>map(
+                indexed ->
+                    () ->
+                        executeOne(indexed.segmentId(), indexed.invocation(), toolContext))
+            .toList();
+    List<Future<EvidenceSegment>> futures;
     try {
-      for (IndexedFuture indexed : futures) {
-        Duration timeout = deadline.boundedBy(properties.getStageTimeout());
-        results.add(indexed.future().get(timeout.toMillis(), TimeUnit.MILLISECONDS));
-      }
-      return results;
+      futures =
+          taskExecutor.invokeAll(tasks, budget.timeout().toNanos(), TimeUnit.NANOSECONDS);
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
-      cancel(futures);
-      throw new IllegalStateException("가벼운 도구 실행이 취소됐어요.", exception);
-    } catch (ExecutionException exception) {
-      cancel(futures);
-      throw new IllegalStateException("가벼운 도구 실행을 완료하지 못했어요.", exception.getCause());
-    } catch (TimeoutException exception) {
-      cancel(futures);
-      throw new IllegalStateException("가벼운 도구 실행 시간이 초과됐어요.", exception);
+      throw new AdminChatExecutionException(
+          Reason.CANCELLED, "가벼운 도구 실행이 취소됐어요.", exception);
+    } catch (RejectedExecutionException exception) {
+      throw new AdminChatExecutionException(
+          Reason.BUSY, "가벼운 도구 실행기가 포화됐어요.", exception);
     }
+
+    boolean timedOut = futures.stream().anyMatch(Future::isCancelled);
+    if (timedOut && budget.requestDeadlineBound()) {
+      throw new AdminChatExecutionException(
+          Reason.TIMEOUT, "가벼운 도구 실행 중 요청 기한이 지났어요.");
+    }
+
+    List<IndexedEvidence> results = new ArrayList<>();
+    for (int index = 0; index < futures.size(); index++) {
+      IndexedInvocation invocation = invocations.get(index);
+      try {
+        results.add(new IndexedEvidence(invocation.index(), futures.get(index).get()));
+      } catch (CancellationException exception) {
+        results.add(
+            new IndexedEvidence(
+                invocation.index(),
+                failure(
+                    invocation.segmentId(),
+                    invocation.invocation().name(),
+                    "가벼운 도구 실행 시간이 초과됐어요.")));
+      } catch (ExecutionException exception) {
+        results.add(
+            new IndexedEvidence(
+                invocation.index(),
+                failure(
+                    invocation.segmentId(),
+                    invocation.invocation().name(),
+                    "가벼운 도구 실행을 완료하지 못했어요.")));
+      } catch (InterruptedException exception) {
+        Thread.currentThread().interrupt();
+        throw new AdminChatExecutionException(
+            Reason.CANCELLED, "가벼운 도구 결과 수집이 취소됐어요.", exception);
+      }
+    }
+    return List.copyOf(results);
   }
 
-  private void cancel(List<IndexedFuture> futures) {
-    futures.forEach(indexed -> indexed.future().cancel(true));
+  private StageBudget stageBudget(ChatRequestDeadline deadline) {
+    try {
+      Duration remaining = deadline.remaining();
+      Duration stageTimeout = properties.getStageTimeout();
+      return new StageBudget(
+          remaining.compareTo(stageTimeout) <= 0 ? remaining : stageTimeout,
+          remaining.compareTo(stageTimeout) <= 0);
+    } catch (TimeoutException exception) {
+      throw new AdminChatExecutionException(
+          Reason.TIMEOUT, "가벼운 도구 실행 전 요청 기한이 지났어요.", exception);
+    }
   }
 
   private EvidenceSegment failure(String id, String scope, String reason) {
@@ -238,5 +305,9 @@ public class InitialToolCallbackRegistry implements AdminInitialToolPort {
 
   private record Selection(Set<InternalDataDomain> domains, boolean failed) {}
 
-  private record IndexedFuture(int index, Future<EvidenceSegment> future) {}
+  private record IndexedInvocation(int index, String segmentId, ToolInvocation invocation) {}
+
+  private record IndexedEvidence(int index, EvidenceSegment evidence) {}
+
+  private record StageBudget(Duration timeout, boolean requestDeadlineBound) {}
 }
