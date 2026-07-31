@@ -1,6 +1,5 @@
 package com.openat.member.infrastructure.scheduler;
 
-import com.openat.member.domain.model.Member;
 import com.openat.member.domain.repository.MemberRepository;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -14,12 +13,15 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>이 로직을 {@link MemberAnonymizeScheduler}의 메서드로 두고 스케줄러가 자기 자신을
  * ({@code this.anonymize(...)}) 호출하면, Spring의 {@code @Transactional}은 AOP 프록시를
  * 거쳐야만 적용되는데 self-invocation은 프록시를 우회해 트랜잭션이 전혀 시작되지 않는다.
- * 그 결과 repository 조회 자체는 되지만(조회 메서드 자체의 짧은 트랜잭션), 그 트랜잭션이
- * 끝나는 즉시 엔티티가 detached 상태가 되어 이후의 {@code member.anonymize()} 필드 변경이
- * dirty checking으로 저장되지 않는다 — 즉 조용히 아무 것도 커밋되지 않는다.
- *
- * <p>별도 빈으로 분리해 스케줄러가 주입받은 프록시를 통해 호출하게 하면 이 문제가 사라진다
+ * 별도 빈으로 분리해 스케줄러가 주입받은 프록시를 통해 호출하게 하면 이 문제가 사라진다
  * (order/payment의 outbox 발행기가 스케줄러와 분리된 것과 동일한 이유).
+ *
+ * <p>실제 갱신은 엔티티를 조회해 메모리에서 바꾸고 저장하는 방식이 아니라
+ * {@link MemberRepository#anonymizeIfEligible}의 원자적 조건부 UPDATE로 한다. 이 회원 행은
+ * 로그인 복구({@code MemberService.restore()})도 동시에 건드릴 수 있는데, "조회 후 판단해서
+ * 저장"하는 방식이면 둘 중 나중에 커밋되는 쪽이 먼저 커밋된 상대 변경을 덮어쓰는
+ * lost-update가 생긴다. 원자적 UPDATE는 그 순간의 DB 실제 상태를 직접 재검증하므로
+ * 이 문제가 없다(둘 중 하나만 반영되고, 나머지는 조용히 0건으로 스킵됨).
  */
 @Component
 @RequiredArgsConstructor
@@ -27,18 +29,10 @@ public class MemberAnonymizeService {
 
     private final MemberRepository memberRepository;
 
-    /**
-     * @return 실제로 익명화됐으면 true. 배치 조회 시점과 이 트랜잭션이 실제로 실행되는 시점
-     *     사이에 상태가 바뀌었을 수 있어(예: 그 사이 복구 후 재탈퇴로 deletedAt이 갱신됨),
-     *     원래 배치 조회 조건(deletedAt &lt;= cutoff, 아직 미익명화)을 여기서 다시 검증한다.
-     */
+    /** @return 실제로 익명화됐으면 true, 조건에 안 맞아(이미 복구됨 등) 스킵됐으면 false. */
     @Transactional
     public boolean anonymize(UUID memberId, LocalDateTime cutoff) {
-        Member member = memberRepository.findByIdIncludingDeleted(memberId).orElse(null);
-        if (member == null || !member.isEligibleForAnonymization(cutoff)) {
-            return false;
-        }
-        member.anonymize();
-        return true;
+        int updated = memberRepository.anonymizeIfEligible(memberId, cutoff, LocalDateTime.now());
+        return updated > 0;
     }
 }
