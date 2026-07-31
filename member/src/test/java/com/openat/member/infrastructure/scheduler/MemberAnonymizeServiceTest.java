@@ -1,107 +1,65 @@
 package com.openat.member.infrastructure.scheduler;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.openat.member.domain.model.Member;
-import com.openat.member.domain.model.PlatformType;
 import com.openat.member.domain.repository.MemberRepository;
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
+/**
+ * 실제 조건 검증(deletedAt &lt;= cutoff, anonymizedAt IS NULL)과 email/nickname 치환은
+ * {@code MemberJpaRepository.anonymizeIfEligible}의 원자적 native UPDATE가 SQL로 직접
+ * 수행하므로(엔티티를 조회해 메모리에서 바꾸는 방식이 아님), 이 단위 테스트는 "리포지토리
+ * 호출 위임 + 갱신 건수를 boolean으로 변환"만 검증한다. SQL 자체의 정확성(치환 값, 조건
+ * 재검증, 동시성 안전성)은 {@link MemberAnonymizeIntegrationTest}가 실제 Postgres로 검증한다.
+ */
 class MemberAnonymizeServiceTest {
 
     private final MemberRepository memberRepository = mock(MemberRepository.class);
     private final MemberAnonymizeService service = new MemberAnonymizeService(memberRepository);
 
     @Test
-    @DisplayName("유예기간이 지난 대로면 email/nickname을 memberId 기반으로 익명화하고 true를 반환한다")
-    void anonymize_whenEligible_replacesFieldsAndReturnsTrue() {
+    @DisplayName("리포지토리가 1건 갱신했다고 응답하면 true를 반환한다")
+    void anonymize_whenRepositoryUpdatesOneRow_returnsTrue() {
+        UUID memberId = UUID.randomUUID();
         LocalDateTime cutoff = LocalDateTime.now();
-        Member member = withdrawnMember("a@b.com", "nick", cutoff.minusDays(1));
-        when(memberRepository.findByIdIncludingDeleted(member.getId())).thenReturn(Optional.of(member));
+        when(memberRepository.anonymizeIfEligible(eq(memberId), eq(cutoff), any(LocalDateTime.class)))
+                .thenReturn(1);
 
-        boolean result = service.anonymize(member.getId(), cutoff);
+        boolean result = service.anonymize(memberId, cutoff);
 
         assertThat(result).isTrue();
-        assertThat(member.getEmail()).isEqualTo("deleted_" + member.getId() + "_a@b.com");
-        assertThat(member.getNickname()).isEqualTo("deleted_" + member.getId());
-        assertThat(member.getAnonymizedAt()).isNotNull();
-        assertThat(member.isDeleted()).isTrue(); // deletedAt 자체는 유지 — 물리 삭제가 아니다.
     }
 
     @Test
-    @DisplayName("그 사이 유예기간 중 복구된 회원은 건드리지 않는다")
-    void anonymize_whenRestoredMeanwhile_doesNothingAndReturnsFalse() {
-        LocalDateTime cutoff = LocalDateTime.now();
-        Member member = withdrawnMember("a@b.com", "nick", cutoff.minusDays(1));
-        member.restore();
-        when(memberRepository.findByIdIncludingDeleted(member.getId())).thenReturn(Optional.of(member));
-
-        boolean result = service.anonymize(member.getId(), cutoff);
-
-        assertThat(result).isFalse();
-        assertThat(member.getEmail()).isEqualTo("a@b.com");
-        assertThat(member.getAnonymizedAt()).isNull();
-    }
-
-    @Test
-    @DisplayName("배치 조회 이후 재탈퇴로 deletedAt이 cutoff보다 뒤로 갱신됐으면 건드리지 않는다"
-            + " (isDeleted()만 보면 놓치는 레이스 — 조건 전체를 재검증해야 함)")
-    void anonymize_whenRewithdrawnAfterCutoff_doesNothingAndReturnsFalse() {
-        LocalDateTime cutoff = LocalDateTime.now();
-        // 배치 조회 시점엔 유예기간이 지난 상태였지만, 이 트랜잭션이 실제로 도는 사이
-        // 복구 후 재탈퇴가 일어나 deletedAt이 cutoff 이후 시각으로 갱신된 상황을 흉내낸다.
-        Member member = withdrawnMember("a@b.com", "nick", cutoff.plus(1, ChronoUnit.MINUTES));
-        when(memberRepository.findByIdIncludingDeleted(member.getId())).thenReturn(Optional.of(member));
-
-        boolean result = service.anonymize(member.getId(), cutoff);
-
-        assertThat(result).isFalse();
-        assertThat(member.getEmail()).isEqualTo("a@b.com");
-    }
-
-    @Test
-    @DisplayName("이미 익명화된 회원은 다시 건드리지 않는다(멱등)")
-    void anonymize_whenAlreadyAnonymized_doesNothingAndReturnsFalse() {
-        LocalDateTime cutoff = LocalDateTime.now();
-        Member member = withdrawnMember("a@b.com", "nick", cutoff.minusDays(1));
-        member.anonymize();
-        String anonymizedEmail = member.getEmail();
-        when(memberRepository.findByIdIncludingDeleted(member.getId())).thenReturn(Optional.of(member));
-
-        boolean result = service.anonymize(member.getId(), cutoff);
-
-        assertThat(result).isFalse();
-        assertThat(member.getEmail()).isEqualTo(anonymizedEmail); // 두 번째 익명화로 값이 또 바뀌지 않음
-    }
-
-    @Test
-    @DisplayName("조회 자체가 안 되면(이미 삭제 등) false를 반환한다")
-    void anonymize_whenMemberNotFound_returnsFalse() {
+    @DisplayName("리포지토리가 0건 갱신했다고 응답하면(조건 불일치) false를 반환한다")
+    void anonymize_whenRepositoryUpdatesNoRow_returnsFalse() {
         UUID memberId = UUID.randomUUID();
-        when(memberRepository.findByIdIncludingDeleted(memberId)).thenReturn(Optional.empty());
+        LocalDateTime cutoff = LocalDateTime.now();
+        when(memberRepository.anonymizeIfEligible(eq(memberId), eq(cutoff), any(LocalDateTime.class)))
+                .thenReturn(0);
 
-        boolean result = service.anonymize(memberId, LocalDateTime.now());
+        boolean result = service.anonymize(memberId, cutoff);
 
         assertThat(result).isFalse();
     }
 
-    private Member withdrawnMember(String email, String nickname, LocalDateTime deletedAt) {
-        Member member = Member.builder()
-                .platformType(PlatformType.LOCAL)
-                .email(email)
-                .password("encoded")
-                .nickname(nickname)
-                .build();
-        ReflectionTestUtils.setField(member, "id", UUID.randomUUID());
-        ReflectionTestUtils.setField(member, "deletedAt", deletedAt);
-        return member;
+    @Test
+    @DisplayName("전달받은 cutoff를 그대로 조건부 UPDATE에 넘긴다")
+    void anonymize_passesGivenCutoffToRepository() {
+        UUID memberId = UUID.randomUUID();
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(30);
+        when(memberRepository.anonymizeIfEligible(any(), any(), any())).thenReturn(1);
+
+        service.anonymize(memberId, cutoff);
+
+        verify(memberRepository).anonymizeIfEligible(eq(memberId), eq(cutoff), any(LocalDateTime.class));
     }
 }

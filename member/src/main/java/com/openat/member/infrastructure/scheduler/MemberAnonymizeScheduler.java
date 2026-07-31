@@ -40,9 +40,11 @@ import org.springframework.stereotype.Component;
 public class MemberAnonymizeScheduler {
 
     private static final int BATCH_SIZE = 100;
-    // 한 번 실행에서 반복할 최대 배치 수(=최대 10,000건/실행) — 정상적인 배치 진행 상황에서의
-    // 상한. 연속 무진전 서킷브레이커(아래)가 병리적 상황은 훨씬 일찍 끊는다.
-    private static final int MAX_BATCH_ITERATIONS = 100;
+    // 한 번 실행에서 반복할 최대 배치 수. 병리적 상황(같은 대상이 계속 실패)은 이 값이 아니라
+    // 연속 무진전 서킷브레이커(아래)가 훨씬 일찍(3회 만에) 끊으므로, 여기는 정상적으로 진전하는
+    // 배치까지 조기 절단하지 않도록 넉넉하게 잡는다(최대 1,000,000건/실행 — 이 정도 규모의
+    // 일일 탈퇴량은 사실상 상정하지 않지만, 그래도 무한 루프에 대한 최종 안전장치로 남겨둔다).
+    private static final int MAX_BATCH_ITERATIONS = 10_000;
     // 이 횟수만큼 연속으로 "조회는 됐는데 한 건도 익명화하지 못한" 배치가 나오면 중단한다.
     private static final int MAX_CONSECUTIVE_NO_PROGRESS = 3;
 

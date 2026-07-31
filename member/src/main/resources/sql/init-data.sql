@@ -12,16 +12,13 @@ INSERT INTO member.role (role) VALUES ('ROLE_ADMIN')  ON CONFLICT (role) DO NOTH
 --   email    : admin@test.com
 --   password : admin1234
 -- =============================================================================
--- version: Member에 낙관적 락(@Version)을 추가하면서 컬럼이 NOT NULL이 됐다. Hibernate가
--- 관리하는 정상 INSERT는 자동으로 0을 채우지만, 이 시드처럼 raw SQL로 직접 넣는 행은 명시해야 한다.
-INSERT INTO member.member (id, email, password, nickname, platform_type, version, created_at, updated_at)
+INSERT INTO member.member (id, email, password, nickname, platform_type, created_at, updated_at)
 VALUES (
     '00000000-0000-7000-8000-000000000001',
     'admin@test.com',
     '$2a$10$KDnPKcU1E4yQQHgFLISooOX2tVUwM2pM8NXwpaALb/Fbb1bfKWc/G',
     'admin',
     'LOCAL',
-    0,
     CURRENT_TIMESTAMP,
     CURRENT_TIMESTAMP
 )
@@ -44,17 +41,17 @@ WHERE r.role = 'ROLE_ADMIN'
 --   password : 12341234
 -- =============================================================================
 
-INSERT INTO member.member (id, email, password, nickname, platform_type, version, created_at, updated_at)
-VALUES ('00000000-0000-0000-0000-000000000001','test1@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트1', 'LOCAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       ('00000000-0000-0000-0000-000000000002','test2@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트2', 'LOCAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       ('00000000-0000-0000-0000-000000000003','test3@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트3', 'LOCAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       ('00000000-0000-0000-0000-000000000004','test4@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트4', 'LOCAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       ('00000000-0000-0000-0000-000000000005','test5@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트5', 'LOCAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       ('00000000-0000-0000-0000-000000000006','test6@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트6', 'LOCAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       ('00000000-0000-0000-0000-000000000007','test7@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트7', 'LOCAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       ('00000000-0000-0000-0000-000000000008','test8@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트8', 'LOCAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       ('00000000-0000-0000-0000-000000000009','test9@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트9', 'LOCAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       ('00000000-0000-0000-0000-000000000010','test10@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트10', 'LOCAL', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+INSERT INTO member.member (id, email, password, nickname, platform_type, created_at, updated_at)
+VALUES ('00000000-0000-0000-0000-000000000001','test1@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트1', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       ('00000000-0000-0000-0000-000000000002','test2@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트2', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       ('00000000-0000-0000-0000-000000000003','test3@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트3', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       ('00000000-0000-0000-0000-000000000004','test4@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트4', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       ('00000000-0000-0000-0000-000000000005','test5@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트5', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       ('00000000-0000-0000-0000-000000000006','test6@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트6', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       ('00000000-0000-0000-0000-000000000007','test7@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트7', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       ('00000000-0000-0000-0000-000000000008','test8@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트8', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       ('00000000-0000-0000-0000-000000000009','test9@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트9', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       ('00000000-0000-0000-0000-000000000010','test10@test.com','$2a$10$qpCNOAOzhVdFCPfzyNY2Uud12qbx/KW9/amy/mG.ZCrnc1Uf8DHpu','테스트10', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT (id) DO NOTHING;
 
 -- test1~10에 ROLE_USER 부여 (없으면 로그인 시 MemberService.getCurrentRole()이 role_history를

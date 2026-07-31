@@ -16,7 +16,6 @@ public enum CommonErrorCode implements ErrorCode {
     INVALID_INPUT(HttpStatus.BAD_REQUEST, "INVALID_INPUT", "잘못된 요청입니다."),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "지원하지 않는 HTTP 메서드입니다."),
     NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "요청한 리소스를 찾을 수 없습니다."),
-    CONFLICT(HttpStatus.CONFLICT, "CONFLICT", "다른 요청과 충돌했습니다. 잠시 후 다시 시도해주세요."),
     UNAUTHENTICATED(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED", "인증 정보가 없습니다."),
     FORBIDDEN(HttpStatus.FORBIDDEN, "FORBIDDEN", "접근 권한이 없습니다."),
     BAD_GATEWAY(HttpStatus.BAD_GATEWAY, "BAD_GATEWAY", "연결하려는 서비스에 문제가 생겼습니다."),
