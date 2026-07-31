@@ -45,7 +45,7 @@ drop:
 product:
   search-projection-refresh:
     batch-size: 100
-    fixed-delay-ms: 1000
+    fixed-delay-ms: 5000
   outbox:
     relay:
       batch-size: 100

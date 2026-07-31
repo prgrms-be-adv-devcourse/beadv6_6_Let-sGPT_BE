@@ -22,7 +22,6 @@ public interface ProductJpaRepository extends JpaRepository<Product, UUID> {
       """
       select product
         from Product product
-        left join fetch product.category
        where product.id in :ids
        order by product.id
       """)

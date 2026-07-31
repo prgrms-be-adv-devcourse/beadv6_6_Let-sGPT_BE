@@ -136,7 +136,7 @@ com.openat
 
 ## 10. 설정 / 시드
 - `application.yml`: `default_schema=product`, `ddl-auto=update`(콜드부팅 재고 이력 복구를 검증하려면 부팅 간 원장이 보존돼야 해 `create`→`update` 전환), `defer-datasource-initialization=true` + `sql.init.mode=always`.
-- 검색 투영 갱신 대상 처리는 `batch-size`, `fixed-delay-ms`를 설정하고, 상품 변경 outbox relay는 `batch-size`, `fixed-delay-ms`, `claim-timeout`, `send-timeout`을 설정한다. 두 스케줄러 모두 `ProductApplication`의 `@EnableScheduling`으로 기동하며 batch·timeout은 양수만 허용한다.
+- 검색 투영 갱신 대상 처리는 `batch-size`, `fixed-delay-ms`를 설정하며, 기본 생산률은 일반 상품 변경 여유를 남기도록 outbox relay의 기본 처리율보다 낮게 둔다. 상품 변경 outbox relay는 `batch-size`, `fixed-delay-ms`, `claim-timeout`, `send-timeout`을 설정한다. 두 스케줄러 모두 `ProductApplication`의 `@EnableScheduling`으로 기동하며 batch·timeout은 양수만 허용한다.
 - `data.sql`: `categories` 시드(의류·액세서리·문구·전자기기·피규어·기타), `ON CONFLICT (name) DO NOTHING`.
 - **데모 시드(`support.seed.SeedDataRunner`)**: `local`/`dev`/`compose` 프로필에서
   `app.seed.enabled=true`일 때만 실행하는 `ApplicationRunner`(`@Order(0)`, 부트스트랩보다

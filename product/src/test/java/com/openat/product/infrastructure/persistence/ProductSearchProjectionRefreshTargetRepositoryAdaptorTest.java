@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.openat.category.domain.model.Category;
+import com.openat.config.QueryDslConfig;
 import com.openat.product.domain.model.Product;
+import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.domain.repository.ProductSearchProjectionRefreshTargetRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -37,7 +39,11 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
-@Import(ProductSearchProjectionRefreshTargetRepositoryAdaptor.class)
+@Import({
+  ProductSearchProjectionRefreshTargetRepositoryAdaptor.class,
+  ProductRepositoryAdaptor.class,
+  QueryDslConfig.class
+})
 @TestPropertySource(
     properties = {
       "spring.jpa.properties.hibernate.hbm2ddl.create_namespaces=true",
@@ -54,6 +60,7 @@ class ProductSearchProjectionRefreshTargetRepositoryAdaptorTest {
   @Autowired
   private ProductSearchProjectionRefreshTargetRepository repository;
 
+  @Autowired private ProductRepository productRepository;
   @Autowired private PlatformTransactionManager transactionManager;
   @PersistenceContext private EntityManager entityManager;
 
@@ -256,6 +263,118 @@ class ProductSearchProjectionRefreshTargetRepositoryAdaptorTest {
     }
   }
 
+  @Test
+  @DisplayName("판매자와 카테고리 변경이 동시에 적재돼도 같은 상품을 순서대로 갱신한다")
+  void enqueueBySellerAndCategory_concurrently_completesWithoutDeadlock()
+      throws Exception {
+    CategorySellerTarget target =
+        inTransaction(
+            () -> {
+              Category category = Category.create().name("동시 적재 대상").build();
+              entityManager.persist(category);
+              Product first =
+                  persistProduct(
+                      UUID.randomUUID(), category, "첫 동시 적재 상품");
+              UUID sellerId = first.getSellerId();
+              Product second =
+                  persistProduct(sellerId, category, "둘째 동시 적재 상품");
+              entityManager.flush();
+              repository.enqueueBySellerId(sellerId);
+              return new CategorySellerTarget(
+                  sellerId,
+                  category.getId(),
+                  List.of(first.getId(), second.getId()));
+            });
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<Integer> sellerEnqueue =
+          executor.submit(
+              () -> {
+                ready.countDown();
+                await(start);
+                return inTransaction(
+                    () -> repository.enqueueBySellerId(target.sellerId()));
+              });
+      Future<Integer> categoryEnqueue =
+          executor.submit(
+              () -> {
+                ready.countDown();
+                await(start);
+                return inTransaction(
+                    () -> repository.enqueueByCategoryId(target.categoryId()));
+              });
+      assertThat(ready.await(1, TimeUnit.SECONDS)).isTrue();
+
+      start.countDown();
+
+      assertThat(sellerEnqueue.get(2, TimeUnit.SECONDS)).isEqualTo(2);
+      assertThat(categoryEnqueue.get(2, TimeUnit.SECONDS)).isEqualTo(2);
+      List<UUID> claimed =
+          inTransaction(() -> repository.findNextProductIdsForUpdate(10));
+      assertThat(claimed).containsExactlyInAnyOrderElementsOf(target.productIds());
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  @DisplayName("상품 삭제가 진행 중이면 잠금 대기 뒤 삭제된 상품을 갱신 대상에서 제외한다")
+  void findProductsForUpdate_deleteInProgress_excludesDeletedProduct()
+      throws Exception {
+    UUID productId =
+        inTransaction(
+            () -> {
+              Product product =
+                  persistProduct(
+                      UUID.randomUUID(), null, "삭제 경합 상품");
+              entityManager.flush();
+              return product.getId();
+            });
+    CountDownLatch deletionFlushed = new CountDownLatch(1);
+    CountDownLatch allowDeleteCommit = new CountDownLatch(1);
+    CountDownLatch lookupStarted = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<?> deleter =
+          executor.submit(
+              () ->
+                  inTransaction(
+                      () -> {
+                        Product product =
+                            entityManager.find(Product.class, productId);
+                        entityManager.remove(product);
+                        entityManager.flush();
+                        deletionFlushed.countDown();
+                        await(allowDeleteCommit);
+                        return null;
+                      }));
+      assertThat(deletionFlushed.await(1, TimeUnit.SECONDS)).isTrue();
+
+      Future<List<Product>> lookup =
+          executor.submit(
+              () -> {
+                lookupStarted.countDown();
+                return inTransaction(
+                    () ->
+                        productRepository.findAllByIdForUpdate(
+                            List.of(productId)));
+              });
+      assertThat(lookupStarted.await(1, TimeUnit.SECONDS)).isTrue();
+      assertThatThrownBy(() -> lookup.get(200, TimeUnit.MILLISECONDS))
+          .isInstanceOf(TimeoutException.class);
+
+      allowDeleteCommit.countDown();
+      deleter.get(1, TimeUnit.SECONDS);
+      assertThat(lookup.get(1, TimeUnit.SECONDS)).isEmpty();
+    } finally {
+      allowDeleteCommit.countDown();
+      executor.shutdownNow();
+    }
+  }
+
   private Product persistProduct(
       UUID sellerId, Category category, String name) {
     Product product =
@@ -286,4 +405,7 @@ class ProductSearchProjectionRefreshTargetRepositoryAdaptorTest {
   }
 
   private record CategoryTarget(UUID productId) {}
+
+  private record CategorySellerTarget(
+      UUID sellerId, UUID categoryId, List<UUID> productIds) {}
 }
