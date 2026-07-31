@@ -12,6 +12,7 @@ import com.openat.product.fixture.ProductFixture;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -115,6 +116,49 @@ class ProductRepositoryAdaptorTest {
     // then
     Product reloaded = entityManager.find(Product.class, productId);
     assertThat(reloaded.getCategory()).isNull();
+  }
+
+  @Test
+  @DisplayName("갱신 대상 id만 순서대로 잠그고 삭제된 상품은 제외한다")
+  void findAllByIdForUpdate_targets_returnsAliveProductsInIdOrder() {
+    // given
+    UUID sellerId = UUID.randomUUID();
+    Product first =
+        productRepository.save(
+            Product.create()
+                .sellerId(sellerId)
+                .name("첫 상품")
+                .price(10_000L)
+                .build());
+    Product second =
+        productRepository.save(
+            Product.create()
+                .sellerId(sellerId)
+                .name("둘째 상품")
+                .price(20_000L)
+                .build());
+    Product deleted =
+        productRepository.save(
+            Product.create()
+                .sellerId(sellerId)
+                .name("삭제 상품")
+                .price(30_000L)
+                .build());
+    entityManager.flush();
+    productRepository.delete(deleted);
+    entityManager.flush();
+    entityManager.clear();
+
+    // when
+    List<Product> found =
+        productRepository.findAllByIdForUpdate(
+            List.of(second.getId(), deleted.getId(), first.getId()));
+
+    // then
+    List<UUID> foundIds = found.stream().map(Product::getId).toList();
+    assertThat(foundIds)
+        .containsExactlyInAnyOrder(first.getId(), second.getId())
+        .isSortedAccordingTo(Comparator.comparing(UUID::toString));
   }
 
   @Test

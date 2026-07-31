@@ -27,6 +27,7 @@
 | 컨트롤러·웹 | 슬라이스 | `@WebMvcTest` + **MockMvc** | `CategoryControllerTest` |
 | 재고·동시성 | 통합/동시성 | Testcontainers(Redis) + `ExecutorService` | `DropCacheRedisAdaptorTest` |
 | DB 참조 잠금 | 슬라이스/동시성 | `@DataJpaTest` + Testcontainers(PostgreSQL) + `ExecutorService` | `PostgresSearchProjectionReferenceLockTest` |
+| 검색 투영 갱신 큐 | 슬라이스/동시성 | `@DataJpaTest` + Testcontainers(PostgreSQL) + `ExecutorService` | `ProductSearchProjectionRefreshTargetRepositoryAdaptorTest` |
 | 부하 | 성능 E2E | **k6** (test 밖, 빌드와 분리) | `loadtest/*.js` |
 
 **네이밍 한 줄**: 메서드명 `메서드_상황_결과`(lowerCamelCase + 언더바 구획) + 한글 `@DisplayName`.

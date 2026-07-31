@@ -130,13 +130,6 @@ public class Product {
     advanceSearchSnapshotSequence();
   }
 
-  public void removeCategory(UUID categoryId) {
-    if (category != null && category.getId().equals(categoryId)) {
-      category = null;
-      advanceSearchSnapshotSequence();
-    }
-  }
-
   public long currentSearchSnapshotSequence() {
     return searchSnapshotSequence == null ? 0L : searchSnapshotSequence;
   }

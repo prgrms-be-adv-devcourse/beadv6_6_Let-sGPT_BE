@@ -3,6 +3,7 @@ package com.openat;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.openat.product.infrastructure.kafka.ProductOutboxRelay;
+import com.openat.product.infrastructure.scheduling.ProductSearchProjectionRefreshScheduler;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,6 +60,10 @@ class ProductApplicationTest {
   @DisplayName("상품 outbox relay와 스케줄링 후처리기가 함께 기동된다")
   void outboxRelaySchedulingEnabled() {
     assertThat(applicationContext.getBean(ProductOutboxRelay.class)).isNotNull();
+    assertThat(
+            applicationContext.getBean(
+                ProductSearchProjectionRefreshScheduler.class))
+        .isNotNull();
     assertThat(applicationContext.getBean(ScheduledAnnotationBeanPostProcessor.class))
         .isNotNull();
   }

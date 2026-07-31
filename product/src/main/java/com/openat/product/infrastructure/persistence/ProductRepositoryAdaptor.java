@@ -11,6 +11,7 @@ import com.querydsl.jpa.impl.JPAQueryFactory;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -44,13 +45,11 @@ public class ProductRepositoryAdaptor implements ProductRepository {
   }
 
   @Override
-  public List<Product> findAllBySellerIdForUpdate(UUID sellerId) {
-    return productJpaRepository.findAllBySellerIdForUpdate(sellerId);
-  }
-
-  @Override
-  public List<Product> findAllByCategoryIdForUpdate(UUID categoryId) {
-    return productJpaRepository.findAllByCategoryIdForUpdate(categoryId);
+  public List<Product> findAllByIdForUpdate(Collection<UUID> ids) {
+    if (ids.isEmpty()) {
+      return List.of();
+    }
+    return productJpaRepository.findAllByIdForUpdate(ids);
   }
 
   @Override

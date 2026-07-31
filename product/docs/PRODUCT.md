@@ -38,9 +38,9 @@ com.openat
 | `category` | 상품 카테고리(참조 데이터) + 존재 판정 |
 
 - **의존 방향은 단방향: `drop → product → category`.** 역참조 금지(순환 차단). FK 방향(`drops.product_id`, `products.category_id`)과 일치.
-- **`SellerStoreProjection`은 seller 서브도메인이 아니라 product가 응답 구성에 사용하는 소비자 전용 로컬 읽기 모델**이다. member의 기존 `seller_registered_events`·`seller_updated_events`에서 `{sellerInfoId, storeName}`만 받아 갱신하고 `SellerInfo.id`를 PK(값 참조)로 둔다. member의 판매자 원본 데이터·활성 상태를 소유하거나 판정하지 않으며, 같은 상점명은 no-op으로 처리한다. 표시명이 실제로 바뀌면 해당 판매자의 상품 검색 스냅샷을 갱신한다. product 조회는 투영 저장소를 한 번의 `IN` 쿼리로 읽고, drop은 `ProductQueryUseCase.findSellerNames()` 포트로만 접근한다. 두 member 토픽에는 공통 순서·버전 계약이 없어 역순 전달의 최종 순서 보장은 외부 계약 보강 전까지 남은 위험이다.
+- **`SellerStoreProjection`은 seller 서브도메인이 아니라 product가 응답 구성에 사용하는 소비자 전용 로컬 읽기 모델**이다. member의 기존 `seller_registered_events`·`seller_updated_events`에서 `{sellerInfoId, storeName}`만 받아 갱신하고 `SellerInfo.id`를 PK(값 참조)로 둔다. member의 판매자 원본 데이터·활성 상태를 소유하거나 판정하지 않으며, 같은 상점명은 no-op으로 처리한다. 표시명이 실제로 바뀌면 해당 판매자의 상품 id를 내구성 있는 검색 투영 갱신 대상에 중복 없이 적재한다. product 조회는 투영 저장소를 한 번의 `IN` 쿼리로 읽고, drop은 `ProductQueryUseCase.findSellerNames()` 포트로만 접근한다. 두 member 토픽에는 공통 순서·버전 계약이 없어 역순 전달의 최종 순서 보장은 외부 계약 보강 전까지 남은 위험이다.
 - **`products.category_id`는 선택 참조(nullable).** 카테고리 없이 상품 등록 가능(미분류), 카테고리 삭제 시 SET NULL로 미분류 전환. (§11 삭제 전략)
-- **검색 표시값 변경과 상품 쓰기는 참조 키 단위의 PostgreSQL transaction advisory read/write lock으로 조정한다.** 상품 생성·수정은 스냅샷을 읽는 shared lock, 판매자 투영·카테고리 변경은 exclusive lock을 사용해 같은 참조의 일반 상품 쓰기끼리는 직렬화하지 않는다. 상품은 항상 `seller → category` 순서로 잠그고, 표시값 변경은 상품 행을 id 오름차순으로 잠근다. 존재하는 행만 `FOR UPDATE`로 조회해서는 막을 수 없는 동시 생성 팬텀을 참조 잠금으로 차단하며 잠금은 커밋과 함께 자동 해제된다. S3 이미지 승격은 사전 소유권·카테고리 검증 뒤 잠금 트랜잭션 밖에서 수행하고, 짧은 쓰기 트랜잭션이 잠금 획득 뒤 소유권·카테고리를 다시 검증해 느린 외부 호출이 참조 변경을 막지 않게 한다.
+- **검색 표시값 변경과 상품 쓰기는 참조 키 단위의 PostgreSQL transaction advisory read/write lock으로 조정한다.** 상품 생성·수정은 스냅샷을 읽는 shared lock, 판매자 투영·카테고리 변경은 exclusive lock을 사용해 같은 참조의 일반 상품 쓰기끼리는 직렬화하지 않는다. 상품은 항상 `seller → category` 순서로 잠근다. 표시값 변경 트랜잭션은 `INSERT ... SELECT ... ON CONFLICT DO UPDATE`로 영향 상품 id만 `product_search_projection_refresh_targets`에 적재하고 전체 상품을 영속성 컨텍스트로 읽거나 잠그지 않는다. 카테고리 삭제도 대상을 먼저 적재한 뒤 FK `ON DELETE SET NULL`에 참조 해제를 맡긴다. 스케줄러는 `FOR UPDATE SKIP LOCKED`로 제한된 대상만 선점하고 상품 행을 id 순서로 잠가 검색 순번과 outbox를 짧은 트랜잭션에서 갱신한다. 처리 중 같은 상품이 다시 적재되면 충돌 갱신이 기존 대상 삭제 커밋을 기다린 뒤 후속 대상으로 남아 최신 표시값을 다시 발행한다. S3 이미지 승격은 사전 소유권·카테고리 검증 뒤 잠금 트랜잭션 밖에서 수행하고, 짧은 쓰기 트랜잭션이 잠금 획득 뒤 소유권·카테고리를 다시 검증해 느린 외부 호출이 참조 변경을 막지 않게 한다.
 
 ---
 
@@ -136,7 +136,7 @@ com.openat
 
 ## 10. 설정 / 시드
 - `application.yml`: `default_schema=product`, `ddl-auto=update`(콜드부팅 재고 이력 복구를 검증하려면 부팅 간 원장이 보존돼야 해 `create`→`update` 전환), `defer-datasource-initialization=true` + `sql.init.mode=always`.
-- 상품 변경 outbox relay는 `batch-size`, `fixed-delay-ms`, `claim-timeout`, `send-timeout`을 설정하며 `ProductApplication`의 `@EnableScheduling`으로 기동한다. batch·timeout은 양수만 허용한다.
+- 검색 투영 갱신 대상 처리는 `batch-size`, `fixed-delay-ms`를 설정하고, 상품 변경 outbox relay는 `batch-size`, `fixed-delay-ms`, `claim-timeout`, `send-timeout`을 설정한다. 두 스케줄러 모두 `ProductApplication`의 `@EnableScheduling`으로 기동하며 batch·timeout은 양수만 허용한다.
 - `data.sql`: `categories` 시드(의류·액세서리·문구·전자기기·피규어·기타), `ON CONFLICT (name) DO NOTHING`.
 - **데모 시드(`support.seed.SeedDataRunner`)**: `local`/`dev`/`compose` 프로필에서
   `app.seed.enabled=true`일 때만 실행하는 `ApplicationRunner`(`@Order(0)`, 부트스트랩보다
