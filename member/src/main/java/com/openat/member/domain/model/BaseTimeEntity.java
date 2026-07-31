@@ -32,4 +32,9 @@ public abstract class BaseTimeEntity {
     public void markDeleted() {
         this.deletedAt = LocalDateTime.now();
     }
+
+    /** 논리 삭제 취소(계정 복구 등). 아직 익명화(스케줄러가 식별정보를 치환)되지 않은 경우에만 의미가 있다. */
+    public void restore() {
+        this.deletedAt = null;
+    }
 }
