@@ -231,7 +231,35 @@ class SearchConcurrencyLimiterRedisIntegrationTest {
   }
 
   @Test
-  void release_whenRenewalCallSwallowsInterruptAsRuntimeException_stopsRetryingAfterJoinTimeout()
+  void release_whileRenewalCallIsBlocked_returnsQuicklyWithoutWaitingForRenewalThread()
+      throws Exception {
+    LettuceConnectionFactory factory =
+        new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+    factory.afterPropertiesSet();
+    connectionFactoryA = factory;
+    StuckRenewalStringRedisTemplate template = new StuckRenewalStringRedisTemplate(factory);
+    template.afterPropertiesSet();
+
+    SearchConcurrencyLimiter holder =
+        new SearchConcurrencyLimiter(template, 1, Duration.ofMillis(300), Duration.ofMillis(100));
+
+    assertThat(holder.tryAcquire("holder")).isTrue();
+    assertThat(template.renewalStarted().await(2, TimeUnit.SECONDS)).isTrue();
+
+    // 갱신 호출이 1300ms(STUCK_BLOCK_MILLIS) 동안 블로킹 중인 상태에서 release를 호출한다.
+    // join이 남아있다면 releaseElapsed가 900ms 이상으로 튄다.
+    long releaseStart = System.currentTimeMillis();
+    holder.release("holder");
+    long releaseElapsed = System.currentTimeMillis() - releaseStart;
+
+    assertThat(releaseElapsed).isLessThan(100L);
+
+    // 갱신 스레드가 완전히 끝날 때까지 기다려 다음 테스트로 넘어가기 전에 정리한다.
+    Thread.sleep(1500);
+  }
+
+  @Test
+  void release_whenRenewalCallIsStuck_letsCompetitorAcquireImmediatelyAndStopsRetrying()
       throws Exception {
     LettuceConnectionFactory factory =
         new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
@@ -248,15 +276,14 @@ class SearchConcurrencyLimiterRedisIntegrationTest {
     assertThat(holder.tryAcquire("holder")).isTrue();
     assertThat(template.renewalStarted().await(2, TimeUnit.SECONDS)).isTrue();
 
-    long releaseStart = System.currentTimeMillis();
     holder.release("holder");
-    long releaseElapsed = System.currentTimeMillis() - releaseStart;
-
-    assertThat(releaseElapsed).isGreaterThanOrEqualTo(900L);
+    // release는 갱신 스레드가 아직 블로킹 중이어도 releaseScript부터 동기 실행하므로,
+    // 경쟁자는 갱신 스레드 종료를 기다리지 않고 즉시 permit을 획득할 수 있어야 한다.
     assertThat(competitor.tryAcquire("competitor")).isTrue();
     competitor.release("competitor");
 
-    Thread.sleep(600);
+    // 갱신 스레드가 STUCK_BLOCK_MILLIS(1300ms) 뒤 예외를 던지고 취소 플래그를 보고 종료할 때까지 기다린다.
+    Thread.sleep(1600);
     assertThat(template.renewAttempts()).isEqualTo(1);
   }
 

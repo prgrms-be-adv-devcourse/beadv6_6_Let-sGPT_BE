@@ -15,7 +15,7 @@ import org.springframework.data.redis.core.script.RedisScript;
  * Redis ZSET 슬라이딩 윈도우로 검색 호출 동시성을 클러스터 전역으로 제한한다.
  *
  * <p>permit을 시각 점수로 기록해 두면 acquire 시도마다 TTL이 지난 permit이 먼저 청소된다. permit은 release가 호출되거나 인스턴스가 죽어 갱신
- * 스레드가 끊길 때까지 유지된다.
+ * 스레드가 끊길 때까지 유지된다. release는 갱신 스레드 종료를 기다리지 않고 즉시 반환한다.
  */
 class SearchConcurrencyLimiter {
 
@@ -25,7 +25,6 @@ class SearchConcurrencyLimiter {
   private static final long MAX_POLL_DELAY_MILLIS = 200L;
   private static final double POLL_BACKOFF_MULTIPLIER = 2.0;
   private static final double POLL_JITTER_RATIO = 0.2;
-  private static final long RENEWAL_JOIN_TIMEOUT_MILLIS = 1000L;
 
   private final StringRedisTemplate redisTemplate;
   private final int maxConcurrency;
@@ -138,12 +137,8 @@ class SearchConcurrencyLimiter {
     // interrupt보다 먼저 세워야 broad catch가 삼켜도 다음 순회에서 멈춘다.
     lease.cancelled().set(true);
     lease.renewer().interrupt();
-    try {
-      // join 없이 지우면 release 직후 갱신 스레드가 permit을 되살리는 좀비 permit이 생길 수 있다.
-      lease.renewer().join(RENEWAL_JOIN_TIMEOUT_MILLIS);
-    } catch (InterruptedException exception) {
-      Thread.currentThread().interrupt();
-    }
+    // join으로 갱신 스레드 종료를 기다리지 않아도 된다: renew-search-permit.lua의 ZSCORE 가드가 release로 이미 지워진
+    // permit에 대한 뒤늦은 갱신을 데이터 레벨에서 no-op으로 막는다.
   }
 
   private record PermitLease(Thread renewer, AtomicBoolean cancelled) {}
