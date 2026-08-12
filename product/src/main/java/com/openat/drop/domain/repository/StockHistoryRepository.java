@@ -11,6 +11,9 @@ public interface StockHistoryRepository {
 
   Optional<StockHistory> findByOrderIdAndChangeType(UUID orderId, StockChangeType changeType);
 
+  Optional<StockHistory> findByOrderIdAndChangeTypeForUpdate(
+      UUID orderId, StockChangeType changeType);
+
   long sumQuantityDeltaByDropId(UUID dropId);
 
   List<BuyerPurchase> sumNetQuantityByBuyer(UUID dropId);

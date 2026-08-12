@@ -15,12 +15,14 @@ import com.openat.drop.domain.repository.StockCommandResult;
 import com.openat.drop.domain.repository.StockHistoryRepository;
 import com.openat.drop.domain.repository.StockMutation;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-/** '@Transactional' 제외: UNIQUE 충돌 시 rollback-only 전파 방지 */
+/** 차감은 UNIQUE 충돌 보상을 위해 외부 트랜잭션에서 제외하고, 롤백만 원장 잠금 범위를 연다. */
 @Service
 @RequiredArgsConstructor
 public class DropStockService implements DropStockUseCase {
@@ -51,9 +53,25 @@ public class DropStockService implements DropStockUseCase {
   }
 
   @Override
+  @Transactional
   public Optional<Long> rollback(DropStockCommand command) {
     StockMutation mutation = command.toMutation();
     validateRollbackSource(mutation);
+    Optional<StockHistory> completedRollback =
+        stockHistoryRepository.findByOrderIdAndChangeType(
+            mutation.orderId(), StockChangeType.ROLLBACK);
+    if (completedRollback.isPresent()) {
+      if (!matches(completedRollback.get(), mutation, StockChangeType.ROLLBACK)) {
+        throw new BusinessException(DropErrorCode.STOCK_REQUEST_MISMATCH);
+      }
+      Optional<Long> remaining =
+          Optional.ofNullable(
+              dropCacheRepository
+                  .findRemaining(List.of(mutation.dropId()))
+                  .get(mutation.dropId()));
+      remaining.ifPresent(ignored -> dropStockMetrics.register(mutation.dropId()));
+      return remaining;
+    }
     StockCommandResult restoration = dropCacheRepository.rollback(mutation);
     Optional<StockCommandResult> completed = switch (restoration.status()) {
       case OK -> persistOrCompensate(mutation, StockChangeType.ROLLBACK, restoration.remaining());
@@ -104,7 +122,7 @@ public class DropStockService implements DropStockUseCase {
   private void validateRollbackSource(StockMutation mutation) {
     StockHistory deduction =
         stockHistoryRepository
-            .findByOrderIdAndChangeType(mutation.orderId(), StockChangeType.DEDUCT)
+            .findByOrderIdAndChangeTypeForUpdate(mutation.orderId(), StockChangeType.DEDUCT)
             .orElseThrow(() -> new BusinessException(DropErrorCode.ROLLBACK_NOT_ALLOWED));
     if (!matches(deduction, mutation, StockChangeType.DEDUCT)) {
       throw new BusinessException(DropErrorCode.ROLLBACK_NOT_ALLOWED);

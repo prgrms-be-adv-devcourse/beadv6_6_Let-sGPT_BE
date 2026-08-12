@@ -3,16 +3,25 @@ package com.openat.drop.infrastructure.persistence;
 import com.openat.drop.domain.model.StockChangeType;
 import com.openat.drop.domain.model.StockHistory;
 import com.openat.drop.domain.repository.BuyerPurchase;
+import jakarta.persistence.LockModeType;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface StockHistoryJpaRepository extends JpaRepository<StockHistory, UUID> {
 
   Optional<StockHistory> findByOrderIdAndChangeType(UUID orderId, StockChangeType changeType);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT h FROM StockHistory h "
+          + "WHERE h.orderId = :orderId AND h.changeType = :changeType")
+  Optional<StockHistory> findByOrderIdAndChangeTypeForUpdate(
+      @Param("orderId") UUID orderId, @Param("changeType") StockChangeType changeType);
 
   @Query("SELECT COALESCE(SUM(h.quantityDelta), 0) FROM StockHistory h WHERE h.dropId = :dropId")
   long sumQuantityDeltaByDropId(@Param("dropId") UUID dropId);
