@@ -251,6 +251,7 @@
 
 - 백엔드는 `started → status → delta+ → done|error` 계약만 유지하고 카드·도구명·스키마를 노출하지 않는다.
 - 일반 답변은 1차 응답 모드와 `finishReason=stop`을 확인한 뒤 조각으로 재생하고, 가벼운 답과 최종 답은 같은 `delta` 스트림에 순서대로 누적한다. `length` 등 불완전한 content-only 응답은 본문을 내보내지 않고 typed 선택 실패로 끝낸다.
+- 최종 자연어 스트림은 별도 원시 SSE transport에서 `finish_reason=stop`과 실제 `[DONE]`을 함께 검증한다. marker 없는 clean EOF, finish 누락·`length`, malformed·HTTP 오류와 취소를 실제 HTTP fixture로 회귀 검증한다.
 - 프런트는 기존 스피너·경과 시간·자동 스크롤을 유지하면서 새 capability와 직전 한 턴 계약을 반영했다.
 - 프런트 전체 22개 파일, 76개 테스트와 타입 검사, 프로덕션 빌드를 통과했다.
 

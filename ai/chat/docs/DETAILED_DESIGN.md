@@ -394,7 +394,7 @@ started
 - 2차 `earlyAnswer`는 primary shard의 전체 구조화 응답 검증 뒤 한 번만 보낸다.
 - 일부 자연어를 보낸 뒤 실패하면 `error.partial=true`로 종료한다.
 - `done`과 `error`는 상호 배타적이다.
-- 최종 답변 스트림은 Spring AI가 노출한 terminal `finishReason=stop`을 확인한 경우에만 `done`으로 변환한다. 이유가 없거나 다른 종료 이유면 부분 오류로 끝낸다.
+- 최종 답변 스트림은 원시 OpenAI SSE transport가 `finish_reason=stop`과 실제 `data: [DONE]`을 모두 관측한 경우에만 `done`으로 변환한다. `stop` 뒤에는 usage 객체가 있는 빈 `choices`만 허용하고 추가 choice·content나 malformed protocol은 부분 오류로 끝낸다. `stop` 뒤 clean EOF, 이유 없음과 `length`도 부분 오류다. route·binding의 Spring AI 연동은 그대로 유지한다.
 - 카드, route, tool name, schema와 별도 디버그 이벤트는 추가하지 않는다.
 - 프런트는 스피너, 경과 초, 부드러운 자동 스크롤과 사용자 수동 스크롤을 유지한다.
 
@@ -466,12 +466,14 @@ SSE terminal 오류는 보안 거부, 추론 비활성, `CHAT_SELECTION_FAILED`,
 - 첫 요청에 전체 `analyzeAdminData` 스키마를 공개하는 방식
 - 하나의 Spring AI 자동 tool loop가 전체 단계를 암묵적으로 수행하는 흐름
 - 외부 provider 자동 폴백이 가능한 `chat` 별칭을 관리자 챗봇에 사용하는 설정
+- 최종 자연어 스트림의 Spring AI SDK 경로를 원시 `[DONE]` 종료 증거를 확인하는 SSE transport로 교체
 
 추론 호출은 `AdminChatInferencePort`, 초기 도구 실행은 `AdminInitialToolPort`, 내부 조회 실행은 `AdminAnalyticsExecutionPort`로 분리했다. `AdminChatOrchestrator`는 고정 단계와 사실 누적만 담당하고, 외부 API·운영 문서·DB 세부사항은 어댑터에 둔다.
 
 주요 설정은 다음 한 경계에서 관리한다.
 
-- `chat.inference.base-url`, `model`: OpenAI 호환 추론 위치와 모델
+- `spring.ai.openai.base-url`과 선택적 `spring.ai.openai.chat.base-url`: Spring AI 우선순위로 resolve하는 단일 OpenAI 호환 추론 위치
+- `chat.inference.model`: 관리자 챗봇 모델
 - `chat.inference.local-only-route`: 원격 주소의 비폴백 계약 명시
 - `chat.inference.reasoning-effort`: 로컬 모델 추론 모드. 현재 기본값 `none`
 - 단계별 timeout과 출력 토큰

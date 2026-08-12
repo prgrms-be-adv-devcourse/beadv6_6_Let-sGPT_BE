@@ -85,7 +85,6 @@ chat:
     heartbeat-interval: ${CHAT_STREAM_HEARTBEAT_INTERVAL:15s}
   inference:
     enabled: ${CHAT_INFERENCE_ENABLED:true}
-    base-url: ${CHAT_ADMIN_INFERENCE_BASE_URL:${CHAT_INFERENCE_BASE_URL:http://127.0.0.1:11434/v1}}
     model: ${CHAT_ADMIN_INFERENCE_MODEL:${CHAT_INFERENCE_MODEL:gemma4:12b-it-qat}}
     local-only-route: ${CHAT_INFERENCE_LOCAL_ONLY_ROUTE:false}
     reasoning-effort: ${CHAT_INFERENCE_REASONING_EFFORT:none}

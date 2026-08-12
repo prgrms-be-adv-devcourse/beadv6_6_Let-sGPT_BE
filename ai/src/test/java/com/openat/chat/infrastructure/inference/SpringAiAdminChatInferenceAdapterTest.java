@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willAnswer;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -42,8 +44,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -56,7 +58,6 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.tokenizer.JTokkitTokenCountEstimator;
 import org.springframework.ai.tokenizer.TokenCountEstimator;
-import reactor.core.publisher.Flux;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -73,6 +74,7 @@ class SpringAiAdminChatInferenceAdapterTest {
   private TokenCountEstimator tokenEstimator;
   private SimpleMeterRegistry meterRegistry;
   private ChatInferenceMetrics metrics;
+  private OpenAiAnswerStreamTransport answerStreamTransport;
   private SpringAiAdminChatInferenceAdapter adapter;
 
   @BeforeEach
@@ -85,6 +87,8 @@ class SpringAiAdminChatInferenceAdapterTest {
     var schemas = new InternalDataSchemaRegistry(tokenEstimator, properties);
     meterRegistry = new SimpleMeterRegistry();
     metrics = new ChatInferenceMetrics(meterRegistry);
+    answerStreamTransport = mock(OpenAiAnswerStreamTransport.class);
+    given(answerStreamTransport.baseUrl()).willReturn("http://127.0.0.1:11434/v1");
     var promptBudget = new ChatPromptBudgetGuard(tokenEstimator, properties, metrics);
     adapter = createAdapter(schemas, promptBudget);
   }
@@ -92,6 +96,19 @@ class SpringAiAdminChatInferenceAdapterTest {
   @AfterEach
   void tearDown() {
     executor.shutdownNow();
+  }
+
+  @Test
+  @DisplayName("가용성은 최종 답변 transport와 같은 resolved endpoint를 검사한다")
+  void isAvailable_usesResolvedAnswerEndpoint() {
+    // given
+    given(answerStreamTransport.baseUrl()).willReturn("https://remote.example.com/v1");
+
+    // when & then
+    assertThat(adapter.isAvailable()).isFalse();
+    properties.setLocalOnlyRoute(true);
+    assertThat(adapter.isAvailable()).isTrue();
+    verify(answerStreamTransport, times(2)).baseUrl();
   }
 
   @Test
@@ -509,8 +526,14 @@ class SpringAiAdminChatInferenceAdapterTest {
   @Test
   @DisplayName("최종 답변은 stop 종료 증거가 있을 때만 정상 완료한다")
   void streamAnswer_stopFinishReason_completes() {
-    given(chatModel.stream(any(Prompt.class)))
-        .willReturn(Flux.just(streamResponse("정상 답변", null), streamResponse("", "stop")));
+    willAnswer(
+            invocation -> {
+              Consumer<String> consumer = invocation.getArgument(1);
+              consumer.accept("정상 답변");
+              return null;
+            })
+        .given(answerStreamTransport)
+        .stream(any(), any(), any());
     List<String> chunks = new java.util.ArrayList<>();
 
     adapter.streamAnswer(command("질문"), List.of(), chunks::add, deadline());
@@ -522,17 +545,17 @@ class SpringAiAdminChatInferenceAdapterTest {
   @DisplayName("최종 답변은 청크가 계속 와도 단계 시작 기준 제한을 넘으면 timeout으로 취소한다")
   void streamAnswer_continuousChunks_exceedAbsoluteStageTimeout() {
     properties.setStageTimeout(Duration.ofMillis(150));
-    AtomicBoolean sourceCancelled = new AtomicBoolean();
-    given(chatModel.stream(any(Prompt.class)))
-        .willReturn(
-            Flux.interval(Duration.ZERO, Duration.ofMillis(10))
-                .take(60)
-                .map(
-                    sequence ->
-                        sequence == 59
-                            ? streamResponse("", "stop")
-                            : streamResponse("조각", null))
-                .doOnCancel(() -> sourceCancelled.set(true)));
+    AtomicReference<Duration> requestedTimeout = new AtomicReference<>();
+    willAnswer(
+            invocation -> {
+              Consumer<String> consumer = invocation.getArgument(1);
+              requestedTimeout.set(invocation.getArgument(2));
+              consumer.accept("조각");
+              consumer.accept("조각");
+              throw new AdminChatExecutionException(Reason.TIMEOUT, "답변 스트림 timeout");
+            })
+        .given(answerStreamTransport)
+        .stream(any(), any(), any());
     List<String> chunks = new java.util.ArrayList<>();
 
     assertThatThrownBy(
@@ -540,18 +563,17 @@ class SpringAiAdminChatInferenceAdapterTest {
         .isInstanceOfSatisfying(
             AdminChatExecutionException.class,
             exception -> assertThat(exception.reason()).isEqualTo(Reason.TIMEOUT));
-    assertThat(chunks).hasSizeGreaterThan(1).hasSizeLessThan(59);
-    assertThat(sourceCancelled.get()).isTrue();
+    assertThat(chunks).containsExactly("조각", "조각");
+    assertThat(requestedTimeout.get()).isLessThanOrEqualTo(Duration.ofMillis(150));
   }
 
   @Test
-  @DisplayName("Reactor가 감싼 스트림 종료 예외는 원본을 보존하고 취소로 측정한다")
+  @DisplayName("transport가 감싼 스트림 종료 예외는 원본을 보존하고 취소로 측정한다")
   void streamAnswer_wrappedStreamClosed_preservesOriginalFailureAndRecordsCancellation() {
     ChatStreamClosedException expected = new ChatStreamClosedException(null);
-    given(chatModel.stream(any(Prompt.class)))
-        .willReturn(
-            Flux.<ChatResponse>error(
-                new Exception("reactor wrapper", expected)));
+    willThrow(new IllegalStateException("transport wrapper", expected))
+        .given(answerStreamTransport)
+        .stream(any(), any(), any());
 
     assertThatThrownBy(
             () ->
@@ -568,14 +590,13 @@ class SpringAiAdminChatInferenceAdapterTest {
   }
 
   @Test
-  @DisplayName("Reactor가 감싼 실행 예외는 사유와 원본을 보존한다")
+  @DisplayName("transport가 감싼 실행 예외는 사유와 원본을 보존한다")
   void streamAnswer_wrappedExecutionFailure_preservesOriginalFailure() {
     AdminChatExecutionException expected =
         new AdminChatExecutionException(Reason.BUSY, "실행기 포화");
-    given(chatModel.stream(any(Prompt.class)))
-        .willReturn(
-            Flux.<ChatResponse>error(
-                new Exception("reactor wrapper", expected)));
+    willThrow(new IllegalStateException("transport wrapper", expected))
+        .given(answerStreamTransport)
+        .stream(any(), any(), any());
 
     assertThatThrownBy(
             () ->
@@ -585,14 +606,13 @@ class SpringAiAdminChatInferenceAdapterTest {
   }
 
   @Test
-  @DisplayName("Reactor가 감싼 cancellation은 typed cancellation으로 분류한다")
+  @DisplayName("transport가 감싼 cancellation은 typed cancellation으로 분류한다")
   void streamAnswer_wrappedCancellation_reportsCancellation() {
-    given(chatModel.stream(any(Prompt.class)))
-        .willReturn(
-            Flux.<ChatResponse>error(
-                new Exception(
-                    "reactor wrapper",
-                    new CancellationException("cancelled"))));
+    willThrow(
+            new IllegalStateException(
+                "transport wrapper", new CancellationException("cancelled")))
+        .given(answerStreamTransport)
+        .stream(any(), any(), any());
 
     assertThatThrownBy(
             () ->
@@ -619,19 +639,26 @@ class SpringAiAdminChatInferenceAdapterTest {
             AdminChatExecutionException.class,
             exception ->
                 assertThat(exception.reason()).isEqualTo(Reason.INPUT_BUDGET_EXCEEDED));
-    verify(chatModel, never()).stream(any(Prompt.class));
+    verify(answerStreamTransport, never()).stream(any(), any(), any());
   }
 
   @Test
   @DisplayName("일부 토큰 뒤 정상 종료 증거 없이 끝난 스트림은 실패한다")
   void streamAnswer_eofWithoutFinishReason_rejectsPartialAnswer() {
-    given(chatModel.stream(any(Prompt.class))).willReturn(Flux.just(streamResponse("잘린 답변", null)));
+    willAnswer(
+            invocation -> {
+              Consumer<String> consumer = invocation.getArgument(1);
+              consumer.accept("잘린 답변");
+              throw new IllegalStateException("추론 서버가 [DONE] 없이 답변 스트림을 끝냈어요.");
+            })
+        .given(answerStreamTransport)
+        .stream(any(), any(), any());
     List<String> chunks = new java.util.ArrayList<>();
 
     assertThatThrownBy(
             () -> adapter.streamAnswer(command("질문"), List.of(), chunks::add, deadline()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("정상 종료 증거");
+        .hasMessageContaining("[DONE]");
     assertThat(chunks).containsExactly("잘린 답변");
   }
 
@@ -649,6 +676,7 @@ class SpringAiAdminChatInferenceAdapterTest {
         executor,
         promptBudget,
         metrics,
+        answerStreamTransport,
         new AdminDataTools(mock(com.openat.chat.application.port.AdminDataQueryPort.class)),
         new CryptoPriceTools(mock(com.openat.chat.application.port.CryptoPricePort.class)),
         new InternalDataSchemaSelector(),
@@ -672,13 +700,6 @@ class SpringAiAdminChatInferenceAdapterTest {
       String content, List<AssistantMessage.ToolCall> toolCalls, String finishReason) {
     AssistantMessage message =
         AssistantMessage.builder().content(content).toolCalls(toolCalls).build();
-    ChatGenerationMetadata metadata =
-        ChatGenerationMetadata.builder().finishReason(finishReason).build();
-    return new ChatResponse(List.of(new Generation(message, metadata)));
-  }
-
-  private ChatResponse streamResponse(String content, String finishReason) {
-    AssistantMessage message = AssistantMessage.builder().content(content).build();
     ChatGenerationMetadata metadata =
         ChatGenerationMetadata.builder().finishReason(finishReason).build();
     return new ChatResponse(List.of(new Generation(message, metadata)));
