@@ -302,8 +302,9 @@ public class AdminAnalyticsPlanFactory {
               RECONCILIATION_DISCREPANCY,
               MEMBER_REGISTRATION ->
           TimeField.PERIOD_START;
-      case MEMBER_CURRENT, ORDER_SAGA -> TimeField.NONE;
+      case MEMBER_CURRENT -> TimeField.NONE;
       case EVENT_PIPELINE -> TimeField.EVENT_AT;
+      case ORDER_SAGA -> TimeField.SAGA_UPDATED_AT;
     };
   }
 

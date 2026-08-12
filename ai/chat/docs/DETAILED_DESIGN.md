@@ -39,7 +39,7 @@
 | 구조화 결과 | 상세 스키마를 질문에 맞게 채운 독립 조회 단위 |
 | 사실 압축본 | 도구·DB 원문에서 최종 답변에 필요한 검증 사실만 남긴 공통 결과 |
 | 단계적 답변 | 먼저 완료된 독립 사실을 최종 조회 전 자연어로 전달하는 답변 |
-| 단계 | 의미상 처리 레벨. 8K 예산으로 같은 레벨을 병렬 분할해도 깊이는 늘지 않음 |
+| 단계 | 의미상 처리 레벨. 8K 예산의 bounded shard와 같은 레벨의 1회 형식 복구는 물리 호출을 추가할 수 있지만 깊이는 늘지 않음 |
 
 ## 3. 단계별 처리 흐름
 
@@ -261,6 +261,7 @@ failureReason: FAILED일 때만 존재
 - 개별 값 지표는 대응하는 공개 식별자 차원이 있을 때만 실행하며 결과는 최대 20행으로 제한한다.
 - 지표와 공개 식별자의 의존성은 `metricRequirements` 카탈로그로 모델에 제공하고, 모델이 필수 차원을 빠뜨리면 서버가 같은 카탈로그로 보완한 뒤 다시 검증한다.
 - 시간 필드는 사건별 의미를 카탈로그에 함께 제공한다. 별도 사건을 지정하지 않은 기간 내 주문은 생성 시각을 사용하고, 결제·완료·취소·환불 기간은 해당 사건 시각을 사용한다.
+- 기간형 `ORDER_SAGA`의 시간 필드가 누락되거나 카탈로그 밖이면 `SAGA_UPDATED_AT`으로 복구하고 해당 필드 실패를 근거에 남긴다.
 - 회원·구매자·판매자 식별정보, 배송·연락처, 결제 키와 자유 원문은 어떤 행 조회에도 넣지 않는다.
 
 결과 행 수, 지표·차원·필터 수와 문자열 길이는 서버 상한으로 제한한다.
@@ -394,7 +395,7 @@ started
 - 2차 `earlyAnswer`는 primary shard의 전체 구조화 응답 검증 뒤 한 번만 보낸다.
 - 일부 자연어를 보낸 뒤 실패하면 `error.partial=true`로 종료한다.
 - `done`과 `error`는 상호 배타적이다.
-- 최종 답변 스트림은 Spring AI가 노출한 terminal `finishReason=stop`을 확인한 경우에만 `done`으로 변환한다. 이유가 없거나 다른 종료 이유면 부분 오류로 끝낸다.
+- 최종 답변 스트림은 원시 OpenAI SSE transport가 `finish_reason=stop`과 실제 `data: [DONE]`을 모두 관측한 경우에만 `done`으로 변환한다. `stop` 뒤에는 usage 객체가 있는 빈 `choices`만 허용하고 추가 choice·content나 malformed protocol은 부분 오류로 끝낸다. `stop` 뒤 clean EOF, 이유 없음과 `length`도 부분 오류다. route·binding의 Spring AI 연동은 그대로 유지한다.
 - 카드, route, tool name, schema와 별도 디버그 이벤트는 추가하지 않는다.
 - 프런트는 스피너, 경과 초, 부드러운 자동 스크롤과 사용자 수동 스크롤을 유지한다.
 
@@ -466,12 +467,14 @@ SSE terminal 오류는 보안 거부, 추론 비활성, `CHAT_SELECTION_FAILED`,
 - 첫 요청에 전체 `analyzeAdminData` 스키마를 공개하는 방식
 - 하나의 Spring AI 자동 tool loop가 전체 단계를 암묵적으로 수행하는 흐름
 - 외부 provider 자동 폴백이 가능한 `chat` 별칭을 관리자 챗봇에 사용하는 설정
+- 최종 자연어 스트림의 Spring AI SDK 경로를 원시 `[DONE]` 종료 증거를 확인하는 SSE transport로 교체
 
 추론 호출은 `AdminChatInferencePort`, 초기 도구 실행은 `AdminInitialToolPort`, 내부 조회 실행은 `AdminAnalyticsExecutionPort`로 분리했다. `AdminChatOrchestrator`는 고정 단계와 사실 누적만 담당하고, 외부 API·운영 문서·DB 세부사항은 어댑터에 둔다.
 
 주요 설정은 다음 한 경계에서 관리한다.
 
-- `chat.inference.base-url`, `model`: OpenAI 호환 추론 위치와 모델
+- `spring.ai.openai.base-url`과 선택적 `spring.ai.openai.chat.base-url`: Spring AI 우선순위로 resolve하는 단일 OpenAI 호환 추론 위치
+- `chat.inference.model`: 관리자 챗봇 모델
 - `chat.inference.local-only-route`: 원격 주소의 비폴백 계약 명시
 - `chat.inference.reasoning-effort`: 로컬 모델 추론 모드. 현재 기본값 `none`
 - 단계별 timeout과 출력 토큰

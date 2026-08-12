@@ -16,6 +16,7 @@ import com.openat.chat.domain.query.InternalDataDomain;
 import com.openat.chat.infrastructure.inference.ChatInferenceMetrics.Outcome;
 import com.openat.chat.infrastructure.inference.ChatInferenceMetrics.Stage;
 import com.openat.chat.infrastructure.inference.InternalDataSchemaRegistry.SchemaShard;
+import com.openat.chat.infrastructure.inference.OpenAiAnswerStreamTransport.AnswerRequest;
 import com.openat.chat.infrastructure.inference.tool.AdminDataTools;
 import com.openat.chat.infrastructure.inference.tool.CryptoPriceTools;
 import com.openat.chat.infrastructure.inference.tool.InternalDataSchemaSelector;
@@ -40,7 +41,6 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -57,9 +57,6 @@ import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
-import reactor.core.Exceptions;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -83,6 +80,7 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
   private final ExecutorService taskExecutor;
   private final ChatPromptBudgetGuard promptBudget;
   private final ChatInferenceMetrics metrics;
+  private final OpenAiAnswerStreamTransport answerStreamTransport;
   private final List<ToolCallback> routingTools;
   private final ToolCallback bindingTool;
 
@@ -95,6 +93,7 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
       @Qualifier("chatTaskExecutor") ExecutorService taskExecutor,
       ChatPromptBudgetGuard promptBudget,
       ChatInferenceMetrics metrics,
+      OpenAiAnswerStreamTransport answerStreamTransport,
       AdminDataTools adminDataTools,
       CryptoPriceTools cryptoPriceTools,
       InternalDataSchemaSelector schemaSelector,
@@ -110,6 +109,7 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
     this.taskExecutor = taskExecutor;
     this.promptBudget = promptBudget;
     this.metrics = metrics;
+    this.answerStreamTransport = answerStreamTransport;
     this.routingTools =
         Arrays.asList(
             ToolCallbacks.from(
@@ -124,7 +124,8 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
 
   @Override
   public boolean isAvailable() {
-    return properties.isEnabled() && properties.isLocalOnlyRoute();
+    return properties.isEnabled()
+        && properties.isLocalOnlyRoute(answerStreamTransport.baseUrl());
   }
 
   @Override
@@ -226,7 +227,6 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
     Outcome outcome = Outcome.ERROR;
     try {
       AtomicBoolean firstChunk = new AtomicBoolean(true);
-      AtomicReference<String> finishReason = new AtomicReference<>("");
       String system = prompts.answerSystem();
       String user =
           budgetedUser(
@@ -235,44 +235,19 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
               command,
               candidate -> prompts.answerUser(candidate, evidence),
               List.of());
-      OpenAiChatOptions options = baseOptions(properties.getAnswerMaxTokens()).build();
-      Prompt prompt = prompt(system, user, options);
-
-      Flux<String> content =
-          chatModel.stream(prompt)
-              .doOnNext(response -> captureFinishReason(response, finishReason))
-              .flatMapIterable(
-                  response -> {
-                    if (response == null || response.getResult() == null) {
-                      return List.<String>of();
-                    }
-                    String text = response.getResult().getOutput().getText();
-                    return text == null || text.isEmpty() ? List.<String>of() : List.of(text);
-                  });
       Duration timeout = boundedStreamingTimeout(deadline, startedAt);
-      AtomicBoolean timedOut = new AtomicBoolean();
       try {
-        content
-            .doOnNext(
-                chunk -> {
-                  if (firstChunk.compareAndSet(true, false)) {
-                    logStage(command, "ANSWER_FIRST_CHUNK", startedAt, "");
-                  }
-                  chunkConsumer.accept(chunk);
-                })
-            .takeUntilOther(
-                Mono.delay(timeout)
-                    .doOnNext(ignored -> timedOut.set(true)))
-            .blockLast();
+        answerStreamTransport.stream(
+            new AnswerRequest(system, user, properties.getAnswerMaxTokens()),
+            chunk -> {
+              if (firstChunk.compareAndSet(true, false)) {
+                logStage(command, "ANSWER_FIRST_CHUNK", startedAt, "");
+              }
+              chunkConsumer.accept(chunk);
+            },
+            timeout);
       } catch (RuntimeException exception) {
         throw classifyStreamingFailure(exception);
-      }
-      if (timedOut.get()) {
-        throw new AdminChatExecutionException(
-            Reason.TIMEOUT, "답변 스트림 시간이 초과됐어요.");
-      }
-      if (!"stop".equalsIgnoreCase(finishReason.get())) {
-        throw new IllegalStateException("추론 서버가 정상 종료 증거 없이 답변 스트림을 끝냈어요.");
       }
       logStage(command, "ANSWER", startedAt, "");
       outcome = Outcome.SUCCESS;
@@ -284,13 +259,6 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
       throw exception;
     } finally {
       metrics.recordStage(Stage.ANSWER, outcome, startedAt);
-    }
-  }
-
-  private void captureFinishReason(ChatResponse response, AtomicReference<String> finishReason) {
-    String value = finishReason(response);
-    if (value != null && !value.isBlank()) {
-      finishReason.set(value);
     }
   }
 
@@ -711,8 +679,7 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
   }
 
   private RuntimeException classifyStreamingFailure(RuntimeException exception) {
-    Throwable cause = Exceptions.unwrap(exception);
-    for (Throwable current = cause; current != null; current = current.getCause()) {
+    for (Throwable current = exception; current != null; current = current.getCause()) {
       if (current instanceof ChatStreamClosedException streamClosedException) {
         return streamClosedException;
       }
@@ -724,7 +691,7 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
         return new AdminChatExecutionException(
             Reason.CANCELLED, "답변 스트림이 취소됐어요.", exception);
       }
-      if (current instanceof CancellationException || Exceptions.isCancel(current)) {
+      if (current instanceof CancellationException) {
         return new AdminChatExecutionException(
             Reason.CANCELLED, "답변 스트림이 취소됐어요.", exception);
       }

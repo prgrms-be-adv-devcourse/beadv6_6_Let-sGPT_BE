@@ -10,7 +10,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class ChatInferenceProperties {
 
   private boolean enabled = true;
-  private String baseUrl = "http://127.0.0.1:11434/v1";
   private String model = "gemma4:12b-it-qat";
   private boolean localOnlyRoute;
   private String reasoningEffort = "none";
@@ -28,14 +27,6 @@ public class ChatInferenceProperties {
     this.enabled = enabled;
   }
 
-  public String getBaseUrl() {
-    return baseUrl;
-  }
-
-  public void setBaseUrl(String baseUrl) {
-    this.baseUrl = baseUrl;
-  }
-
   public String getModel() {
     return model;
   }
@@ -44,8 +35,8 @@ public class ChatInferenceProperties {
     this.model = model;
   }
 
-  public boolean isLocalOnlyRoute() {
-    return localOnlyRoute || isLoopback(baseUrl);
+  public boolean isLocalOnlyRoute(String resolvedBaseUrl) {
+    return localOnlyRoute || isLoopback(resolvedBaseUrl);
   }
 
   public void setLocalOnlyRoute(boolean localOnlyRoute) {
@@ -98,8 +89,8 @@ public class ChatInferenceProperties {
 
   @PostConstruct
   void validate() {
-    if (baseUrl == null || baseUrl.isBlank() || model == null || model.isBlank()) {
-      throw new IllegalStateException("관리자 챗봇 추론 주소와 모델이 필요해요.");
+    if (model == null || model.isBlank()) {
+      throw new IllegalStateException("관리자 챗봇 추론 모델이 필요해요.");
     }
     if (reasoningEffort == null || reasoningEffort.isBlank()) {
       throw new IllegalStateException("chat.inference.reasoning-effort가 필요해요.");
@@ -119,6 +110,9 @@ public class ChatInferenceProperties {
   }
 
   private boolean isLoopback(String value) {
+    if (value == null || value.isBlank()) {
+      return false;
+    }
     try {
       String host = URI.create(value).getHost();
       return "localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host) || "::1".equals(host);
