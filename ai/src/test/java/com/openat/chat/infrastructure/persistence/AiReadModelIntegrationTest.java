@@ -1094,6 +1094,55 @@ class AiReadModelIntegrationTest {
   }
 
   @Test
+  @DisplayName("실제 사가 읽기 모델은 마지막 갱신 시각으로 기간을 제한한다")
+  void jdbcAdapter_orderSagaPeriod_filtersByUpdatedAt() {
+    PlanningDateRange includedPeriod =
+        range(Instant.parse("2026-07-21T18:01:00Z"), Instant.parse("2026-07-21T18:03:00Z"));
+    PlanningDateRange excludedPeriod =
+        range(Instant.parse("2026-07-21T18:03:00Z"), Instant.parse("2026-07-21T18:04:00Z"));
+    Query included =
+        new Query(
+            Dataset.ORDER_SAGA,
+            List.of(Measure.SAGA_COUNT),
+            List.of(),
+            TimeField.SAGA_UPDATED_AT,
+            AggregateTimeScope.CREATED_PERIOD,
+            includedPeriod,
+            TrendGrain.NONE,
+            Comparison.NONE,
+            Map.of(),
+            Measure.SAGA_COUNT,
+            SortDirection.DESC,
+            10);
+    Query excluded =
+        new Query(
+            Dataset.ORDER_SAGA,
+            List.of(Measure.SAGA_COUNT),
+            List.of(),
+            TimeField.SAGA_UPDATED_AT,
+            AggregateTimeScope.CREATED_PERIOD,
+            excludedPeriod,
+            TrendGrain.NONE,
+            Comparison.NONE,
+            Map.of(),
+            Measure.SAGA_COUNT,
+            SortDirection.DESC,
+            10);
+
+    try (QueryHarness harness = queryHarness()) {
+      AdminAnalyticsQueryResult includedResult = harness.analyticsAdapter().query(included);
+      AdminAnalyticsQueryResult excludedResult = harness.analyticsAdapter().query(excluded);
+
+      assertThat(includedResult.rows())
+          .extracting(row -> row.measures().get("SAGA_COUNT"))
+          .containsExactly(new java.math.BigDecimal("1"));
+      assertThat(excludedResult.rows())
+          .extracting(row -> row.measures().get("SAGA_COUNT"))
+          .containsExactly(new java.math.BigDecimal("0"));
+    }
+  }
+
+  @Test
   @DisplayName("작은 fixture에서도 고정 지표와 의미 집계 SQL의 실제 실행계획을 확인한다")
   void jdbcAdapter_queries_explainAnalyzeOnFixture() {
     // given

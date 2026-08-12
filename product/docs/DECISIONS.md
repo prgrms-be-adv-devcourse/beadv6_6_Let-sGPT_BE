@@ -194,4 +194,12 @@
 * **결정 사항 (Decision):** 세미프로젝트는 부팅 서버 로컬 저장, 파이널 때 EC2 배포 시 AWS 스토리지 사용으로 결정
 * **트레이드 오프 (Trade-off):** 향후 이미지 저장 서버 교체 시 코드 수정이 필요하나 이미지 저장 포트 인터페이스를 선언하여 향후 이미지 저장소 교체가 쉽도록 구현 진행
 
+---
+
+## 추가 담당 영역 결정 이력
+
+파이널 프로젝트에서 추가로 담당한 영역의 결정 이력은 각 문서에서 별도로 관리함.
+
+- [추론 서버 결정 이력](https://github.com/LaDiuM1/local-first-inference-gateway/blob/main/docs/DECISIONS.md)
+- [관리자 AI 어시스턴트 결정 이력](../../ai/chat/docs/DECISIONS.md)
 

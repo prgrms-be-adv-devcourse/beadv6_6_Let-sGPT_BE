@@ -20,6 +20,9 @@ import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @DisplayName("구조화 응답의 고정 분석 계획 변환")
 class AdminAnalyticsPlanFactoryTest {
@@ -248,5 +251,38 @@ class AdminAnalyticsPlanFactoryTest {
     assertThat(result.query().timeField()).isEqualTo(TimeField.NONE);
     assertThat(result.query().period()).isNull();
     assertThat(result.failures()).isEmpty();
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = "UNKNOWN_TIME")
+  @DisplayName("기간형 사가의 시간 기준이 누락되거나 잘못되면 마지막 갱신 시각으로 복구한다")
+  void create_orderSagaPeriodWithoutValidTimeField_usesSagaUpdatedAt(String timeField) {
+    QuerySpec request =
+        new QuerySpec(
+            Dataset.ORDER_SAGA,
+            List.of("SAGA_COUNT"),
+            List.of("SAGA_STEP"),
+            timeField,
+            TimeRangePreset.TODAY,
+            "",
+            "",
+            TrendGrain.NONE,
+            Comparison.NONE,
+            List.of(),
+            "SAGA_COUNT",
+            SortDirection.DESC,
+            10);
+
+    AdminAnalyticsPlanFactory.PreparedQuery result = factory.create(request);
+
+    assertThat(result.query().timeField()).isEqualTo(TimeField.SAGA_UPDATED_AT);
+    assertThat(result.failures())
+        .singleElement()
+        .satisfies(
+            failure -> {
+              assertThat(failure.field()).isEqualTo("timeField");
+              assertThat(failure.reason()).contains("SAGA_UPDATED_AT");
+            });
   }
 }
