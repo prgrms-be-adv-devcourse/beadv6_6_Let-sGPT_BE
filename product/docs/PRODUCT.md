@@ -84,6 +84,7 @@ com.openat
 - **인덱스**: FK 및 타 도메인 값 참조 컬럼에 부여. 이름 `idx_<table>_<column>`, 유니크 `uk_<table>_<…>`. (DECISIONS 2026-06-19 #6)
 - 타 도메인/서비스 참조는 **값 참조(UUID)**, FK 아님(예: `StockHistory.orderId`/`buyerId`).
 - **재고 이력 원장(`stock_histories`)**: append-only, 부호 있는 `quantity_delta`, `UNIQUE(order_id, change_type)`로 멱등. Redis의 중복 결과와 Redis 멱등키 만료 뒤 발생한 DB UNIQUE 충돌은 모두 이 원장이 커밋되고 요청 튜플이 일치한 뒤에만 성공으로 확정한다. 롤백은 선행 DEDUCT 원장 행을 잠가 같은 주문의 선행 검증부터 ROLLBACK 원장 확정까지 직렬화하므로 L1 키 유실 뒤에도 재복원하지 않는다. 충돌 원장이 다르면 캐시를 보상한 뒤 `409 DROP_STOCK_REQUEST_MISMATCH`로 거절한다. (DECISIONS 2026-06-22 #1, 상세 STOCK_GATEKEEPER)
+- **드롭 생명주기 잠금**: 워밍·종료·직접 삭제·상품 하향 삭제는 같은 drop 행을 `PESSIMISTIC_WRITE`로 잠가 stale `REGISTERED` 스냅샷이 close/evict 뒤 캐시를 다시 여는 경합을 막는다. 여러 drop을 정리하는 상품 삭제는 id 순으로 잠근다. 워밍은 `REPEATABLE_READ`에서 원장 집계를 읽고 Redis 단일 Lua로 drop·buyers 전체 snapshot을 교체한다.
 - **상품 검색 변경 outbox**: 상품 생성·수정·삭제와 seller/category 표시값 변경은 `Product.searchSnapshotSequence`를 내부 발행 순번으로 단조 증가시키고 같은 트랜잭션에 `product_outbox_events`를 적재한다. relay는 `FOR UPDATE SKIP LOCKED`로 행을 선점하고 같은 상품의 미발행 선행 순번이 있으면 후속 순번을 막는다. 외부 계약은 기존 `product.created.events`·`product.updated.events`·`product.deleted.events`와 기존 payload를 그대로 유지한다. Kafka ack 성공만 `PUBLISHED`, 실패·timeout은 재시도하며 오래된 `PROCESSING` claim은 회수한다.
 - **at-least-once 계약**: transactional outbox가 상품 변경과 발행 대상을 함께 커밋해 비즈니스 커밋 뒤 이벤트가 유실되는 구간을 없앤다. 내부 순번은 같은 상품 outbox의 유일 식별과 선행 발행 관계에만 쓰며 외부 payload에는 노출하지 않는다. Kafka ack 뒤 DB 확정 전에 프로세스가 중단되거나 timeout 뒤 ack가 늦게 도착하면 중복 발행될 수 있고, 서로 다른 세 토픽 사이의 소비 적용 순서와 중복 제거는 현재 계약으로 보장할 수 없다. product 단독 변경으로 그보다 강한 정합성을 가정하지 않는다.
 - **쓰기 포트 입력 객체**: 쓰기 포트(재고 차감·롤백·보상·이력 기록)는 application `~Command`를 그대로 넘기지 않고 도메인 값 객체(`~Mutation` @ `domain.repository`)로 받는다 — 식별 튜플(`dropId`/`orderId`/`buyerId`/`quantity`)을 개별 인자로 풀지 않고 묶어 연속 UUID 위치-인자 혼동을 막는다. 변환은 `~Command.toMutation()`(읽기 `~SearchRequest.toCondition()`→`~SearchCondition`의 쓰기 짝). 예: `StockMutation`.
@@ -136,7 +137,7 @@ com.openat
 
 ## 10. 설정 / 시드
 - `application.yml`: `default_schema=product`, `ddl-auto=update`(콜드부팅 재고 이력 복구를 검증하려면 부팅 간 원장이 보존돼야 해 `create`→`update` 전환), `defer-datasource-initialization=true` + `sql.init.mode=always`.
-- 검색 투영 갱신 대상 처리는 `batch-size`, `fixed-delay-ms`를 설정하며, 기본 생산률은 일반 상품 변경 여유를 남기도록 outbox relay의 기본 처리율보다 낮게 둔다. 상품 변경 outbox relay는 `batch-size`, `fixed-delay-ms`, `claim-timeout`, `send-timeout`을 설정한다. 두 스케줄러 모두 `ProductApplication`의 `@EnableScheduling`으로 기동하며 batch·timeout은 양수만 허용한다.
+- 검색 투영 갱신 대상 처리는 `batch-size`, `fixed-delay-ms`를 설정하며, 기본 생산률은 일반 상품 변경 여유를 남기도록 outbox relay의 기본 처리율보다 낮게 둔다. 상품 변경 outbox relay는 `batch-size`, `fixed-delay-ms`, `claim-timeout`, `send-timeout`을 설정한다. 드롭 예약 종료는 `close-retry-delay`로 DB·Redis 동기화 실패 재시도 간격을 정한다. 스케줄러는 `ProductApplication`의 `@EnableScheduling`으로 기동한다.
 - `data.sql`: `categories` 시드(의류·액세서리·문구·전자기기·피규어·기타), `ON CONFLICT (name) DO NOTHING`.
 - **데모 시드(`support.seed.SeedDataRunner`)**: `local`/`dev`/`compose` 프로필에서
   `app.seed.enabled=true`일 때만 실행하는 `ApplicationRunner`(`@Order(0)`, 부트스트랩보다
@@ -157,8 +158,8 @@ com.openat
 | `product`·`drop` (비즈니스 레코드) | soft 삭제 | `@SoftDelete(strategy = TIMESTAMP, columnName = "deleted_at")` — DELETE→UPDATE 자동 변환 + 조회 자동 필터 |
 | `stock_histories` (감사 원장) | 삭제 안 함 | append-only |
 
-- **하향 전파(product → drop)**: product를 soft 삭제하면 **동기 인프로세스 이벤트**(product가 발행 → drop 리스너 수신; `drop → product` 정방향·동일 트랜잭션·실패 시 롤백)로 그 product의 drop을 정리한다. 단 **진행 중(오픈/매진) 드롭이 하나라도 있으면 삭제를 차단** — drop 리스너가 라이브 드롭을 발견하면 예외(`DROP_OPEN_EXISTS`)를 던져 상품 삭제까지 롤백한다(라이브 거래를 끊지 않음·먼저 종료해야 함). 라이브가 없으면 자식 drop을 일괄 soft 삭제한다. **차단 판정은 product가 아니라 drop이 소유**(§4 역방향 참조 금지).
-- **drop 자체 삭제는 오픈 전만 soft 삭제**: 오픈 후 drop은 삭제가 아니라 **종료(CLOSE)**다(직접 삭제·캐스케이드 공통으로 라이브 drop은 soft 삭제 대상이 아님 — §8·STOCK_GATEKEEPER). 라이브 drop은 종료를 거쳐야 사라진다.
+- **하향 전파(product → drop)**: product를 soft 삭제하면 **동기 인프로세스 이벤트**(product가 발행 → drop 리스너 수신; `drop → product` 정방향·동일 트랜잭션·실패 시 롤백)로 그 product의 drop을 정리한다. 단 **진행 중(오픈/매진) 드롭이 하나라도 있으면 삭제를 차단** — drop 리스너가 라이브 드롭을 발견하면 예외(`DROP_OPEN_EXISTS`)를 던져 상품 삭제까지 롤백한다(라이브 거래를 끊지 않음·먼저 종료해야 함). 라이브가 없으면 자식 drop을 일괄 soft 삭제한다. 오픈 전 drop 캐시는 커밋 전에 evict하되, fence Lua가 실행 시점 Redis 시각과 캐시 `openAt`을 원자 비교해 그 사이 오픈됐으면 evict와 상품 삭제를 거절한다. 이미 오픈했던 종료 drop 캐시는 in-flight 롤백을 위해 TTL drain 동안 보존한다. **차단 판정은 product가 아니라 drop이 소유**(§4 역방향 참조 금지).
+- **drop 자체 삭제는 오픈 전만 soft 삭제**: 오픈 후 drop은 삭제가 아니라 **종료(CLOSE)**다(직접 삭제·캐스케이드 공통으로 라이브 drop은 soft 삭제 대상이 아님 — §8·STOCK_GATEKEEPER). 직접 삭제도 cache fence 실행 전에 오픈 경계를 넘으면 DB 삭제를 롤백하고 성공한 차감을 보존한다. 라이브 drop은 종료를 거쳐야 사라진다.
 - **원장 예외(감사 독립성)**: `stock_histories`는 soft 삭제된 drop을 계속 참조해야 하므로, drop을 **엔티티 연관이 아니라 값 참조(`drop_id` UUID 컬럼)**로 든다 — soft 삭제 필터가 걸리는 연관 네비게이션 자체가 없어 원장 집계·복구가 drop 삭제와 무관하다. (`@SoftDelete` 엔티티로의 to-one 지연 연관을 프레임워크가 금지하는 제약도 동시 회피)
 - **조회 정합성**: 부모 삭제로 인한 자식 숨김은 항상 자식→부모(정방향) 필터로 처리하고, 영속 계층 자동 필터에 위임한다.
 

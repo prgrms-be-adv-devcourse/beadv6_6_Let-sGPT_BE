@@ -12,19 +12,21 @@ import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class DropCacheWarmer {
 
   private final DropRepository dropRepository;
   private final StockHistoryRepository stockHistoryRepository;
   private final DropCacheRepository dropCacheRepository;
 
+  @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.REPEATABLE_READ)
   public void warm(UUID dropId) {
-    Drop drop = dropRepository.findById(dropId).orElse(null);
+    Drop drop = dropRepository.findByIdForUpdate(dropId).orElse(null);
     if (drop == null || drop.getStatus() == DropStatus.CLOSE) {
       return;
     }

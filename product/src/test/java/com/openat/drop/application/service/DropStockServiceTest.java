@@ -102,7 +102,7 @@ class DropStockServiceTest {
     @DisplayName("선행 요청의 차감 원장이 아직 커밋되지 않았으면 DUPLICATE를 성공으로 반환하지 않는다")
     void deduct_duplicateBeforeHistoryCommit_throwsInProgress() throws Exception {
       // given
-      given(dropCacheRepository.deduct(eq(mutation), any(Instant.class)))
+      given(dropCacheRepository.deduct(mutation))
           .willReturn(
               new StockCommandResult(StockCommandStatus.OK, 7),
               new StockCommandResult(StockCommandStatus.DUPLICATE, 7));
@@ -468,7 +468,7 @@ class DropStockServiceTest {
   }
 
   private void givenDeduct(StockCommandStatus status, long remaining) {
-    given(dropCacheRepository.deduct(eq(mutation), any(Instant.class)))
+    given(dropCacheRepository.deduct(mutation))
         .willReturn(new StockCommandResult(status, remaining));
   }
 

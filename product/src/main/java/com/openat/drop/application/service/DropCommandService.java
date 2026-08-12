@@ -55,7 +55,7 @@ public class DropCommandService implements DropCommandUseCase {
   public void delete(UUID dropId, UUID sellerId) {
     Drop drop =
         dropRepository
-            .findById(dropId)
+            .findByIdForUpdate(dropId)
             .orElseThrow(() -> new BusinessException(DropErrorCode.NOT_FOUND));
     if (!drop.getProduct().getSellerId().equals(sellerId)) {
       throw new BusinessException(DropErrorCode.NOT_OWNER);
@@ -66,7 +66,7 @@ public class DropCommandService implements DropCommandUseCase {
 
     if (drop.isBeforeOpen(Instant.now())) {
       dropRepository.delete(drop);
-      eventPublisher.publishEvent(new DropDeletedEvent(dropId));
+      eventPublisher.publishEvent(new DropDeletedEvent(dropId, true));
     } else {
       drop.close();
       eventPublisher.publishEvent(new DropClosedEvent(dropId));
@@ -76,7 +76,7 @@ public class DropCommandService implements DropCommandUseCase {
   @EventListener
   public void onProductDeleted(ProductDeletedEvent event) {
     Instant now = Instant.now();
-    List<Drop> drops = dropRepository.findAllByProductId(event.productId());
+    List<Drop> drops = dropRepository.findAllByProductIdForUpdate(event.productId());
 
     boolean hasLiveDrop = drops.stream().anyMatch(drop -> drop.isLive(now));
     if (hasLiveDrop) {
@@ -84,8 +84,9 @@ public class DropCommandService implements DropCommandUseCase {
     }
 
     for (Drop drop : drops) {
+      boolean beforeOpen = drop.isBeforeOpen(now);
       dropRepository.delete(drop);
-      eventPublisher.publishEvent(new DropDeletedEvent(drop.getId()));
+      eventPublisher.publishEvent(new DropDeletedEvent(drop.getId(), beforeOpen));
     }
   }
 }

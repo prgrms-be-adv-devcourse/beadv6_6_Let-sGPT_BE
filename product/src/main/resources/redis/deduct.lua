@@ -1,6 +1,6 @@
 -- 재고 차감 게이트키퍼 (단일 원자 실행)
 -- KEYS[1]=drop:{id}  KEYS[2]=drop:{id}:buyers  KEYS[3]=order:{orderId}
--- ARGV[1]=buyerId  ARGV[2]=quantity  ARGV[3]=now(epoch ms)  ARGV[4]=멱등키 TTL(초)
+-- ARGV[1]=buyerId  ARGV[2]=quantity  ARGV[3]=멱등키 TTL(초)
 -- 반환: "STATUS:remaining" (실패 시 remaining=-1)
 
 if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -15,7 +15,8 @@ local openAt = tonumber(redis.call('HGET', KEYS[1], 'openAt'))
 local closeAt = tonumber(redis.call('HGET', KEYS[1], 'closeAt'))
 local limit = tonumber(redis.call('HGET', KEYS[1], 'limitPerUser'))
 local remaining = tonumber(redis.call('HGET', KEYS[1], 'remaining'))
-local now = tonumber(ARGV[3])
+local redisTime = redis.call('TIME')
+local now = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
 local qty = tonumber(ARGV[2])
 
 if now < openAt then
@@ -48,7 +49,7 @@ if pttl > 0 then
 end
 
 redis.call('SET', KEYS[3], newRemaining)
-local idemTtl = tonumber(ARGV[4])
+local idemTtl = tonumber(ARGV[3])
 if idemTtl > 0 then
   redis.call('EXPIRE', KEYS[3], idemTtl)
 end

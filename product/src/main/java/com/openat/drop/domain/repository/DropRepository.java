@@ -16,11 +16,15 @@ public interface DropRepository {
 
   Optional<Drop> findById(UUID id);
 
+  Optional<Drop> findByIdForUpdate(UUID id);
+
   Optional<Drop> findWithProductById(UUID id);
 
   List<Drop> findAllByStatus(DropStatus status);
 
   List<Drop> findAllByProductId(UUID productId);
+
+  List<Drop> findAllByProductIdForUpdate(UUID productId);
 
   Page<Drop> search(DropSearchCondition condition, Instant now, Pageable pageable);
 }

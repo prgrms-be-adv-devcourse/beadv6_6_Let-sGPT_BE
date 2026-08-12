@@ -14,7 +14,6 @@ import com.openat.drop.domain.repository.DropRepository;
 import com.openat.drop.domain.repository.StockCommandResult;
 import com.openat.drop.domain.repository.StockHistoryRepository;
 import com.openat.drop.domain.repository.StockMutation;
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +35,7 @@ public class DropStockService implements DropStockUseCase {
   @Override
   public long deduct(DropStockCommand command) {
     StockMutation mutation = command.toMutation();
-    StockCommandResult reservation = dropCacheRepository.deduct(mutation, Instant.now());
+    StockCommandResult reservation = dropCacheRepository.deduct(mutation);
     StockCommandResult completed = switch (reservation.status()) {
       case OK ->
           persistOrCompensate(mutation, StockChangeType.DEDUCT, reservation.remaining())

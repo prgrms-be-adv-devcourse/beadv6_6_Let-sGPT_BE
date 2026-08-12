@@ -257,17 +257,19 @@ public final class ProductFixture {
 ## 8. 재고·동시성·멱등 가이드
 
 Redis Lua 게이트키퍼의 **동시 차감 정합성 축은 구현·검증됐다**(실제:
-`DropCacheRedisAdaptorTest` — Testcontainers Redis + `ExecutorService`). Redis 차감과
-PostgreSQL 원장 기록을 함께 경합시키는 end-to-end 검증, 성능 수치(k6)와 장애 회복 실험은
-별도다. 검증은 성격이 다른 세 축이고 **도구·위치가 다르다.**
+`DropCacheRedisAdaptorTest` — Testcontainers Redis + `ExecutorService`). 완료·동시 최초 롤백 재시도,
+L1 키 유실·교차 차감과 PostgreSQL 원장 잠금, 삭제 fence의 오픈 경계 경합은
+`DropStockConsistencyIntegrationTest`가
+담당한다. 성능 수치(k6)와 컨테이너 자체 중단 실험은 별도다. 검증은 성격이 다른 세 축이고
+**도구·위치가 다르다.**
 
 > **두 "수치"를 혼동하지 말 것.** §0~§7의 "수치"는 **커버리지 %**(채우려 들면 안 되는 양적 지표)이고, 아래 성능 "수치"는 **TPS·latency**(반드시 측정해야 하는 검증 대상)다.
 
 | 검증 축 | 무엇을 | 도구·위치 |
 | :-- | :-- | :-- |
-| **정합성** | 오버셀 차단·재고 음수 불가·멱등(중복 주문 1회만 차감/롤백)·보수적 거절 | 현재 `DropCacheRedisAdaptorTest`의 JUnit 동시성 테스트 + Testcontainers Redis. PostgreSQL 원장 제약은 별도 repository 테스트이며 `@Tag("concurrency")`는 아직 적용하지 않음 |
+| **정합성** | 오버셀 차단·재고 음수 불가·멱등(중복 주문 1회만 차감/롤백)·오픈 경계 삭제 차단·보수적 거절 | `DropCacheRedisAdaptorTest`의 Redis 동시성 테스트 + `DropStockConsistencyIntegrationTest`의 PostgreSQL·Redis 원장 잠금 및 lifecycle 경합 테스트. `@Tag("concurrency")`는 아직 적용하지 않음 |
 | **성능 수치** | TPS·p95/p99 latency·동시성 한계 | **k6** (`loadtest/`, test 밖·빌드와 분리) |
-| **장애 회복** | 캐시 다운 → RDB 원장 재워밍, 캐시·RDB 불일치 치유 | 통합 테스트(컨테이너 중단 시뮬레이션) — 여력 되면 |
+| **장애 회복** | 캐시 변경 실패 → DB 롤백, RDB 원장 재워밍, 캐시·RDB 불일치 치유 | `DropStockConsistencyIntegrationTest`의 lifecycle 실패·롤백·기동 복구. 컨테이너 자체 중단 실험은 별도 운영 검증 |
 
 **정합성(오버셀 차단)은 테스트 코드 안에서 한다** — 동시 요청을 만들어 결과를 단언:
 

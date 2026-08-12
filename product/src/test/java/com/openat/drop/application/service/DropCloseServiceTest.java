@@ -35,7 +35,7 @@ class DropCloseServiceTest {
     // given
     UUID dropId = UUID.randomUUID();
     Drop drop = drop();
-    given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.of(drop));
 
     // when
     dropCloseService.close(dropId);
@@ -52,7 +52,7 @@ class DropCloseServiceTest {
     UUID dropId = UUID.randomUUID();
     Drop drop = drop();
     drop.close();
-    given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.of(drop));
 
     // when
     dropCloseService.close(dropId);
@@ -66,7 +66,7 @@ class DropCloseServiceTest {
   void close_notFound_isNoOp() {
     // given
     UUID dropId = UUID.randomUUID();
-    given(dropRepository.findById(dropId)).willReturn(Optional.empty());
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.empty());
 
     // when
     dropCloseService.close(dropId);
