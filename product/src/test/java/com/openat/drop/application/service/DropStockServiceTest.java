@@ -25,6 +25,8 @@ import com.openat.drop.domain.repository.StockCommandResult;
 import com.openat.drop.domain.repository.StockHistoryRepository;
 import com.openat.drop.domain.repository.StockMutation;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -100,7 +102,7 @@ class DropStockServiceTest {
     @DisplayName("선행 요청의 차감 원장이 아직 커밋되지 않았으면 DUPLICATE를 성공으로 반환하지 않는다")
     void deduct_duplicateBeforeHistoryCommit_throwsInProgress() throws Exception {
       // given
-      given(dropCacheRepository.deduct(eq(mutation), any(Instant.class)))
+      given(dropCacheRepository.deduct(mutation))
           .willReturn(
               new StockCommandResult(StockCommandStatus.OK, 7),
               new StockCommandResult(StockCommandStatus.DUPLICATE, 7));
@@ -227,21 +229,42 @@ class DropStockServiceTest {
     }
 
     @Test
-    @DisplayName("DUPLICATE이고 롤백 원장이 커밋됐으면 캐시 결과를 반환하고 이력을 다시 기록하지 않는다")
-    void rollback_duplicateWithCommittedHistory_returnsWithoutRecording() {
+    @DisplayName("롤백 원장이 이미 커밋됐으면 캐시를 바꾸지 않고 현재 잔여를 반환한다")
+    void rollback_committedHistory_returnsCurrentRemainingWithoutCacheMutation() {
       // given
       givenValidDeduction();
       givenCompletedHistory(StockChangeType.ROLLBACK);
-      given(dropCacheRepository.rollback(mutation))
-          .willReturn(new StockCommandResult(StockCommandStatus.DUPLICATE, 5));
+      given(dropCacheRepository.findRemaining(List.of(dropId)))
+          .willReturn(Map.of(dropId, 5L));
 
       // when
       Optional<Long> remaining = dropStockService.rollback(command);
 
       // then
       assertThat(remaining).contains(5L);
+      then(dropCacheRepository).should(never()).rollback(any());
+      then(dropCacheRepository).should(never()).compensateRollback(any());
       then(stockHistoryRecorder).shouldHaveNoInteractions();
       then(dropStockMetrics).should().register(dropId);
+    }
+
+    @Test
+    @DisplayName("롤백 원장이 이미 커밋됐고 라이브 캐시가 없으면 변경 없이 빈 결과를 반환한다")
+    void rollback_committedHistoryWithoutCache_returnsEmptyWithoutMutation() {
+      // given
+      givenValidDeduction();
+      givenCompletedHistory(StockChangeType.ROLLBACK);
+      given(dropCacheRepository.findRemaining(List.of(dropId))).willReturn(Map.of());
+
+      // when
+      Optional<Long> remaining = dropStockService.rollback(command);
+
+      // then
+      assertThat(remaining).isEmpty();
+      then(dropCacheRepository).should(never()).rollback(any());
+      then(dropCacheRepository).should(never()).compensateRollback(any());
+      then(stockHistoryRecorder).shouldHaveNoInteractions();
+      then(dropStockMetrics).shouldHaveNoInteractions();
     }
 
     @Test
@@ -309,13 +332,12 @@ class DropStockServiceTest {
       givenHistory(
           StockChangeType.ROLLBACK,
           Optional.of(history(dropId, orderId, UUID.randomUUID(), 2, StockChangeType.ROLLBACK)));
-      given(dropCacheRepository.rollback(mutation))
-          .willReturn(new StockCommandResult(StockCommandStatus.DUPLICATE, 5));
 
       // when & then
       assertThatThrownBy(() -> dropStockService.rollback(command))
           .isInstanceOf(BusinessException.class)
           .hasFieldOrPropertyWithValue("errorCode", DropErrorCode.STOCK_REQUEST_MISMATCH);
+      then(dropCacheRepository).shouldHaveNoInteractions();
       then(stockHistoryRecorder).shouldHaveNoInteractions();
     }
 
@@ -324,7 +346,7 @@ class DropStockServiceTest {
     void rollback_withoutDeduction_throwsBeforeCacheMutation() {
       // given
       given(
-              stockHistoryRepository.findByOrderIdAndChangeType(
+              stockHistoryRepository.findByOrderIdAndChangeTypeForUpdate(
                   orderId, StockChangeType.DEDUCT))
           .willReturn(Optional.empty());
 
@@ -342,7 +364,7 @@ class DropStockServiceTest {
     void rollback_mismatchedDeduction_throwsBeforeCacheMutation(DeductMismatch mismatch) {
       // given
       given(
-              stockHistoryRepository.findByOrderIdAndChangeType(
+              stockHistoryRepository.findByOrderIdAndChangeTypeForUpdate(
                   orderId, StockChangeType.DEDUCT))
           .willReturn(Optional.of(mismatchedDeduction(mismatch)));
 
@@ -365,7 +387,9 @@ class DropStockServiceTest {
           .given(stockHistoryRecorder)
           .record(any(), eq(StockChangeType.ROLLBACK));
       given(dropCacheRepository.compensateRollback(mutation)).willReturn(Optional.of(3L));
-      givenCompletedHistory(StockChangeType.ROLLBACK);
+      givenHistoryAfterPrecheck(
+          StockChangeType.ROLLBACK,
+          history(dropId, orderId, buyerId, 2, StockChangeType.ROLLBACK));
 
       // when
       Optional<Long> remaining = dropStockService.rollback(command);
@@ -387,15 +411,9 @@ class DropStockServiceTest {
           .given(stockHistoryRecorder)
           .record(mutation, StockChangeType.ROLLBACK);
       given(dropCacheRepository.compensateRollback(mutation)).willReturn(Optional.of(3L));
-      givenHistory(
+      givenHistoryAfterPrecheck(
           StockChangeType.ROLLBACK,
-          Optional.of(
-              history(
-                  dropId,
-                  orderId,
-                  UUID.randomUUID(),
-                  2,
-                  StockChangeType.ROLLBACK)));
+          history(dropId, orderId, UUID.randomUUID(), 2, StockChangeType.ROLLBACK));
 
       // when & then
       assertThatThrownBy(() -> dropStockService.rollback(command))
@@ -450,12 +468,15 @@ class DropStockServiceTest {
   }
 
   private void givenDeduct(StockCommandStatus status, long remaining) {
-    given(dropCacheRepository.deduct(eq(mutation), any(Instant.class)))
+    given(dropCacheRepository.deduct(mutation))
         .willReturn(new StockCommandResult(status, remaining));
   }
 
   private void givenValidDeduction() {
-    givenCompletedHistory(StockChangeType.DEDUCT);
+    given(
+            stockHistoryRepository.findByOrderIdAndChangeTypeForUpdate(
+                orderId, StockChangeType.DEDUCT))
+        .willReturn(Optional.of(history(dropId, orderId, buyerId, 2, StockChangeType.DEDUCT)));
   }
 
   private void givenCompletedHistory(StockChangeType changeType) {
@@ -467,6 +488,11 @@ class DropStockServiceTest {
   private void givenHistory(StockChangeType changeType, Optional<StockHistory> history) {
     given(stockHistoryRepository.findByOrderIdAndChangeType(orderId, changeType))
         .willReturn(history);
+  }
+
+  private void givenHistoryAfterPrecheck(StockChangeType changeType, StockHistory history) {
+    given(stockHistoryRepository.findByOrderIdAndChangeType(orderId, changeType))
+        .willReturn(Optional.empty(), Optional.of(history));
   }
 
   private StockHistory mismatchedDeduction(DeductMismatch mismatch) {

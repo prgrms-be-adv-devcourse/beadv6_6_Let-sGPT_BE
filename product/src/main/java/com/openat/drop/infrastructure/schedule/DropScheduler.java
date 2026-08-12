@@ -6,15 +6,15 @@ import com.openat.drop.application.service.DropCloseService;
 import com.openat.drop.domain.event.DropClosedEvent;
 import com.openat.drop.domain.event.DropDeletedEvent;
 import com.openat.drop.domain.event.DropRegisteredEvent;
-import com.openat.drop.domain.repository.DropCacheRepository;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledFuture;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -22,12 +22,12 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class DropScheduler {
 
   private final TaskScheduler taskScheduler;
   private final DropCacheWarmer dropCacheWarmer;
   private final DropCloseService dropCloseService;
-  private final DropCacheRepository dropCacheRepository;
   private final DropProperties properties;
   private final Map<UUID, List<ScheduledFuture<?>>> scheduledTasks = new ConcurrentHashMap<>();
 
@@ -39,18 +39,16 @@ public class DropScheduler {
   @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
   public void onDropDeleted(DropDeletedEvent event) {
     cancel(event.dropId());
-    dropCacheRepository.evict(event.dropId());
   }
 
   @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
   public void onDropClosed(DropClosedEvent event) {
     cancel(event.dropId());
-    dropCacheRepository.markClosed(event.dropId(), Instant.now());
   }
 
   public void schedule(UUID dropId, Instant openAt, Instant closeAt) {
     cancel(dropId);
-    List<ScheduledFuture<?>> tasks = new ArrayList<>();
+    List<ScheduledFuture<?>> tasks = new CopyOnWriteArrayList<>();
     scheduledTasks.put(dropId, tasks);
 
     boolean closeScheduled = closeAt != null;
@@ -79,14 +77,32 @@ public class DropScheduler {
 
   private void warmAndCleanup(
       UUID dropId, List<ScheduledFuture<?>> ownTasks, boolean closeScheduled) {
-    dropCacheWarmer.warm(dropId);
-    if (!closeScheduled) {
-      scheduledTasks.remove(dropId, ownTasks);
+    try {
+      dropCacheWarmer.warm(dropId);
+    } finally {
+      if (!closeScheduled) {
+        scheduledTasks.remove(dropId, ownTasks);
+      }
     }
   }
 
   private void closeAndCleanup(UUID dropId, List<ScheduledFuture<?>> ownTasks) {
-    dropCloseService.close(dropId);
-    scheduledTasks.remove(dropId, ownTasks);
+    try {
+      dropCloseService.close(dropId);
+      scheduledTasks.remove(dropId, ownTasks);
+    } catch (RuntimeException closeFailure) {
+      if (scheduledTasks.get(dropId) != ownTasks) {
+        return;
+      }
+      log.warn("Failed to close drop. Scheduling retry. dropId={}", dropId, closeFailure);
+      ownTasks.removeIf(ScheduledFuture::isDone);
+      ScheduledFuture<?> retry =
+          taskScheduler.schedule(
+              () -> closeAndCleanup(dropId, ownTasks),
+              Instant.now().plus(properties.closeRetryDelay()));
+      if (retry != null) {
+        ownTasks.add(retry);
+      }
+    }
   }
 }

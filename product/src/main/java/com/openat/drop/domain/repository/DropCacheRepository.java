@@ -11,11 +11,13 @@ public interface DropCacheRepository {
 
   Map<UUID, Long> findRemaining(Collection<UUID> dropIds);
 
-  void markClosed(UUID dropId, Instant now);
+  void markClosed(UUID dropId);
 
-  void evict(UUID dropId);
+  void restoreCloseAt(UUID dropId, Instant closeAt);
 
-  StockCommandResult deduct(StockMutation mutation, Instant now);
+  boolean evictBeforeOpen(UUID dropId);
+
+  StockCommandResult deduct(StockMutation mutation);
 
   StockCommandResult rollback(StockMutation mutation);
 

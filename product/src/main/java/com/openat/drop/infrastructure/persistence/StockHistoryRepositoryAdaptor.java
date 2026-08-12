@@ -28,6 +28,12 @@ public class StockHistoryRepositoryAdaptor implements StockHistoryRepository {
   }
 
   @Override
+  public Optional<StockHistory> findByOrderIdAndChangeTypeForUpdate(
+      UUID orderId, StockChangeType changeType) {
+    return stockHistoryJpaRepository.findByOrderIdAndChangeTypeForUpdate(orderId, changeType);
+  }
+
+  @Override
   public long sumQuantityDeltaByDropId(UUID dropId) {
     return stockHistoryJpaRepository.sumQuantityDeltaByDropId(dropId);
   }

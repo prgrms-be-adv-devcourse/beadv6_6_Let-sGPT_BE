@@ -6,11 +6,12 @@ import com.openat.drop.domain.repository.StockHistoryRepository;
 import com.openat.drop.domain.repository.StockMutation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-@Transactional
+@Transactional(propagation = Propagation.REQUIRES_NEW)
 public class StockHistoryRecorder {
 
   private final StockHistoryRepository stockHistoryRepository;

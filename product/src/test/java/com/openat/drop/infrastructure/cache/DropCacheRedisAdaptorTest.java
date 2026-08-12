@@ -16,6 +16,9 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -25,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -49,7 +53,11 @@ class DropCacheRedisAdaptorTest {
     redisTemplate.afterPropertiesSet();
     DropProperties properties =
         new DropProperties(
-            Duration.ofMinutes(5), Duration.ofMinutes(10), Duration.ofDays(7), Duration.ofHours(1));
+            Duration.ofMinutes(5),
+            Duration.ofMinutes(10),
+            Duration.ofDays(7),
+            Duration.ofHours(1),
+            Duration.ofSeconds(10));
     adaptor = new DropCacheRedisAdaptor(redisTemplate, properties);
   }
 
@@ -202,7 +210,7 @@ class DropCacheRedisAdaptorTest {
     UUID buyerId = UUID.randomUUID();
     StockMutation mutation = new StockMutation(dropId, orderId, buyerId, 2);
     adaptor.warm(openState(dropId, 5, null));
-    adaptor.deduct(mutation, now());
+    adaptor.deduct(mutation);
 
     // when
     Optional<Long> remaining = adaptor.compensateDeduct(mutation);
@@ -221,7 +229,7 @@ class DropCacheRedisAdaptorTest {
     UUID buyerId = UUID.randomUUID();
     StockMutation mutation = new StockMutation(dropId, orderId, buyerId, 2);
     adaptor.warm(openState(dropId, 5, null));
-    adaptor.deduct(mutation, now());
+    adaptor.deduct(mutation);
     adaptor.rollback(mutation);
 
     // when
@@ -279,13 +287,195 @@ class DropCacheRedisAdaptorTest {
     deduct(dropId, inflightOrder, buyer, 1);
 
     // when
-    adaptor.markClosed(dropId, now());
+    adaptor.markClosed(dropId);
 
     // then
     StockCommandResult fresh = deduct(dropId, UUID.randomUUID(), UUID.randomUUID(), 1);
     assertThat(fresh.status()).isEqualTo(StockCommandStatus.CLOSED);
     StockCommandResult retry = deduct(dropId, inflightOrder, buyer, 1);
     assertThat(retry.status()).isEqualTo(StockCommandStatus.DUPLICATE);
+  }
+
+  @Test
+  @DisplayName("워밍은 drop과 buyers를 권위 있는 스냅샷으로 완전 교체한다")
+  void warm_replacesDropAndBuyersSnapshot() {
+    // given
+    UUID dropId = UUID.randomUUID();
+    UUID retainedBuyer = UUID.randomUUID();
+    UUID removedBuyer = UUID.randomUUID();
+    UUID newBuyer = UUID.randomUUID();
+    Instant openAt = now().minusSeconds(60);
+    Instant closeAt = now().plusSeconds(3600);
+    adaptor.warm(
+        new DropCacheState(
+            dropId,
+            1,
+            openAt.minusSeconds(60),
+            closeAt.plusSeconds(60),
+            9,
+            Map.of(retainedBuyer, 4L, removedBuyer, 2L)));
+
+    // when
+    adaptor.warm(
+        new DropCacheState(dropId, 8, openAt, closeAt, 3, Map.of(retainedBuyer, 1L, newBuyer, 2L)));
+
+    // then
+    assertThat(redisTemplate.opsForHash().entries("drop:" + dropId))
+        .containsOnly(
+            Map.entry("remaining", "8"),
+            Map.entry("openAt", Long.toString(openAt.toEpochMilli())),
+            Map.entry("closeAt", Long.toString(closeAt.toEpochMilli())),
+            Map.entry("limitPerUser", "3"));
+    assertThat(redisTemplate.opsForHash().entries("drop:" + dropId + ":buyers"))
+        .containsOnly(
+            Map.entry(retainedBuyer.toString(), "1"), Map.entry(newBuyer.toString(), "2"));
+    long dropTtl = redisTemplate.getExpire("drop:" + dropId, TimeUnit.MILLISECONDS);
+    long buyersTtl = redisTemplate.getExpire("drop:" + dropId + ":buyers", TimeUnit.MILLISECONDS);
+    assertThat(Math.abs(dropTtl - buyersTtl)).isLessThan(100L);
+  }
+
+  @Test
+  @DisplayName("구매자가 없는 권위 스냅샷은 기존 buyers 해시를 제거한다")
+  void warm_emptyBuyers_removesExistingHash() {
+    // given
+    UUID dropId = UUID.randomUUID();
+    adaptor.warm(
+        new DropCacheState(
+            dropId, 9, now().minusSeconds(60), null, null, Map.of(UUID.randomUUID(), 1L)));
+
+    // when
+    adaptor.warm(openState(dropId, 10, null));
+
+    // then
+    assertThat(redisTemplate.hasKey("drop:" + dropId + ":buyers")).isFalse();
+  }
+
+  @Test
+  @DisplayName("동시 관찰자는 워밍 전후 스냅샷 중 하나만 본다")
+  void warm_concurrentObservation_neverSeesPartialSnapshot() throws Exception {
+    // given
+    UUID dropId = UUID.randomUUID();
+    UUID buyerA = UUID.randomUUID();
+    UUID buyerB = UUID.randomUUID();
+    DropCacheState stateA = state(dropId, 10, Map.of(buyerA, 1L));
+    DropCacheState stateB = state(dropId, 20, Map.of(buyerB, 2L));
+    adaptor.warm(stateA);
+    RedisScript<Long> observeScript =
+        RedisScript.of(
+            "local r=redis.call('HGET',KEYS[1],'remaining');"
+                + "local a=redis.call('HGET',KEYS[2],ARGV[1]);"
+                + "local b=redis.call('HGET',KEYS[2],ARGV[2]);"
+                + "if r=='10' and a=='1' and not b then return 1 end;"
+                + "if r=='20' and b=='2' and not a then return 1 end;"
+                + "return 0",
+            Long.class);
+    AtomicBoolean partialObserved = new AtomicBoolean();
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+
+    // when
+    Future<?> writer =
+        executor.submit(
+            () -> {
+              await(start);
+              for (int index = 0; index < 200; index++) {
+                adaptor.warm(index % 2 == 0 ? stateB : stateA);
+              }
+            });
+    Future<?> reader =
+        executor.submit(
+            () -> {
+              await(start);
+              for (int index = 0; index < 400; index++) {
+                Long valid =
+                    redisTemplate.execute(
+                        observeScript,
+                        List.of("drop:" + dropId, "drop:" + dropId + ":buyers"),
+                        buyerA.toString(),
+                        buyerB.toString());
+                if (valid == null || valid == 0) {
+                  partialObserved.set(true);
+                  return;
+                }
+              }
+            });
+    start.countDown();
+    writer.get(10, TimeUnit.SECONDS);
+    reader.get(10, TimeUnit.SECONDS);
+    executor.shutdownNow();
+
+    // then
+    assertThat(partialObserved).isFalse();
+  }
+
+  @Test
+  @DisplayName("종료 표시는 짧게 남은 drop과 buyers TTL을 drain 여유까지 연장한다")
+  void markClosed_shortTtl_extendsDrainWindow() {
+    // given
+    UUID dropId = UUID.randomUUID();
+    UUID buyerId = UUID.randomUUID();
+    adaptor.warm(state(dropId, 8, Map.of(buyerId, 2L)));
+    redisTemplate.expire("drop:" + dropId, Duration.ofSeconds(2));
+    redisTemplate.expire("drop:" + dropId + ":buyers", Duration.ofSeconds(2));
+
+    // when
+    adaptor.markClosed(dropId);
+
+    // then
+    assertThat(redisTemplate.getExpire("drop:" + dropId, TimeUnit.MILLISECONDS))
+        .isGreaterThan(595_000L);
+    assertThat(redisTemplate.getExpire("drop:" + dropId + ":buyers", TimeUnit.MILLISECONDS))
+        .isGreaterThan(595_000L);
+  }
+
+  @Test
+  @DisplayName("캐시 차단 시점에도 오픈 전이면 drop과 buyers를 함께 제거한다")
+  void evictBeforeOpen_preOpen_evictsSnapshot() {
+    UUID dropId = UUID.randomUUID();
+    UUID buyerId = UUID.randomUUID();
+    adaptor.warm(
+        new DropCacheState(
+            dropId, 8, Instant.now().plusSeconds(60), null, null, Map.of(buyerId, 2L)));
+
+    boolean evicted = adaptor.evictBeforeOpen(dropId);
+
+    assertThat(evicted).isTrue();
+    assertThat(redisTemplate.hasKey("drop:" + dropId)).isFalse();
+    assertThat(redisTemplate.hasKey("drop:" + dropId + ":buyers")).isFalse();
+  }
+
+  @Test
+  @DisplayName("캐시 차단 시점에 이미 오픈됐으면 스냅샷을 보존하고 삭제를 거절한다")
+  void evictBeforeOpen_opened_retainsSnapshot() {
+    UUID dropId = UUID.randomUUID();
+    adaptor.warm(openState(dropId, 10, null));
+
+    boolean evicted = adaptor.evictBeforeOpen(dropId);
+
+    assertThat(evicted).isFalse();
+    assertThat(redisTemplate.opsForHash().get("drop:" + dropId, "remaining")).isEqualTo("10");
+    assertThat(deduct(dropId, UUID.randomUUID(), UUID.randomUUID(), 1).status())
+        .isEqualTo(StockCommandStatus.OK);
+  }
+
+  @Test
+  @DisplayName("종료 롤백은 closeAt만 복구하고 drain 중 재고와 구매자 변경을 보존한다")
+  void restoreCloseAt_preservesInflightRollbackMutation() {
+    // given
+    UUID dropId = UUID.randomUUID();
+    UUID buyerId = UUID.randomUUID();
+    adaptor.warm(state(dropId, 8, Map.of(buyerId, 2L)));
+    adaptor.markClosed(dropId);
+    rollback(dropId, UUID.randomUUID(), buyerId, 1);
+
+    // when
+    adaptor.restoreCloseAt(dropId, null);
+
+    // then
+    assertThat(redisTemplate.opsForHash().get("drop:" + dropId, "closeAt")).isEqualTo("-1");
+    assertThat(redisTemplate.opsForHash().get("drop:" + dropId, "remaining")).isEqualTo("9");
+    assertThat(redisTemplate.opsForHash().get("drop:" + dropId + ":buyers", buyerId.toString()))
+        .isEqualTo("1");
   }
 
   @Test
@@ -318,12 +508,25 @@ class DropCacheRedisAdaptorTest {
     return new DropCacheState(dropId, remaining, openAt, null, limitPerUser, Map.of());
   }
 
+  private DropCacheState state(UUID dropId, long remaining, Map<UUID, Long> buyers) {
+    return new DropCacheState(dropId, remaining, now().minusSeconds(60), null, null, buyers);
+  }
+
+  private void await(CountDownLatch latch) {
+    try {
+      latch.await();
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(interrupted);
+    }
+  }
+
   private Instant now() {
     return Instant.now();
   }
 
   private StockCommandResult deduct(UUID dropId, UUID orderId, UUID buyerId, int quantity) {
-    return adaptor.deduct(new StockMutation(dropId, orderId, buyerId, quantity), now());
+    return adaptor.deduct(new StockMutation(dropId, orderId, buyerId, quantity));
   }
 
   private StockCommandResult rollback(UUID dropId, UUID orderId, UUID buyerId, int quantity) {
