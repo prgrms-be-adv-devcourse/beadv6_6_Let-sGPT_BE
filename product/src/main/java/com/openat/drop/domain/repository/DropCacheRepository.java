@@ -3,6 +3,7 @@ package com.openat.drop.domain.repository;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface DropCacheRepository {
@@ -10,15 +11,17 @@ public interface DropCacheRepository {
 
   Map<UUID, Long> findRemaining(Collection<UUID> dropIds);
 
-  void markClosed(UUID dropId, Instant now);
+  void markClosed(UUID dropId);
 
-  void evict(UUID dropId);
+  void restoreCloseAt(UUID dropId, Instant closeAt);
 
-  StockCommandResult deduct(StockMutation mutation, Instant now);
+  boolean evictBeforeOpen(UUID dropId);
+
+  StockCommandResult deduct(StockMutation mutation);
 
   StockCommandResult rollback(StockMutation mutation);
 
-  void compensateDeduct(StockMutation mutation);
+  Optional<Long> compensateDeduct(StockMutation mutation);
 
-  void compensateRollback(StockMutation mutation);
+  Optional<Long> compensateRollback(StockMutation mutation);
 }

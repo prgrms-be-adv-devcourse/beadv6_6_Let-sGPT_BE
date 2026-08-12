@@ -11,6 +11,7 @@ import com.querydsl.jpa.impl.JPAQueryFactory;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -39,6 +40,19 @@ public class ProductRepositoryAdaptor implements ProductRepository {
   }
 
   @Override
+  public Optional<Product> findByIdForUpdate(UUID id) {
+    return productJpaRepository.findByIdForUpdate(id);
+  }
+
+  @Override
+  public List<Product> findAllByIdForUpdate(Collection<UUID> ids) {
+    if (ids.isEmpty()) {
+      return List.of();
+    }
+    return productJpaRepository.findAllByIdForUpdate(ids);
+  }
+
+  @Override
   public Page<Product> search(ProductSearchCondition condition, Pageable pageable) {
     QProduct product = QProduct.product;
 
@@ -59,7 +73,7 @@ public class ProductRepositoryAdaptor implements ProductRepository {
             .leftJoin(product.category)
             .fetchJoin()
             .where(where)
-            .orderBy(product.createdAt.desc())
+            .orderBy(product.createdAt.desc(), product.id.desc())
             .offset(pageable.getOffset())
             .limit(pageable.getPageSize())
             .fetch();

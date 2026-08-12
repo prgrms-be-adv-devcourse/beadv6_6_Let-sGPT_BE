@@ -82,6 +82,9 @@ public class Product {
   @Column(name = "updated_at", nullable = false, comment = "수정 일시")
   private Instant updatedAt;
 
+  @Column(name = "search_snapshot_sequence")
+  private Long searchSnapshotSequence;
+
   @Builder(builderMethodName = "create")
   private Product(
       UUID sellerId,
@@ -101,6 +104,7 @@ public class Product {
     if (imageKeys != null) {
       this.imageKeys.addAll(imageKeys);
     }
+    this.searchSnapshotSequence = 1L;
   }
 
   public void update(
@@ -119,5 +123,18 @@ public class Product {
     if (imageKeys != null) {
       this.imageKeys.addAll(imageKeys);
     }
+    advanceSearchSnapshotSequence();
+  }
+
+  public void refreshSearchProjection() {
+    advanceSearchSnapshotSequence();
+  }
+
+  public long currentSearchSnapshotSequence() {
+    return searchSnapshotSequence == null ? 0L : searchSnapshotSequence;
+  }
+
+  private void advanceSearchSnapshotSequence() {
+    searchSnapshotSequence = currentSearchSnapshotSequence() + 1;
   }
 }

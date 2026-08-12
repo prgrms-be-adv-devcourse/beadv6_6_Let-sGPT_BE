@@ -3,14 +3,20 @@ package com.openat.chat.infrastructure.inference;
 import com.openat.chat.application.dto.ChatCommand;
 import com.openat.chat.application.dto.ChatRequestDeadline;
 import com.openat.chat.application.dto.EvidenceSegment;
+import com.openat.chat.application.exception.AdminChatExecutionException;
+import com.openat.chat.application.exception.AdminChatExecutionException.Reason;
 import com.openat.chat.application.port.AdminChatInferencePort;
+import com.openat.chat.application.port.ChatStreamClosedException;
 import com.openat.chat.domain.planning.TimeRangePreset;
 import com.openat.chat.domain.planning.TrendGrain;
 import com.openat.chat.domain.query.AdminAnalyticsQueryPlan.Comparison;
 import com.openat.chat.domain.query.AdminAnalyticsQueryPlan.Dataset;
 import com.openat.chat.domain.query.AdminAnalyticsQueryPlan.SortDirection;
 import com.openat.chat.domain.query.InternalDataDomain;
+import com.openat.chat.infrastructure.inference.ChatInferenceMetrics.Outcome;
+import com.openat.chat.infrastructure.inference.ChatInferenceMetrics.Stage;
 import com.openat.chat.infrastructure.inference.InternalDataSchemaRegistry.SchemaShard;
+import com.openat.chat.infrastructure.inference.OpenAiAnswerStreamTransport.AnswerRequest;
 import com.openat.chat.infrastructure.inference.tool.AdminDataTools;
 import com.openat.chat.infrastructure.inference.tool.CryptoPriceTools;
 import com.openat.chat.infrastructure.inference.tool.InternalDataSchemaSelector;
@@ -26,14 +32,17 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,7 +57,6 @@ import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Flux;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -59,6 +67,10 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
       LoggerFactory.getLogger(SpringAiAdminChatInferenceAdapter.class);
   private static final String BINDING_TOOL = "submitInternalQueryBindings";
   private static final int MAX_EARLY_ANSWER_CHARACTERS = 2_500;
+  private static final String BINDING_REPAIR_INSTRUCTION =
+      "\n직전 응답 형식이 올바르지 않았다. 이번에는 정확히 하나의 "
+          + BINDING_TOOL
+          + " 호출만 반환한다.";
 
   private final ChatModel chatModel;
   private final AdminChatPromptFactory prompts;
@@ -66,6 +78,9 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
   private final ChatInferenceProperties properties;
   private final ObjectMapper objectMapper;
   private final ExecutorService taskExecutor;
+  private final ChatPromptBudgetGuard promptBudget;
+  private final ChatInferenceMetrics metrics;
+  private final OpenAiAnswerStreamTransport answerStreamTransport;
   private final List<ToolCallback> routingTools;
   private final ToolCallback bindingTool;
 
@@ -76,6 +91,9 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
       ChatInferenceProperties properties,
       ObjectMapper objectMapper,
       @Qualifier("chatTaskExecutor") ExecutorService taskExecutor,
+      ChatPromptBudgetGuard promptBudget,
+      ChatInferenceMetrics metrics,
+      OpenAiAnswerStreamTransport answerStreamTransport,
       AdminDataTools adminDataTools,
       CryptoPriceTools cryptoPriceTools,
       InternalDataSchemaSelector schemaSelector,
@@ -89,6 +107,9 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
     this.properties = properties;
     this.objectMapper = objectMapper;
     this.taskExecutor = taskExecutor;
+    this.promptBudget = promptBudget;
+    this.metrics = metrics;
+    this.answerStreamTransport = answerStreamTransport;
     this.routingTools =
         Arrays.asList(
             ToolCallbacks.from(
@@ -103,24 +124,35 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
 
   @Override
   public boolean isAvailable() {
-    return properties.isEnabled() && properties.isLocalOnlyRoute();
+    return properties.isEnabled()
+        && properties.isLocalOnlyRoute(answerStreamTransport.baseUrl());
   }
 
   @Override
   public RoutingResponse route(ChatCommand command, ChatRequestDeadline deadline) {
     long startedAt = System.nanoTime();
-    RoutingResponse first = routeOnce(command, deadline);
-    if (!first.content().isBlank() || first.hasTools()) {
-      logStage(command, "ROUTING", startedAt, "tools=" + first.toolInvocations().size());
-      return first;
+    Outcome outcome = Outcome.ERROR;
+    try {
+      RoutingResponse first = routeOnce(command, deadline);
+      if (!first.content().isBlank() || first.hasTools()) {
+        logStage(command, "ROUTING", startedAt, "tools=" + first.toolInvocations().size());
+        outcome = Outcome.SUCCESS;
+        return first;
+      }
+      RoutingResponse retry = routeOnce(command, deadline);
+      logStage(
+          command,
+          "ROUTING",
+          startedAt,
+          "tools=" + retry.toolInvocations().size() + ",emptyRetry=true");
+      outcome = Outcome.SUCCESS;
+      return retry;
+    } catch (AdminChatExecutionException exception) {
+      outcome = metrics.outcome(exception);
+      throw exception;
+    } finally {
+      metrics.recordStage(Stage.ROUTING, outcome, startedAt);
     }
-    RoutingResponse retry = routeOnce(command, deadline);
-    logStage(
-        command,
-        "ROUTING",
-        startedAt,
-        "tools=" + retry.toolInvocations().size() + ",emptyRetry=true");
-    return retry;
   }
 
   @Override
@@ -130,49 +162,59 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
       List<EvidenceSegment> evidence,
       ChatRequestDeadline deadline) {
     long startedAt = System.nanoTime();
-    String fixedPrompt =
-        prompts.bindingSystem("", true)
-            + prompts.bindingUser(command, evidence, true)
-            + bindingTool.getToolDefinition().inputSchema();
-    List<SchemaShard> shards = schemas.shards(domains, fixedPrompt);
-    List<Future<ShardBindingResponse>> futures = new ArrayList<>();
-    for (SchemaShard shard : shards) {
-      futures.add(taskExecutor.submit(() -> bindShard(command, evidence, shard, deadline, false)));
-    }
+    Outcome outcome = Outcome.ERROR;
+    try {
+      String fixedPrompt =
+          prompts.bindingSystem("", true)
+              + BINDING_REPAIR_INSTRUCTION
+              + prompts.bindingUser(command, evidence, true)
+              + toolDefinitionText(bindingTool);
+      List<SchemaShard> shards = schemas.shards(domains, fixedPrompt);
+      Set<String> deliverableEvidenceIds = deliverableEvidenceIds(evidence);
+      List<ShardBindingResponse> responses =
+          executeShards(command, evidence, deliverableEvidenceIds, shards, deadline);
+      responses.sort(Comparator.comparingInt(ShardBindingResponse::shardIndex));
 
-    List<ShardBindingResponse> responses = awaitAll(futures, deadline);
-    responses.sort(Comparator.comparingInt(ShardBindingResponse::shardIndex));
-
-    String earlyAnswer =
-        responses.stream()
-            .filter(response -> response.shardIndex() == 0)
-            .map(ShardBindingResponse::earlyAnswer)
-            .findFirst()
-            .orElse("");
-    List<QueryBinding> merged = new ArrayList<>();
-    Set<QuerySpec> uniqueQueries = new LinkedHashSet<>();
-    for (ShardBindingResponse response : responses) {
-      for (QueryBinding binding : response.bindings()) {
-        if (binding.status() == BindingStatus.SUCCESS
-            && binding.query() != null
-            && !uniqueQueries.add(binding.query())) {
-          continue;
+      ShardBindingResponse primary =
+          responses.stream()
+              .filter(response -> response.shardIndex() == 0)
+              .findFirst()
+              .orElse(new ShardBindingResponse(0, "", Set.of(), List.of()));
+      List<QueryBinding> merged = new ArrayList<>();
+      Set<QuerySpec> uniqueQueries = new LinkedHashSet<>();
+      for (ShardBindingResponse response : responses) {
+        for (QueryBinding binding : response.bindings()) {
+          if (binding.status() == BindingStatus.SUCCESS
+              && binding.query() != null
+              && !uniqueQueries.add(binding.query())) {
+            continue;
+          }
+          merged.add(binding);
         }
-        merged.add(binding);
       }
+      BindingResponse result =
+          new BindingResponse(
+              primary.earlyAnswer(),
+              primary.deliveredEvidenceIds(),
+              List.copyOf(merged));
+      logStage(
+          command,
+          "BINDING",
+          startedAt,
+          "shards="
+              + shards.size()
+              + ",bindings="
+              + result.bindings().size()
+              + ",summary="
+              + bindingSummary(result.bindings()));
+      outcome = Outcome.SUCCESS;
+      return result;
+    } catch (AdminChatExecutionException exception) {
+      outcome = metrics.outcome(exception);
+      throw exception;
+    } finally {
+      metrics.recordStage(Stage.BINDING, outcome, startedAt);
     }
-    BindingResponse result = new BindingResponse(earlyAnswer, List.copyOf(merged));
-    logStage(
-        command,
-        "BINDING",
-        startedAt,
-        "shards="
-            + shards.size()
-            + ",bindings="
-            + result.bindings().size()
-            + ",summary="
-            + bindingSummary(result.bindings()));
-    return result;
   }
 
   @Override
@@ -182,73 +224,80 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
       Consumer<String> chunkConsumer,
       ChatRequestDeadline deadline) {
     long startedAt = System.nanoTime();
-    AtomicBoolean firstChunk = new AtomicBoolean(true);
-    AtomicReference<String> finishReason = new AtomicReference<>("");
-    OpenAiChatOptions options = baseOptions(properties.getAnswerMaxTokens()).build();
-    Prompt prompt = prompt(prompts.answerSystem(), prompts.answerUser(command, evidence), options);
-    Duration timeout = boundedTimeout(deadline);
-
-    Flux<String> content =
-        chatModel.stream(prompt)
-            .doOnNext(response -> captureFinishReason(response, finishReason))
-            .flatMapIterable(
-                response -> {
-                  if (response == null || response.getResult() == null) {
-                    return List.<String>of();
-                  }
-                  String text = response.getResult().getOutput().getText();
-                  return text == null || text.isEmpty() ? List.<String>of() : List.of(text);
-                });
-    content
-        .doOnNext(
+    Outcome outcome = Outcome.ERROR;
+    try {
+      AtomicBoolean firstChunk = new AtomicBoolean(true);
+      String system = prompts.answerSystem();
+      String user =
+          budgetedUser(
+              Stage.ANSWER,
+              system,
+              command,
+              candidate -> prompts.answerUser(candidate, evidence),
+              List.of());
+      Duration timeout = boundedStreamingTimeout(deadline, startedAt);
+      try {
+        answerStreamTransport.stream(
+            new AnswerRequest(system, user, properties.getAnswerMaxTokens()),
             chunk -> {
               if (firstChunk.compareAndSet(true, false)) {
                 logStage(command, "ANSWER_FIRST_CHUNK", startedAt, "");
               }
               chunkConsumer.accept(chunk);
-            })
-        .blockLast(timeout);
-    if (!"stop".equalsIgnoreCase(finishReason.get())) {
-      throw new IllegalStateException("추론 서버가 정상 종료 증거 없이 답변 스트림을 끝냈어요.");
-    }
-    logStage(command, "ANSWER", startedAt, "");
-  }
-
-  private void captureFinishReason(ChatResponse response, AtomicReference<String> finishReason) {
-    if (response == null
-        || response.getResult() == null
-        || response.getResult().getMetadata() == null) {
-      return;
-    }
-    String value = response.getResult().getMetadata().getFinishReason();
-    if (value != null && !value.isBlank()) {
-      finishReason.set(value);
+            },
+            timeout);
+      } catch (RuntimeException exception) {
+        throw classifyStreamingFailure(exception);
+      }
+      logStage(command, "ANSWER", startedAt, "");
+      outcome = Outcome.SUCCESS;
+    } catch (ChatStreamClosedException exception) {
+      outcome = Outcome.CANCELLED;
+      throw exception;
+    } catch (AdminChatExecutionException exception) {
+      outcome = metrics.outcome(exception);
+      throw exception;
+    } finally {
+      metrics.recordStage(Stage.ANSWER, outcome, startedAt);
     }
   }
 
   private RoutingResponse routeOnce(ChatCommand command, ChatRequestDeadline deadline) {
+    String system = prompts.routingSystem();
+    String user =
+        budgetedUser(
+            Stage.ROUTING, system, command, prompts::routingUser, routingTools);
     OpenAiChatOptions options =
         baseOptions(properties.getRoutingMaxTokens())
             .toolCallbacks(routingTools)
             .toolChoice("auto")
             .parallelToolCalls(true)
             .build();
-    Prompt prompt = prompt(prompts.routingSystem(), prompts.routingUser(command), options);
-    AssistantMessage response = callWithDeadline(() -> output(chatModel.call(prompt)), deadline);
-    return new RoutingResponse(response.getText(), toolInvocations(response));
+    Prompt prompt = prompt(system, user, options);
+    ChatResponse response = callWithDeadline(() -> chatModel.call(prompt), deadline);
+    AssistantMessage output = output(response);
+    return new RoutingResponse(
+        output.getText(), toolInvocations(output), finishReason(response));
   }
 
   private ShardBindingResponse bindShard(
       ChatCommand command,
       List<EvidenceSegment> evidence,
+      Set<String> deliverableEvidenceIds,
       SchemaShard shard,
       ChatRequestDeadline deadline,
       boolean repair) {
     String system = prompts.bindingSystem(shard.schema(), shard.primary());
     if (repair) {
-      system += "\n직전 응답 형식이 올바르지 않았다. 이번에는 정확히 하나의 " + BINDING_TOOL + " 호출만 반환한다.";
+      system += BINDING_REPAIR_INSTRUCTION;
     }
-    String user = prompts.bindingUser(command, evidence, shard.primary());
+    String user =
+        budgetedUser(
+            Stage.BINDING,
+            system,
+            command,
+            candidate -> prompts.bindingUser(candidate, evidence, shard.primary()),
+            List.of(bindingTool));
     OpenAiChatOptions options =
         baseOptions(properties.getBindingMaxTokens())
             .toolCallbacks(List.of(bindingTool))
@@ -266,10 +315,14 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
       if (response.getToolCalls().size() != 1 || calls.size() != 1) {
         throw new IllegalArgumentException("구조화 도구 호출은 정확히 하나여야 해요.");
       }
-      return parseBindingArguments(shard, calls.getFirst().arguments());
+      return parseBindingArguments(
+          shard, calls.getFirst().arguments(), deliverableEvidenceIds);
+    } catch (AdminChatExecutionException exception) {
+      throw exception;
     } catch (IllegalArgumentException exception) {
       if (!repair) {
-        return bindShard(command, evidence, shard, deadline, true);
+        return bindShard(
+            command, evidence, deliverableEvidenceIds, shard, deadline, true);
       }
       return failedShard(shard, "구조화 응답 형식을 두 번 확인했지만 읽지 못했어요.");
     } catch (RuntimeException exception) {
@@ -277,7 +330,8 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
     }
   }
 
-  private ShardBindingResponse parseBindingArguments(SchemaShard shard, String arguments) {
+  private ShardBindingResponse parseBindingArguments(
+      SchemaShard shard, String arguments, Set<String> deliverableEvidenceIds) {
     JsonNode root;
     try {
       root = objectMapper.readTree(arguments);
@@ -290,6 +344,15 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
     }
 
     String earlyAnswer = shard.primary() ? safeEarlyAnswer(text(root, "earlyAnswer")) : "";
+    Set<String> deliveredEvidenceIds =
+        shard.primary()
+            ? validatedDeliveredEvidenceIds(
+                root.get("deliveredEvidenceIds"), deliverableEvidenceIds)
+            : Set.of();
+    if (earlyAnswer.isBlank() || deliveredEvidenceIds.isEmpty()) {
+      earlyAnswer = "";
+      deliveredEvidenceIds = Set.of();
+    }
     List<QueryBinding> bindings = new ArrayList<>();
     int itemIndex = 0;
     for (JsonNode bindingNode : bindingsNode) {
@@ -297,7 +360,8 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
       bindings.add(parseBinding(id, shard.domains(), bindingNode));
       itemIndex++;
     }
-    return new ShardBindingResponse(shard.index(), earlyAnswer, List.copyOf(bindings));
+    return new ShardBindingResponse(
+        shard.index(), earlyAnswer, deliveredEvidenceIds, List.copyOf(bindings));
   }
 
   private QueryBinding parseBinding(
@@ -387,6 +451,45 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
     return List.copyOf(values);
   }
 
+  private String budgetedUser(
+      Stage stage,
+      String system,
+      ChatCommand command,
+      Function<ChatCommand, String> userFactory,
+      List<ToolCallback> tools) {
+    String preferred = userFactory.apply(command);
+    try {
+      promptBudget.verify(stage, system, preferred, tools);
+      return preferred;
+    } catch (AdminChatExecutionException exception) {
+      if (exception.reason() != Reason.INPUT_BUDGET_EXCEEDED
+          || command.previousTurnContext().isEmpty()) {
+        throw exception;
+      }
+      String withoutPreviousTurn = userFactory.apply(command.withoutPreviousTurn());
+      promptBudget.verify(stage, system, withoutPreviousTurn, tools);
+      return withoutPreviousTurn;
+    }
+  }
+
+  private Set<String> deliverableEvidenceIds(List<EvidenceSegment> evidence) {
+    return evidence.stream()
+        .filter(segment -> segment.status() != EvidenceSegment.Status.FAILED)
+        .map(EvidenceSegment::id)
+        .collect(java.util.stream.Collectors.toUnmodifiableSet());
+  }
+
+  private Set<String> validatedDeliveredEvidenceIds(
+      JsonNode node, Set<String> deliverableEvidenceIds) {
+    Set<String> validated = new LinkedHashSet<>();
+    for (String id : texts(node)) {
+      if (deliverableEvidenceIds.contains(id)) {
+        validated.add(id);
+      }
+    }
+    return Set.copyOf(validated);
+  }
+
   private ShardBindingResponse failedShard(SchemaShard shard, String reason) {
     List<QueryBinding> failures = new ArrayList<>();
     int index = 0;
@@ -401,7 +504,7 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
               reason));
       index++;
     }
-    return new ShardBindingResponse(shard.index(), "", List.copyOf(failures));
+    return new ShardBindingResponse(shard.index(), "", Set.of(), List.copyOf(failures));
   }
 
   private AssistantMessage output(ChatResponse response) {
@@ -409,6 +512,16 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
       throw new IllegalStateException("추론 서버가 빈 응답을 반환했어요.");
     }
     return response.getResult().getOutput();
+  }
+
+  private String finishReason(ChatResponse response) {
+    if (response == null
+        || response.getResult() == null
+        || response.getResult().getMetadata() == null) {
+      return "";
+    }
+    String finishReason = response.getResult().getMetadata().getFinishReason();
+    return finishReason == null ? "" : finishReason;
   }
 
   private List<ToolInvocation> toolInvocations(AssistantMessage message) {
@@ -432,59 +545,168 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
   }
 
   private <T> T callWithDeadline(Supplier<T> operation, ChatRequestDeadline deadline) {
-    Future<T> future = taskExecutor.submit(operation::get);
+    Duration timeout = boundedTimeout(deadline);
+    Future<T> future;
     try {
-      Duration timeout = boundedTimeout(deadline);
-      return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+      future = taskExecutor.submit(operation::get);
+    } catch (RejectedExecutionException exception) {
+      throw new AdminChatExecutionException(
+          Reason.BUSY, "추론 실행기가 포화됐어요.", exception);
+    }
+    try {
+      return future.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
     } catch (InterruptedException exception) {
       future.cancel(true);
       Thread.currentThread().interrupt();
-      throw new IllegalStateException("추론 요청이 취소됐어요.", exception);
+      throw new AdminChatExecutionException(
+          Reason.CANCELLED, "추론 요청이 취소됐어요.", exception);
     } catch (ExecutionException exception) {
       throw propagate(exception.getCause());
     } catch (TimeoutException exception) {
       future.cancel(true);
-      throw new IllegalStateException("추론 단계 응답 시간이 초과됐어요.", exception);
+      throw new AdminChatExecutionException(
+          Reason.TIMEOUT, "추론 단계 응답 시간이 초과됐어요.", exception);
     }
   }
 
-  private <T> List<T> awaitAll(List<Future<T>> futures, ChatRequestDeadline deadline) {
-    List<T> values = new ArrayList<>();
+  private List<ShardBindingResponse> executeShards(
+      ChatCommand command,
+      List<EvidenceSegment> evidence,
+      Set<String> deliverableEvidenceIds,
+      List<SchemaShard> shards,
+      ChatRequestDeadline deadline) {
+    if (shards.isEmpty()) {
+      return List.of();
+    }
+    StageBudget budget = stageBudget(deadline);
+    List<Callable<ShardBindingResponse>> tasks =
+        shards.stream()
+            .<Callable<ShardBindingResponse>>map(
+                shard ->
+                    () ->
+                        bindShard(
+                            command,
+                            evidence,
+                            deliverableEvidenceIds,
+                            shard,
+                            deadline,
+                            false))
+            .toList();
+    List<Future<ShardBindingResponse>> futures;
     try {
-      for (Future<T> future : futures) {
-        Duration timeout = boundedTimeout(deadline);
-        values.add(future.get(timeout.toMillis(), TimeUnit.MILLISECONDS));
+      futures =
+          taskExecutor.invokeAll(tasks, budget.timeout().toNanos(), TimeUnit.NANOSECONDS);
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new AdminChatExecutionException(
+          Reason.CANCELLED, "병렬 추론 요청이 취소됐어요.", exception);
+    } catch (RejectedExecutionException exception) {
+      throw new AdminChatExecutionException(
+          Reason.BUSY, "병렬 추론 실행기가 포화됐어요.", exception);
+    }
+
+    boolean timedOut = futures.stream().anyMatch(Future::isCancelled);
+    if (timedOut && budget.requestDeadlineBound()) {
+      throw new AdminChatExecutionException(
+          Reason.TIMEOUT, "병렬 추론 중 요청 기한이 지났어요.");
+    }
+
+    List<ShardBindingResponse> responses = new ArrayList<>();
+    for (int index = 0; index < futures.size(); index++) {
+      SchemaShard shard = shards.get(index);
+      try {
+        responses.add(futures.get(index).get());
+      } catch (CancellationException exception) {
+        responses.add(failedShard(shard, "구조화 추론 시간이 초과됐어요."));
+      } catch (ExecutionException exception) {
+        if (exception.getCause() instanceof AdminChatExecutionException executionException) {
+          throw executionException;
+        }
+        responses.add(failedShard(shard, "구조화 추론 요청을 완료하지 못했어요."));
+      } catch (InterruptedException exception) {
+        Thread.currentThread().interrupt();
+        throw new AdminChatExecutionException(
+            Reason.CANCELLED, "병렬 추론 결과 수집이 취소됐어요.", exception);
       }
-      return values;
-    } catch (InterruptedException exception) {
-      Thread.currentThread().interrupt();
-      cancelAll(futures);
-      throw new IllegalStateException("병렬 추론 요청이 취소됐어요.", exception);
-    } catch (ExecutionException exception) {
-      cancelAll(futures);
-      throw propagate(exception.getCause());
-    } catch (TimeoutException exception) {
-      cancelAll(futures);
-      throw new IllegalStateException("병렬 추론 단계 응답 시간이 초과됐어요.", exception);
     }
-  }
-
-  private void cancelAll(List<? extends Future<?>> futures) {
-    futures.forEach(future -> future.cancel(true));
+    return responses;
   }
 
   private Duration boundedTimeout(ChatRequestDeadline deadline) {
     try {
       return deadline.boundedBy(properties.getStageTimeout());
     } catch (TimeoutException exception) {
-      throw new IllegalStateException("관리자 챗봇 요청 기한이 지났어요.", exception);
+      throw new AdminChatExecutionException(
+          Reason.TIMEOUT, "관리자 챗봇 요청 기한이 지났어요.", exception);
     }
   }
 
+  private Duration boundedStreamingTimeout(
+      ChatRequestDeadline deadline, long stageStartedAt) {
+    Duration deadlineTimeout = boundedTimeout(deadline);
+    Duration elapsed =
+        Duration.ofNanos(Math.max(0L, System.nanoTime() - stageStartedAt));
+    Duration stageRemaining = properties.getStageTimeout().minus(elapsed);
+    if (stageRemaining.isNegative() || stageRemaining.isZero()) {
+      throw new AdminChatExecutionException(
+          Reason.TIMEOUT, "답변 스트림 시간이 초과됐어요.");
+    }
+    return deadlineTimeout.compareTo(stageRemaining) <= 0
+        ? deadlineTimeout
+        : stageRemaining;
+  }
+
   private RuntimeException propagate(Throwable cause) {
+    if (cause instanceof AdminChatExecutionException executionException) {
+      return executionException;
+    }
     return cause instanceof RuntimeException runtime
         ? runtime
         : new IllegalStateException("추론 단계를 완료하지 못했어요.", cause);
+  }
+
+  private StageBudget stageBudget(ChatRequestDeadline deadline) {
+    try {
+      Duration remaining = deadline.remaining();
+      Duration stageTimeout = properties.getStageTimeout();
+      return new StageBudget(
+          remaining.compareTo(stageTimeout) <= 0 ? remaining : stageTimeout,
+          remaining.compareTo(stageTimeout) <= 0);
+    } catch (TimeoutException exception) {
+      throw new AdminChatExecutionException(
+          Reason.TIMEOUT, "병렬 추론 전 요청 기한이 지났어요.", exception);
+    }
+  }
+
+  private RuntimeException classifyStreamingFailure(RuntimeException exception) {
+    for (Throwable current = exception; current != null; current = current.getCause()) {
+      if (current instanceof ChatStreamClosedException streamClosedException) {
+        return streamClosedException;
+      }
+      if (current instanceof AdminChatExecutionException executionException) {
+        return executionException;
+      }
+      if (current instanceof InterruptedException) {
+        Thread.currentThread().interrupt();
+        return new AdminChatExecutionException(
+            Reason.CANCELLED, "답변 스트림이 취소됐어요.", exception);
+      }
+      if (current instanceof CancellationException) {
+        return new AdminChatExecutionException(
+            Reason.CANCELLED, "답변 스트림이 취소됐어요.", exception);
+      }
+      if (current instanceof TimeoutException) {
+        return new AdminChatExecutionException(
+            Reason.TIMEOUT, "답변 스트림 시간이 초과됐어요.", exception);
+      }
+    }
+    return exception;
+  }
+
+  private String toolDefinitionText(ToolCallback tool) {
+    return tool.getToolDefinition().name()
+        + tool.getToolDefinition().description()
+        + tool.getToolDefinition().inputSchema();
   }
 
   private void logStage(ChatCommand command, String stage, long startedAt, String details) {
@@ -534,5 +756,10 @@ public class SpringAiAdminChatInferenceAdapter implements AdminChatInferencePort
   }
 
   private record ShardBindingResponse(
-      int shardIndex, String earlyAnswer, List<QueryBinding> bindings) {}
+      int shardIndex,
+      String earlyAnswer,
+      Set<String> deliveredEvidenceIds,
+      List<QueryBinding> bindings) {}
+
+  private record StageBudget(Duration timeout, boolean requestDeadlineBound) {}
 }

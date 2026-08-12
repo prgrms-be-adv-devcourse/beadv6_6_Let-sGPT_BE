@@ -58,9 +58,10 @@ public interface ProductApiSpec {
   //   게이트웨이가 scoped JWT를 검증한 뒤 X-Seller-Id로 주입하고 CurrentUserArgumentResolver가 이를 바인딩한다.
   //   상세: FE docs/auth.md.
   //
-  // NOTE(sellerName): 판매자 표시명(ProductResponse.sellerName)은 member 스토어 이벤트를 소비한 로컬 투영
-  //   (seller 서브도메인 SellerStore)에서 배치 해석한다 — N+1·런타임 결합 없음. member 가 seller_registered/updated
-  //   이벤트(payload: sellerInfoId, storeName)를 발행해야 실제로 채워짐(로컬은 시드로 표시). 상세: DECISIONS.md.
+  // NOTE(sellerName): 판매자 표시명(ProductResponse.sellerName)은 member 스토어 이벤트를 소비한
+  //   product의 SellerStoreProjection에서 배치 해석한다 — N+1·런타임 결합 없음. member가
+  //   seller_registered/updated 이벤트(payload: sellerInfoId, storeName)를 발행해야 실제로 채워짐.
+  //   로컬은 시드로 표시한다. 상세: product/docs/PRODUCT.md.
   //
   // NOTE(image): ProductImageController가 presigned PUT URL 발급과 final 이미지 조회를 제공한다
   //   (POST /api/v1/products/images/presign · GET /api/v1/products/images/{key}). 발급받은

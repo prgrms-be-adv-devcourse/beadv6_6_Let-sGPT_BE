@@ -40,7 +40,7 @@ class DropCacheWarmerTest {
   @DisplayName("드롭이 없으면 캐시를 적재하지 않는다")
   void warm_dropNotFound_doesNotWarm() {
     // given
-    given(dropRepository.findById(dropId)).willReturn(Optional.empty());
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.empty());
 
     // when
     dropCacheWarmer.warm(dropId);
@@ -55,7 +55,7 @@ class DropCacheWarmerTest {
     // given
     Drop drop = drop(100);
     drop.close();
-    given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.of(drop));
 
     // when
     dropCacheWarmer.warm(dropId);
@@ -73,7 +73,7 @@ class DropCacheWarmerTest {
     Drop drop = drop(totalQuantity);
     UUID activeBuyer = UUID.randomUUID();
     UUID fullyRolledBackBuyer = UUID.randomUUID();
-    given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.of(drop));
     given(stockHistoryRepository.sumQuantityDeltaByDropId(dropId)).willReturn(ledgerSum);
     given(stockHistoryRepository.sumNetQuantityByBuyer(dropId))
         .willReturn(

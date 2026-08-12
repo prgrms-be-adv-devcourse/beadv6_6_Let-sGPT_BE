@@ -231,10 +231,10 @@ class ImagePinOwnershipEnforcementTest {
         Map.of(),
         List.of(
             DeploymentScripts.python(),
-            DeploymentScripts.toScriptPath(Path.of(OWNERSHIP_SCRIPT).toAbsolutePath()),
-            DeploymentScripts.toScriptPath(skeletonFile()),
-            DeploymentScripts.toScriptPath(stateFile()),
-            DeploymentScripts.toScriptPath(outputFile())));
+            DeploymentScripts.toNativePath(Path.of(OWNERSHIP_SCRIPT)),
+            DeploymentScripts.toNativePath(skeletonFile()),
+            DeploymentScripts.toNativePath(stateFile()),
+            DeploymentScripts.toNativePath(outputFile())));
   }
 
   private String rendered() throws IOException {

@@ -20,10 +20,9 @@ com.openat
 ├── ProductApplication     @SpringBootApplication (스캔: com.openat 중 common 제외)
 ├── config/                모듈 공통 설정 (Security · Web · OpenApi · QueryDsl · Scheduling · DropProperties)
 ├── support/               공통 지원 (auth · web · docs) — @CurrentUser · @InternalApi 등
-├── product/               상품             — domain · application · infrastructure · presentation
+├── product/               상품 + 판매자 표시명 로컬 투영 — domain · application · infrastructure · presentation
 ├── drop/                  재고/드롭(게이트키퍼 본진) — domain · application · infrastructure · presentation
-├── category/              카테고리          — domain · application · infrastructure · presentation
-└── seller/                판매자 스토어 표시명 읽기 모델(member 이벤트 투영) — domain · application · infrastructure
+└── category/              카테고리          — domain · application · infrastructure · presentation
 ```
 
 - `@SpringBootApplication`을 `com.openat` 루트에 둔다 → 엔티티·Spring Data 리포지토리 스캔이 기본값으로 전 서브도메인을 덮는다(common엔 엔티티·리포지토리 없음).
@@ -34,14 +33,14 @@ com.openat
 ## 3. 서브도메인 책임 & 의존 방향
 | 서브도메인 | 책임 |
 | :--- | :--- |
-| `product` | 상품 마스터 등록·조회 |
+| `product` | 상품 마스터 등록·조회 + 판매자 스토어 표시명 로컬 투영 |
 | `drop` | 한정 드롭 판매 + 재고(이력 원장). 재고 게이트키퍼 본진 |
 | `category` | 상품 카테고리(참조 데이터) + 존재 판정 |
-| `seller` | 판매자 스토어 표시명(`storeName`) 로컬 읽기 모델 — member 스토어 이벤트(Kafka) 투영. 카탈로그 벤더 표기 N+1 회피 |
 
 - **의존 방향은 단방향: `drop → product → category`.** 역참조 금지(순환 차단). FK 방향(`drops.product_id`, `products.category_id`)과 일치.
-- **`seller`는 product·drop가 표시명 조회(읽기 포트 `SellerStoreQueryUseCase`)로만 의존하는 리프 읽기 모델**이다. 자체 비즈니스 데이터를 소유하지 않고 member 이벤트로만 채워지며(역참조·역방향 의존 없음), member `SellerInfo.id`를 PK(값 참조)로 둔다.
+- **`SellerStoreProjection`은 seller 서브도메인이 아니라 product가 응답 구성에 사용하는 소비자 전용 로컬 읽기 모델**이다. member의 기존 `seller_registered_events`·`seller_updated_events`에서 `{sellerInfoId, storeName}`만 받아 갱신하고 `SellerInfo.id`를 PK(값 참조)로 둔다. member의 판매자 원본 데이터·활성 상태를 소유하거나 판정하지 않으며, 같은 상점명은 no-op으로 처리한다. 표시명이 실제로 바뀌면 해당 판매자의 상품 id를 내구성 있는 검색 투영 갱신 대상에 중복 없이 적재한다. product 조회는 투영 저장소를 한 번의 `IN` 쿼리로 읽고, drop은 `ProductQueryUseCase.findSellerNames()` 포트로만 접근한다. 두 member 토픽에는 공통 순서·버전 계약이 없어 역순 전달의 최종 순서 보장은 외부 계약 보강 전까지 남은 위험이다.
 - **`products.category_id`는 선택 참조(nullable).** 카테고리 없이 상품 등록 가능(미분류), 카테고리 삭제 시 SET NULL로 미분류 전환. (§11 삭제 전략)
+- **검색 표시값 변경과 상품 쓰기는 참조 키 단위의 PostgreSQL transaction advisory read/write lock으로 조정한다.** 상품 생성·수정은 스냅샷을 읽는 shared lock, 판매자 투영·카테고리 변경은 exclusive lock을 사용해 같은 참조의 일반 상품 쓰기끼리는 직렬화하지 않는다. 상품은 항상 `seller → category` 순서로 잠근다. 표시값 변경 트랜잭션은 `INSERT ... SELECT ... ON CONFLICT DO UPDATE`로 영향 상품 id만 `product_search_projection_refresh_targets`에 적재하고 전체 상품을 영속성 컨텍스트로 읽거나 잠그지 않는다. 카테고리 삭제도 대상을 먼저 적재한 뒤 FK `ON DELETE SET NULL`에 참조 해제를 맡긴다. 스케줄러는 `FOR UPDATE SKIP LOCKED`로 제한된 대상만 선점하고 상품 행을 id 순서로 잠가 검색 순번과 outbox를 짧은 트랜잭션에서 갱신한다. 처리 중 같은 상품이 다시 적재되면 충돌 갱신이 기존 대상 삭제 커밋을 기다린 뒤 후속 대상으로 남아 최신 표시값을 다시 발행한다. S3 이미지 승격은 사전 소유권·카테고리 검증 뒤 잠금 트랜잭션 밖에서 수행하고, 짧은 쓰기 트랜잭션이 잠금 획득 뒤 소유권·카테고리를 다시 검증해 느린 외부 호출이 참조 변경을 막지 않게 한다.
 
 ---
 
@@ -84,7 +83,10 @@ com.openat
 - 엔티티 단수 / 테이블 복수, 컬럼 `snake_case`, `@Column(comment=...)`로 의도 명시. (전역 규칙은 PROJECT §7)
 - **인덱스**: FK 및 타 도메인 값 참조 컬럼에 부여. 이름 `idx_<table>_<column>`, 유니크 `uk_<table>_<…>`. (DECISIONS 2026-06-19 #6)
 - 타 도메인/서비스 참조는 **값 참조(UUID)**, FK 아님(예: `StockHistory.orderId`/`buyerId`).
-- **재고 이력 원장(`stock_histories`)**: append-only, 부호 있는 `quantity_delta`, `UNIQUE(order_id, change_type)`로 멱등. (DECISIONS 2026-06-22 #1, 상세 STOCK_GATEKEEPER)
+- **재고 이력 원장(`stock_histories`)**: append-only, 부호 있는 `quantity_delta`, `UNIQUE(order_id, change_type)`로 멱등. Redis의 중복 결과와 Redis 멱등키 만료 뒤 발생한 DB UNIQUE 충돌은 모두 이 원장이 커밋되고 요청 튜플이 일치한 뒤에만 성공으로 확정한다. 롤백은 선행 DEDUCT 원장 행을 잠가 같은 주문의 선행 검증부터 ROLLBACK 원장 확정까지 직렬화하므로 L1 키 유실 뒤에도 재복원하지 않는다. 충돌 원장이 다르면 캐시를 보상한 뒤 `409 DROP_STOCK_REQUEST_MISMATCH`로 거절한다. (DECISIONS 2026-06-22 #1, 상세 STOCK_GATEKEEPER)
+- **드롭 생명주기 잠금**: 워밍·종료·직접 삭제·상품 하향 삭제는 같은 drop 행을 `PESSIMISTIC_WRITE`로 잠가 stale `REGISTERED` 스냅샷이 close/evict 뒤 캐시를 다시 여는 경합을 막는다. 여러 drop을 정리하는 상품 삭제는 id 순으로 잠근다. 워밍은 `REPEATABLE_READ`에서 원장 집계를 읽고 Redis 단일 Lua로 drop·buyers 전체 snapshot을 교체한다.
+- **상품 검색 변경 outbox**: 상품 생성·수정·삭제와 seller/category 표시값 변경은 `Product.searchSnapshotSequence`를 내부 발행 순번으로 단조 증가시키고 같은 트랜잭션에 `product_outbox_events`를 적재한다. relay는 `FOR UPDATE SKIP LOCKED`로 행을 선점하고 같은 상품의 미발행 선행 순번이 있으면 후속 순번을 막는다. 외부 계약은 기존 `product.created.events`·`product.updated.events`·`product.deleted.events`와 기존 payload를 그대로 유지한다. Kafka ack 성공만 `PUBLISHED`, 실패·timeout은 재시도하며 오래된 `PROCESSING` claim은 회수한다.
+- **at-least-once 계약**: transactional outbox가 상품 변경과 발행 대상을 함께 커밋해 비즈니스 커밋 뒤 이벤트가 유실되는 구간을 없앤다. 내부 순번은 같은 상품 outbox의 유일 식별과 선행 발행 관계에만 쓰며 외부 payload에는 노출하지 않는다. Kafka ack 뒤 DB 확정 전에 프로세스가 중단되거나 timeout 뒤 ack가 늦게 도착하면 중복 발행될 수 있고, 서로 다른 세 토픽 사이의 소비 적용 순서와 중복 제거는 현재 계약으로 보장할 수 없다. product 단독 변경으로 그보다 강한 정합성을 가정하지 않는다.
 - **쓰기 포트 입력 객체**: 쓰기 포트(재고 차감·롤백·보상·이력 기록)는 application `~Command`를 그대로 넘기지 않고 도메인 값 객체(`~Mutation` @ `domain.repository`)로 받는다 — 식별 튜플(`dropId`/`orderId`/`buyerId`/`quantity`)을 개별 인자로 풀지 않고 묶어 연속 UUID 위치-인자 혼동을 막는다. 변환은 `~Command.toMutation()`(읽기 `~SearchRequest.toCondition()`→`~SearchCondition`의 쓰기 짝). 예: `StockMutation`.
 - **N+1 방어**: LAZY 연관 조회의 N+1은 전역 `default_batch_fetch_size`(IN 배치)를 안전망으로 둔다(`application.yml`). 동적·복잡 조회는 **QueryDSL**(OpenFeign 포크)로 작성한다 — 상품 목록 조회(`ProductRepositoryAdaptor.search`)부터 적용. ToOne 연관은 `fetchJoin`으로 단일 쿼리화한다.
 - **QueryDSL 작성 규칙**: 적용 대상은 **동적 조건·N+1 위험 조회만**(단순 단건·존재 조회는 Spring Data 메서드 유지).
@@ -92,7 +94,10 @@ com.openat
   - **검색 조건**: 포트는 도메인 질의 명세(`~SearchCondition` @ `domain.repository`)를 받는다(application DTO를 포트로 넘기지 않음). presentation `~SearchRequest.toCondition()`으로 변환.
   - **동적 where**: `BooleanBuilder` + `if`로 메서드 본문에서 조립한다(null/blank 조건은 추가하지 않음). content·count 쿼리가 같은 `where`를 공유.
   - **N+1·페이징**: **ToOne 연관만 `fetchJoin`**(컬렉션은 페이징이 깨지므로 금지 → batch 안전망 사용). count는 fetchJoin 없이 분리하고 `PageableExecutionUtils.getPage`로 감싼다.
-  - **정렬**: 실제 요구가 있을 때만 도입한다. 상품 목록은 최신순 `createdAt desc` 고정이다. 드롭 목록은 `openAt`·`dropPrice`만 화이트리스트로 변환하며, 미지정·미지원 정렬은 `openAt desc`를 사용한다. 오프셋 페이지 경계가 흔들리지 않도록 드롭 id 내림차순을 마지막 보조 정렬로 항상 적용한다.
+  - **정렬**: 실제 요구가 있을 때만 도입한다. 상품 목록은 `createdAt desc, id desc`로
+    최신순과 안정적인 페이지 경계를 함께 보장한다. 드롭 목록은 `openAt`·`dropPrice`만
+    화이트리스트로 변환하며, 미지정·미지원 정렬은 `openAt desc`를 사용한다. 오프셋 페이지
+    경계가 흔들리지 않도록 드롭 id 내림차순을 마지막 보조 정렬로 항상 적용한다.
   - **테스트**: 영속 슬라이스는 `@Import`에 `QueryDslConfig`를 포함한다(`@DataJpaTest`는 `@Configuration`을 스캔하지 않아 `JPAQueryFactory` 빈이 없음).
 
 ---
@@ -132,8 +137,14 @@ com.openat
 
 ## 10. 설정 / 시드
 - `application.yml`: `default_schema=product`, `ddl-auto=update`(콜드부팅 재고 이력 복구를 검증하려면 부팅 간 원장이 보존돼야 해 `create`→`update` 전환), `defer-datasource-initialization=true` + `sql.init.mode=always`.
+- 검색 투영 갱신 대상 처리는 `batch-size`, `fixed-delay-ms`를 설정하며, 기본 생산률은 일반 상품 변경 여유를 남기도록 outbox relay의 기본 처리율보다 낮게 둔다. 상품 변경 outbox relay는 `batch-size`, `fixed-delay-ms`, `claim-timeout`, `send-timeout`을 설정한다. 드롭 예약 종료는 `close-retry-delay`로 DB·Redis 동기화 실패 재시도 간격을 정한다. 스케줄러는 `ProductApplication`의 `@EnableScheduling`으로 기동한다.
 - `data.sql`: `categories` 시드(의류·액세서리·문구·전자기기·피규어·기타), `ON CONFLICT (name) DO NOTHING`.
-- **데모 시드(`support.seed.SeedDataRunner`)**: `local`/`dev`/`compose` 프로필의 `ApplicationRunner`(`@Order(0)`, 부트스트랩보다 먼저). 상품이 비었을 때만 멱등 삽입 — 상품 16·드롭 10·`SellerStore` 데모 1. OPEN/SOLD_OUT 드롭의 잔여는 **재고 이력 원장 DEDUCT로 선반영**해 기동 워밍이 `총량+원장`으로 계산하게 한다(직접 캐시 워밍은 부트스트랩에 덮임). k3s도 `compose` 프로필을 사용하므로 운영형 데이터를 별도로 적재할 때는 이 조건을 함께 고려한다.
+- **데모 시드(`support.seed.SeedDataRunner`)**: `local`/`dev`/`compose` 프로필에서
+  `app.seed.enabled=true`일 때만 실행하는 `ApplicationRunner`(`@Order(0)`, 부트스트랩보다
+  먼저)다. 상품이 비었을 때만 멱등 삽입 — 상품 16·드롭 10·`SellerStoreProjection`
+  데모 1. OPEN/SOLD_OUT 드롭의 잔여는 **재고 이력 원장 DEDUCT로 선반영**해 기동
+  워밍이 `총량+원장`으로 계산하게 한다(직접 캐시 워밍은 부트스트랩에 덮임). 배포에서는
+  `APP_SEED_ENABLED=false`로 비활성화한다.
 
 ---
 
@@ -143,12 +154,12 @@ com.openat
 
 | 대상 | 전략 | 메커니즘 |
 | :-- | :-- | :-- |
-| `category` (참조 데이터) | 하드 삭제 + 참조 끊기 | `products.category_id` nullable + FK `ON DELETE SET NULL` → 참조 상품은 미분류(null). DB가 끊으므로 역참조 없음 |
+| `category` (참조 데이터) | 하드 삭제 + 참조 끊기 | 삭제 전 도메인 이벤트로 해당 상품을 미분류(null) 전환하고 기존 수정 이벤트 스냅샷 발행 + FK `ON DELETE SET NULL` 안전망 |
 | `product`·`drop` (비즈니스 레코드) | soft 삭제 | `@SoftDelete(strategy = TIMESTAMP, columnName = "deleted_at")` — DELETE→UPDATE 자동 변환 + 조회 자동 필터 |
 | `stock_histories` (감사 원장) | 삭제 안 함 | append-only |
 
-- **하향 전파(product → drop)**: product를 soft 삭제하면 **동기 인프로세스 이벤트**(product가 발행 → drop 리스너 수신; `drop → product` 정방향·동일 트랜잭션·실패 시 롤백)로 그 product의 drop을 정리한다. 단 **진행 중(오픈/매진) 드롭이 하나라도 있으면 삭제를 차단** — drop 리스너가 라이브 드롭을 발견하면 예외(`DROP_OPEN_EXISTS`)를 던져 상품 삭제까지 롤백한다(라이브 거래를 끊지 않음·먼저 종료해야 함). 라이브가 없으면 자식 drop을 일괄 soft 삭제한다. **차단 판정은 product가 아니라 drop이 소유**(§4 역방향 참조 금지).
-- **drop 자체 삭제는 오픈 전만 soft 삭제**: 오픈 후 drop은 삭제가 아니라 **종료(CLOSE)**다(직접 삭제·캐스케이드 공통으로 라이브 drop은 soft 삭제 대상이 아님 — §8·STOCK_GATEKEEPER). 라이브 drop은 종료를 거쳐야 사라진다.
+- **하향 전파(product → drop)**: product를 soft 삭제하면 **동기 인프로세스 이벤트**(product가 발행 → drop 리스너 수신; `drop → product` 정방향·동일 트랜잭션·실패 시 롤백)로 그 product의 drop을 정리한다. 단 **진행 중(오픈/매진) 드롭이 하나라도 있으면 삭제를 차단** — drop 리스너가 라이브 드롭을 발견하면 예외(`DROP_OPEN_EXISTS`)를 던져 상품 삭제까지 롤백한다(라이브 거래를 끊지 않음·먼저 종료해야 함). 라이브가 없으면 자식 drop을 일괄 soft 삭제한다. 오픈 전 drop 캐시는 커밋 전에 evict하되, fence Lua가 실행 시점 Redis 시각과 캐시 `openAt`을 원자 비교해 그 사이 오픈됐으면 evict와 상품 삭제를 거절한다. 이미 오픈했던 종료 drop 캐시는 in-flight 롤백을 위해 TTL drain 동안 보존한다. **차단 판정은 product가 아니라 drop이 소유**(§4 역방향 참조 금지).
+- **drop 자체 삭제는 오픈 전만 soft 삭제**: 오픈 후 drop은 삭제가 아니라 **종료(CLOSE)**다(직접 삭제·캐스케이드 공통으로 라이브 drop은 soft 삭제 대상이 아님 — §8·STOCK_GATEKEEPER). 직접 삭제도 cache fence 실행 전에 오픈 경계를 넘으면 DB 삭제를 롤백하고 성공한 차감을 보존한다. 라이브 drop은 종료를 거쳐야 사라진다.
 - **원장 예외(감사 독립성)**: `stock_histories`는 soft 삭제된 drop을 계속 참조해야 하므로, drop을 **엔티티 연관이 아니라 값 참조(`drop_id` UUID 컬럼)**로 든다 — soft 삭제 필터가 걸리는 연관 네비게이션 자체가 없어 원장 집계·복구가 drop 삭제와 무관하다. (`@SoftDelete` 엔티티로의 to-one 지연 연관을 프레임워크가 금지하는 제약도 동시 회피)
 - **조회 정합성**: 부모 삭제로 인한 자식 숨김은 항상 자식→부모(정방향) 필터로 처리하고, 영속 계층 자동 필터에 위임한다.
 

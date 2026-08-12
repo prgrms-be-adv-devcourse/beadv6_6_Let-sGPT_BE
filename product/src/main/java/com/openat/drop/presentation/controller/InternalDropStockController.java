@@ -1,7 +1,6 @@
 package com.openat.drop.presentation.controller;
 
 import com.openat.drop.application.usecase.DropStockUseCase;
-import com.openat.drop.infrastructure.metrics.DropStockMetrics;
 import com.openat.drop.presentation.dto.StockChangeRequest;
 import com.openat.drop.presentation.dto.StockChangeResponse;
 import com.openat.support.web.InternalApi;
@@ -23,13 +22,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class InternalDropStockController {
 
   private final DropStockUseCase dropStockUseCase;
-  private final DropStockMetrics dropStockMetrics;
 
   @PostMapping("/{dropId}/stock-deductions")
   public ResponseEntity<StockChangeResponse> deduct(
       @PathVariable UUID dropId, @Valid @RequestBody StockChangeRequest request) {
     long remaining = dropStockUseCase.deduct(request.toCommand(dropId));
-    dropStockMetrics.record(dropId, remaining);
     return ResponseEntity.ok(new StockChangeResponse(remaining));
   }
 
@@ -40,7 +37,6 @@ public class InternalDropStockController {
     if (remaining.isEmpty()) {
       return ResponseEntity.noContent().build();
     }
-    dropStockMetrics.record(dropId, remaining.get());
     return ResponseEntity.ok(new StockChangeResponse(remaining.get()));
   }
 }

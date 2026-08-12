@@ -1,9 +1,11 @@
 package com.openat.drop.infrastructure.persistence;
 
+import com.openat.drop.domain.model.StockChangeType;
 import com.openat.drop.domain.model.StockHistory;
 import com.openat.drop.domain.repository.BuyerPurchase;
 import com.openat.drop.domain.repository.StockHistoryRepository;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
@@ -17,6 +19,18 @@ public class StockHistoryRepositoryAdaptor implements StockHistoryRepository {
   @Override
   public StockHistory save(StockHistory stockHistory) {
     return stockHistoryJpaRepository.save(stockHistory);
+  }
+
+  @Override
+  public Optional<StockHistory> findByOrderIdAndChangeType(
+      UUID orderId, StockChangeType changeType) {
+    return stockHistoryJpaRepository.findByOrderIdAndChangeType(orderId, changeType);
+  }
+
+  @Override
+  public Optional<StockHistory> findByOrderIdAndChangeTypeForUpdate(
+      UUID orderId, StockChangeType changeType) {
+    return stockHistoryJpaRepository.findByOrderIdAndChangeTypeForUpdate(orderId, changeType);
   }
 
   @Override

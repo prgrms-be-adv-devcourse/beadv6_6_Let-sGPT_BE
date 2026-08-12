@@ -10,7 +10,7 @@ import com.openat.drop.domain.model.DropStatus;
 import com.openat.drop.domain.repository.DropCacheRepository;
 import com.openat.drop.domain.repository.DropRepository;
 import com.openat.drop.domain.repository.DropSearchCondition;
-import com.openat.seller.application.usecase.SellerStoreQueryUseCase;
+import com.openat.product.application.usecase.ProductQueryUseCase;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -28,7 +28,7 @@ public class DropQueryService implements DropQueryUseCase {
 
   private final DropRepository dropRepository;
   private final DropCacheRepository dropCacheRepository;
-  private final SellerStoreQueryUseCase sellerStoreQueryUseCase;
+  private final ProductQueryUseCase productQueryUseCase;
 
   @Override
   public DropInfo getDrop(UUID id) {
@@ -38,7 +38,7 @@ public class DropQueryService implements DropQueryUseCase {
             .orElseThrow(() -> new BusinessException(DropErrorCode.NOT_FOUND));
     Instant now = Instant.now();
     UUID sellerId = drop.getProduct().getSellerId();
-    String sellerName = sellerStoreQueryUseCase.findStoreNames(List.of(sellerId)).get(sellerId);
+    String sellerName = productQueryUseCase.findSellerNames(List.of(sellerId)).get(sellerId);
     Long cachedRemaining = dropCacheRepository.findRemaining(List.of(id)).get(id);
     return toInfo(drop, sellerName, now, cachedRemaining);
   }
@@ -58,14 +58,14 @@ public class DropQueryService implements DropQueryUseCase {
     Page<Drop> drops = dropRepository.search(condition, now, pageable);
     Map<UUID, Long> remainingByDrop =
         dropCacheRepository.findRemaining(drops.getContent().stream().map(Drop::getId).toList());
-    Map<UUID, String> storeNames =
-        sellerStoreQueryUseCase.findStoreNames(
-            drops.getContent().stream().map(drop -> drop.getProduct().getSellerId()).toList());
+    List<UUID> sellerIds =
+        drops.getContent().stream().map(drop -> drop.getProduct().getSellerId()).toList();
+    Map<UUID, String> sellerNames = productQueryUseCase.findSellerNames(sellerIds);
     return drops.map(
         drop ->
             toInfo(
                 drop,
-                storeNames.get(drop.getProduct().getSellerId()),
+                sellerNames.get(drop.getProduct().getSellerId()),
                 now,
                 remainingByDrop.get(drop.getId())));
   }

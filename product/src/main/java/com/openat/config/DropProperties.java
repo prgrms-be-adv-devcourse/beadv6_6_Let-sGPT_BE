@@ -9,4 +9,5 @@ public record DropProperties(
     @DefaultValue("5m") Duration warmBefore,
     @DefaultValue("10m") Duration closeMargin,
     @DefaultValue("7d") Duration nullCloseTtl,
-    @DefaultValue("1h") Duration idempotencyTtl) {}
+    @DefaultValue("1h") Duration idempotencyTtl,
+    @DefaultValue("10s") Duration closeRetryDelay) {}

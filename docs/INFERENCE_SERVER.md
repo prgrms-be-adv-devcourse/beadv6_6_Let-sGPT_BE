@@ -632,14 +632,14 @@ base64 형식은 JSON 숫자 배열보다 전송량을 줄일 수 있지만, 클
 
 > 아래 관리자 챗봇 계약은 2026-07-24에 구현한 현재 구조다. 검증 상태는 [관리자 챗봇 구현 로드맵 및 진행 현황](../ai/chat/docs/IMPLEMENTATION_ROADMAP.md)을 따른다.
 
-- `spring.ai.openai.base-url`을 `/v1`이 포함된 자체 추론 서버 주소로 설정하고, 추론 서버 관리자에게 발급받은 API 키를 `spring.ai.openai.api-key`로 주입한다.
-- 관리자 챗봇의 주소와 모델은 `chat.inference.base-url`, `chat.inference.model`에서 같은 값으로 관리해 Spring AI를 유지한 채 쉽게 교체한다.
+- `spring.ai.openai.base-url`을 `/v1`이 포함된 자체 추론 서버 주소로 설정하고, 추론 서버 관리자에게 발급받은 API 키를 `spring.ai.openai.api-key`로 주입한다. `spring.ai.openai.chat.base-url`을 명시하면 Spring AI와 최종 답변 transport 모두 같은 우선순위로 그 값을 사용한다.
+- 관리자 챗봇 모델은 `chat.inference.model`에서 관리한다. 연결 주소는 Spring AI의 resolved OpenAI 설정을 단일 원천으로 사용해 route·binding·최종 답변·local-only 검사가 갈라지지 않게 한다.
 - 관리자 챗봇의 모델 경로는 외부 provider 폴백이 없는 로컬 전용 계약을 사용한다. loopback 주소는 로컬 전용으로 인정하고, 원격 주소는 `chat.inference.local-only-route=true`로 비폴백 계약을 명시한 경우에만 사용한다. 현재 자동 폴백이 설정된 `chat` 별칭은 그대로 사용하지 않는다.
 - 현재 로컬 모델은 `chat.inference.reasoning-effort=none`, 온도 0, 자동 재시도 0으로 호출한다. reasoning 지원 여부와 허용값은 교체 대상 OpenAI 호환 서버에서 먼저 검증한다.
 - 일반 질문을 정규식이나 표현 사전으로 선분기하지 않는다. 첫 LLM 요청이 일반 답변, 가벼운 도구 6개와 내부 데이터 영역 선택을 함께 판단한다.
 - 첫 요청에는 날씨, 암호화폐, 웹 검색, 운영 문서, 개별 주문, 결제기한 경과 주문과 `loadInternalDataSchemas`만 공개한다. 전체 내부 분석 카탈로그는 넣지 않는다.
 - 날씨 도구는 첫 요청에서 시·도와 시·군·구 수준의 지역명과 근사 대표 좌표를 함께 받는다. 서버는 한국 범위를 검증하고 좌표 정밀도를 소수 둘째 자리로 낮춘 뒤 예보 API를 직접 호출하며 별도 지오코딩은 하지 않는다.
-- 내부 통계는 1차가 고른 여섯 의미 영역의 상세 스키마만 2차에 추가한다. 일반 질문은 순차 1회, 가벼운 도구 질문은 2회, 내부 데이터·복합 질문은 최대 3회의 순차 LLM round로 처리한다.
+- 내부 통계는 1차가 고른 여섯 의미 영역의 상세 스키마만 2차에 추가한다. 일반 질문은 1개, 가벼운 도구 질문은 2개, 내부 데이터·복합 질문은 최대 3개의 순차 논리 단계로 처리한다. 입력 예산에 따른 bounded shard와 빈 route·깨진 binding 형식의 각 1회 복구는 단계 안의 물리 호출이며, 논리 깊이나 무제한 재시도를 뜻하지 않는다.
 - 2차 구조화는 자동 실행하지 않는 `submitInternalQueryBindings` tool call로 수집한다. 애플리케이션이 원시 arguments를 항목별로 검증하고 `SUCCESS` Query Plan만 실행한다.
 - Spring AI는 OpenAI 호환 요청과 tool contract 연결에 사용하고, 단계 전환·도구 실행·부분 성공·사실 누적과 최종 합성은 애플리케이션이 명시적으로 관리한다. 프레임워크 자동 tool loop에 전체 흐름을 맡기지 않는다.
 - 도구 인자는 enum·형식과 서버 정책으로 다시 검증하며 회원 개인정보·쓰기·자유 SQL 도구는 등록하지 않는다.
@@ -652,7 +652,7 @@ base64 형식은 JSON 숫자 배열보다 전송량을 줄일 수 있지만, 클
 - 1차 응답은 완료까지 수집한 뒤 tool call이 없는 `content only`일 때만 자연어로 전달한다. tool call이 있으면 같은 응답의 본문은 노출하지 않는다.
 - 내부 영역을 선택한 질문은 모든 구조화가 실패해도 실패 근거를 포함한 최종 자연어로 종료하며 빈 답변을 허용하지 않는다.
 - `[DONE]`을 받지 못한 업스트림 스트림을 정상 `done`으로 변환하지 않는다.
-- 현재 Spring AI OpenAI 클라이언트는 원시 `[DONE]` 마커를 내부에서 소비하므로, 관리자 챗봇 어댑터는 프레임워크가 노출한 terminal `finishReason=stop`을 정상 종료 증거로 추가 확인한다. 이유가 없거나 다른 종료 이유면 `error`로 끝낸다. 원시 스트림 클라이언트의 `[DONE]` 계약은 그대로 유지한다.
+- route·binding 호출과 tool contract는 Spring AI를 유지한다. 최종 자연어 스트림은 원시 OpenAI SSE transport 경계에서 `finish_reason=stop`과 실제 `data: [DONE]`을 모두 확인한 뒤에만 정상 완료한다. `stop` 뒤에는 usage 객체가 있는 빈 `choices`만 허용하며, 추가 choice·content나 malformed protocol은 실패한다. `stop` 뒤 clean EOF도 불완전 실패이며, 종료 이유가 없거나 `length`인 경우에도 `error`로 끝낸다.
 - 이미 일부 텍스트를 전달한 상태에서 업스트림 스트림이 실패하면, 사용자 인터페이스에도 불완전 종료 상태를 명확히 전달한다.
 - Spring AI와 모델 클라이언트의 자동 재시도는 끈다. 빈 응답·구조화 JSON 형식 오류만 해당 단계에서 한 번 복구할 수 있으며, 도구 실행 뒤에는 중복 실행을 피하기 위해 전체 요청을 재시도하지 않는다.
 - 하나의 요청 절대 deadline을 모든 LLM shard, 외부 도구와 DB 조회에 전파하고 terminal 또는 연결 종료 시 자식 작업을 모두 취소한다.

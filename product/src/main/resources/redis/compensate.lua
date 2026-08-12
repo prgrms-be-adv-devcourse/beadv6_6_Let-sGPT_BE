@@ -2,14 +2,17 @@
 -- KEYS[1]=drop:{id}  KEYS[2]=drop:{id}:buyers  KEYS[3]=멱등키
 -- ARGV[1]=buyerId  ARGV[2]=remainingDelta  ARGV[3]=buyerDelta
 -- (차감 보상: remainingDelta=+qty, buyerDelta=-qty / 롤백 보상: remainingDelta=-qty, buyerDelta=+qty)
+-- 반환: 보상 후 remaining, drop 캐시가 사라졌으면 nil
 
 if redis.call('EXISTS', KEYS[1]) == 1 then
-  redis.call('HINCRBY', KEYS[1], 'remaining', tonumber(ARGV[2]))
+  local remaining = redis.call('HINCRBY', KEYS[1], 'remaining', tonumber(ARGV[2]))
   local newBought = redis.call('HINCRBY', KEYS[2], ARGV[1], tonumber(ARGV[3]))
   if newBought <= 0 then
     redis.call('HDEL', KEYS[2], ARGV[1])
   end
+  redis.call('DEL', KEYS[3])
+  return remaining
 end
 
 redis.call('DEL', KEYS[3])
-return 'OK'
+return nil

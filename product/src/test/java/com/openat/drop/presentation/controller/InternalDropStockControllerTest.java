@@ -13,7 +13,6 @@ import com.openat.common.exception.GlobalExceptionHandler;
 import com.openat.config.WebConfig;
 import com.openat.drop.application.usecase.DropStockUseCase;
 import com.openat.drop.domain.error.DropErrorCode;
-import com.openat.drop.infrastructure.metrics.DropStockMetrics;
 import com.openat.drop.presentation.dto.StockChangeRequest;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,7 +34,6 @@ class InternalDropStockControllerTest {
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private DropStockUseCase dropStockUseCase;
-  @MockitoBean private DropStockMetrics dropStockMetrics;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Test
@@ -73,6 +71,25 @@ class InternalDropStockControllerTest {
   }
 
   @Test
+  @DisplayName("동일 재고 변경의 원장 커밋이 진행 중이면 503과 재시도 가능한 코드를 반환한다")
+  void deduct_stockChangeInProgress_returns503() throws Exception {
+    // given
+    UUID dropId = UUID.randomUUID();
+    willThrow(new BusinessException(DropErrorCode.STOCK_CHANGE_IN_PROGRESS))
+        .given(dropStockUseCase)
+        .deduct(any());
+
+    // when & then
+    mockMvc
+        .perform(
+            post("/internal/drops/{dropId}/stock-deductions", dropId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request())))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.error").value("DROP_STOCK_CHANGE_IN_PROGRESS"));
+  }
+
+  @Test
   @DisplayName("orderId가 없으면 400 INVALID_INPUT을 반환한다")
   void deduct_missingOrderId_returns400() throws Exception {
     // given
@@ -104,6 +121,25 @@ class InternalDropStockControllerTest {
                 .content(objectMapper.writeValueAsString(request())))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.remainingQuantity").value(8));
+  }
+
+  @Test
+  @DisplayName("선행 차감과 일치하지 않는 롤백이면 409 ROLLBACK_NOT_ALLOWED를 반환한다")
+  void rollback_notAllowed_returns409() throws Exception {
+    // given
+    UUID dropId = UUID.randomUUID();
+    willThrow(new BusinessException(DropErrorCode.ROLLBACK_NOT_ALLOWED))
+        .given(dropStockUseCase)
+        .rollback(any());
+
+    // when & then
+    mockMvc
+        .perform(
+            post("/internal/drops/{dropId}/stock-rollbacks", dropId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request())))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error").value("DROP_ROLLBACK_NOT_ALLOWED"));
   }
 
   @Test

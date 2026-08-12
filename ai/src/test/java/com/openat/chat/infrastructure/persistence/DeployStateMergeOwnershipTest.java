@@ -220,12 +220,12 @@ class DeployStateMergeOwnershipTest {
   private Result merge(Path repository, String mainSha) throws Exception {
     Path workDirectory = Files.createDirectories(tempDir.resolve("work"));
     Map<String, String> environment = new HashMap<>(gitEnvironment());
-    environment.put("WORK_DIR", DeploymentScripts.toScriptPath(workDirectory));
+    environment.put("WORK_DIR", DeploymentScripts.toBashPath(workDirectory));
     environment.put("PYTHON", DeploymentScripts.python());
     List<String> command =
         List.of(
             DeploymentScripts.bash(),
-            DeploymentScripts.toScriptPath(Path.of(MERGE_SCRIPT).toAbsolutePath()),
+            DeploymentScripts.toBashPath(Path.of(MERGE_SCRIPT).toAbsolutePath()),
             mainSha);
     return DeploymentScripts.run(repository, environment, command);
   }
@@ -247,8 +247,8 @@ class DeployStateMergeOwnershipTest {
   /** 개발자·러너의 전역 git 설정(병합 전략·서명·hook)이 결과를 바꾸지 않게 격리한다. */
   private Map<String, String> gitEnvironment() {
     return Map.of(
-        "GIT_CONFIG_GLOBAL", DeploymentScripts.toScriptPath(tempDir.resolve("absent-global")),
-        "GIT_CONFIG_SYSTEM", DeploymentScripts.toScriptPath(tempDir.resolve("absent-system")),
+        "GIT_CONFIG_GLOBAL", DeploymentScripts.toBashPath(tempDir.resolve("absent-global")),
+        "GIT_CONFIG_SYSTEM", DeploymentScripts.toBashPath(tempDir.resolve("absent-system")),
         "GIT_AUTHOR_NAME", "merge-test",
         "GIT_AUTHOR_EMAIL", "merge-test@example.test",
         "GIT_COMMITTER_NAME", "merge-test",

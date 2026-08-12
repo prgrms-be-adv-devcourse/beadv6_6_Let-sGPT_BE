@@ -6,13 +6,16 @@ import com.openat.product.application.dto.ProductInfo;
 import com.openat.product.application.usecase.ProductQueryUseCase;
 import com.openat.product.domain.error.ProductErrorCode;
 import com.openat.product.domain.model.Product;
+import com.openat.product.domain.model.SellerStoreProjection;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.domain.repository.ProductSearchCondition;
 import com.openat.product.domain.repository.ProductTombstone;
-import com.openat.seller.application.usecase.SellerStoreQueryUseCase;
+import com.openat.product.domain.repository.SellerStoreProjectionRepository;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -29,15 +32,13 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProductQueryService implements ProductQueryUseCase {
 
   private final ProductRepository productRepository;
-  private final SellerStoreQueryUseCase sellerStoreQueryUseCase;
+  private final SellerStoreProjectionRepository sellerStoreProjectionRepository;
 
   @Override
   public ProductInfo getById(UUID id) {
     Product product = getProductOrThrow(id);
-    String sellerName =
-        sellerStoreQueryUseCase
-            .findStoreNames(List.of(product.getSellerId()))
-            .get(product.getSellerId());
+    Map<UUID, String> sellerNames = findSellerNames(List.of(product.getSellerId()));
+    String sellerName = sellerNames.get(product.getSellerId());
     return ProductInfo.from(product, sellerName);
   }
 
@@ -53,11 +54,24 @@ public class ProductQueryService implements ProductQueryUseCase {
   @Override
   public Page<ProductInfo> searchProducts(ProductSearchCondition condition, Pageable pageable) {
     Page<Product> productPage = productRepository.search(condition, pageable);
-    Map<UUID, String> storeNames =
-        sellerStoreQueryUseCase.findStoreNames(
-            productPage.getContent().stream().map(Product::getSellerId).toList());
+    List<UUID> sellerIds = productPage.getContent().stream().map(Product::getSellerId).toList();
+    Map<UUID, String> sellerNames = findSellerNames(sellerIds);
     return productPage.map(
-        product -> ProductInfo.from(product, storeNames.get(product.getSellerId())));
+        product -> ProductInfo.from(product, sellerNames.get(product.getSellerId())));
+  }
+
+  @Override
+  public Map<UUID, String> findSellerNames(Collection<UUID> sellerIds) {
+    if (sellerIds.isEmpty()) {
+      return Map.of();
+    }
+    List<SellerStoreProjection> projections =
+        sellerStoreProjectionRepository.findAllById(sellerIds);
+    Map<UUID, String> sellerNames = new HashMap<>();
+    for (SellerStoreProjection projection : projections) {
+      sellerNames.put(projection.getSellerInfoId(), projection.getStoreName());
+    }
+    return sellerNames;
   }
 
   @Override
@@ -66,13 +80,12 @@ public class ProductQueryService implements ProductQueryUseCase {
     List<Product> changedProducts = productRepository.searchChangedAliveSince(changedAfter);
     List<ProductTombstone> tombstones = productRepository.searchTombstonesSince(changedAfter);
 
-    Map<UUID, String> storeNames =
-        sellerStoreQueryUseCase.findStoreNames(
-            changedProducts.stream().map(Product::getSellerId).toList());
+    List<UUID> sellerIds = changedProducts.stream().map(Product::getSellerId).toList();
+    Map<UUID, String> sellerNames = findSellerNames(sellerIds);
 
     List<ProductChangeInfo> changes = new ArrayList<>();
     for (Product product : changedProducts) {
-      String sellerName = storeNames.get(product.getSellerId());
+      String sellerName = sellerNames.get(product.getSellerId());
       changes.add(ProductChangeInfo.upsert(product, sellerName, changedAfter));
     }
     for (ProductTombstone tombstone : tombstones) {

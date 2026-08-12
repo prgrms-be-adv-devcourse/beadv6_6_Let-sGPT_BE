@@ -158,7 +158,12 @@ public class SearchRecommendClient {
               .body(new ParameterizedTypeReference<List<SimilarProductResponse>>() {}),
           "Search recommendation response body is empty");
     } finally {
-      searchConcurrencyLimiter.release(permitId);
+      // release 실패를 여기서 삼키지 않으면 정상 응답을 이 finally의 예외가 덮어써 버린다.
+      try {
+        searchConcurrencyLimiter.release(permitId);
+      } catch (RuntimeException exception) {
+        log.warn("failed to release search concurrency permit {}", permitId, exception);
+      }
     }
   }
 

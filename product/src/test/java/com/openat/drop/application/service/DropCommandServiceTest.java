@@ -98,7 +98,7 @@ class DropCommandServiceTest {
     UUID sellerId = UUID.randomUUID();
     UUID dropId = UUID.randomUUID();
     Drop drop = ownedDrop(sellerId, Instant.now().plusSeconds(3600));
-    given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.of(drop));
 
     // when
     dropCommandService.delete(dropId, sellerId);
@@ -116,7 +116,7 @@ class DropCommandServiceTest {
     UUID sellerId = UUID.randomUUID();
     UUID dropId = UUID.randomUUID();
     Drop drop = ownedDrop(sellerId, Instant.now().minusSeconds(3600));
-    given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.of(drop));
 
     // when
     dropCommandService.delete(dropId, sellerId);
@@ -135,7 +135,7 @@ class DropCommandServiceTest {
     UUID dropId = UUID.randomUUID();
     Drop drop = ownedDrop(sellerId, Instant.now().minusSeconds(3600));
     drop.close();
-    given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.of(drop));
 
     // when
     dropCommandService.delete(dropId, sellerId);
@@ -152,7 +152,7 @@ class DropCommandServiceTest {
     UUID sellerId = UUID.randomUUID();
     UUID dropId = UUID.randomUUID();
     Drop drop = ownedDrop(UUID.randomUUID(), Instant.now().plusSeconds(3600));
-    given(dropRepository.findById(dropId)).willReturn(Optional.of(drop));
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.of(drop));
 
     // when & then
     assertThatThrownBy(() -> dropCommandService.delete(dropId, sellerId))
@@ -167,7 +167,7 @@ class DropCommandServiceTest {
     // given
     UUID sellerId = UUID.randomUUID();
     UUID dropId = UUID.randomUUID();
-    given(dropRepository.findById(dropId)).willReturn(Optional.empty());
+    given(dropRepository.findByIdForUpdate(dropId)).willReturn(Optional.empty());
 
     // when & then
     assertThatThrownBy(() -> dropCommandService.delete(dropId, sellerId))
@@ -176,23 +176,28 @@ class DropCommandServiceTest {
   }
 
   @Test
-  @DisplayName("상품 삭제 이벤트 시 오픈 드롭이 없으면 그 상품의 드롭을 모두 soft delete하고 삭제 이벤트를 발행한다")
-  void onProductDeleted_noLiveDrop_softDeletesAllAndPublishes() {
+  @DisplayName("상품 삭제는 오픈 전 캐시만 제거하고 종료 드롭의 drain 캐시는 보존한다")
+  void onProductDeleted_noLiveDrop_preservesClosedDropDrainCache() {
     // given
     UUID productId = UUID.randomUUID();
     Drop preOpen = ownedDrop(UUID.randomUUID(), Instant.now().plusSeconds(3600));
-    Drop closed = ownedDrop(UUID.randomUUID(), Instant.now().plusSeconds(3600));
+    Drop closed = ownedDrop(UUID.randomUUID(), Instant.now().minusSeconds(3600));
     closed.close();
-    given(dropRepository.findAllByProductId(productId)).willReturn(List.of(preOpen, closed));
+    given(dropRepository.findAllByProductIdForUpdate(productId))
+        .willReturn(List.of(preOpen, closed));
 
     // when
     Instant deletedAt = Instant.parse("2026-07-15T00:00:00Z");
-    dropCommandService.onProductDeleted(new ProductDeletedEvent(productId, deletedAt));
+    dropCommandService.onProductDeleted(new ProductDeletedEvent(productId, 2L, deletedAt));
 
     // then
     then(dropRepository).should().delete(preOpen);
     then(dropRepository).should().delete(closed);
-    then(eventPublisher).should(times(2)).publishEvent(any(DropDeletedEvent.class));
+    ArgumentCaptor<DropDeletedEvent> eventCaptor = ArgumentCaptor.forClass(DropDeletedEvent.class);
+    then(eventPublisher).should(times(2)).publishEvent(eventCaptor.capture());
+    assertThat(eventCaptor.getAllValues())
+        .extracting(DropDeletedEvent::beforeOpen)
+        .containsExactly(true, false);
   }
 
   @Test
@@ -201,13 +206,14 @@ class DropCommandServiceTest {
     // given
     UUID productId = UUID.randomUUID();
     Drop live = ownedDrop(UUID.randomUUID(), Instant.now().minusSeconds(3600));
-    given(dropRepository.findAllByProductId(productId)).willReturn(List.of(live));
+    given(dropRepository.findAllByProductIdForUpdate(productId)).willReturn(List.of(live));
 
     // when & then
     assertThatThrownBy(
             () ->
                 dropCommandService.onProductDeleted(
-                    new ProductDeletedEvent(productId, Instant.parse("2026-07-15T00:00:00Z"))))
+                    new ProductDeletedEvent(
+                        productId, 2L, Instant.parse("2026-07-15T00:00:00Z"))))
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", DropErrorCode.OPEN_EXISTS);
     then(dropRepository).should(never()).delete(any());

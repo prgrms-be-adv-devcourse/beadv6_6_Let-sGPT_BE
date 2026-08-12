@@ -9,10 +9,12 @@ import com.openat.drop.domain.repository.StockMutation;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ClassPathResource;
@@ -35,24 +37,36 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
       RedisScript.of(new ClassPathResource("redis/deduct.lua"), String.class);
   private final RedisScript<String> rollbackScript =
       RedisScript.of(new ClassPathResource("redis/rollback.lua"), String.class);
-  private final RedisScript<String> compensateScript =
-      RedisScript.of(new ClassPathResource("redis/compensate.lua"), String.class);
+  private final RedisScript<Long> compensateScript =
+      RedisScript.of(new ClassPathResource("redis/compensate.lua"), Long.class);
   private final RedisScript<String> closeScript =
       RedisScript.of(new ClassPathResource("redis/close.lua"), String.class);
+  private final RedisScript<String> restoreCloseScript =
+      RedisScript.of(new ClassPathResource("redis/restore_close.lua"), String.class);
+  private final RedisScript<String> warmScript =
+      RedisScript.of(new ClassPathResource("redis/warm.lua"), String.class);
+  private final RedisScript<Long> evictBeforeOpenScript =
+      RedisScript.of(new ClassPathResource("redis/evict_before_open.lua"), Long.class);
 
   @Override
   public void warm(DropCacheState state) {
-    String dropKey = dropKey(state.dropId());
-    Duration ttl = warmingTtl(state.closeAt());
-
-    redisTemplate.opsForHash().putAll(dropKey, dropFields(state));
-    redisTemplate.expire(dropKey, ttl);
-
-    if (!state.buyers().isEmpty()) {
-      String buyersKey = buyersKey(state.dropId());
-      redisTemplate.opsForHash().putAll(buyersKey, buyerFields(state));
-      redisTemplate.expire(buyersKey, ttl);
-    }
+    List<String> arguments = new ArrayList<>();
+    arguments.add(Long.toString(state.remaining()));
+    arguments.add(Long.toString(state.openAt().toEpochMilli()));
+    arguments.add(nullableNumber(state.closeAt() == null ? null : state.closeAt().toEpochMilli()));
+    arguments.add(nullableNumber(state.limitPerUser()));
+    arguments.add(Long.toString(warmingTtl(state.closeAt()).toMillis()));
+    state.buyers().entrySet().stream()
+        .sorted(Map.Entry.comparingByKey())
+        .forEach(
+            entry -> {
+              arguments.add(entry.getKey().toString());
+              arguments.add(Long.toString(entry.getValue()));
+            });
+    redisTemplate.execute(
+        warmScript,
+        List.of(dropKey(state.dropId()), buyersKey(state.dropId())),
+        arguments.toArray());
   }
 
   @Override
@@ -84,45 +98,32 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
     return remainingByDrop;
   }
 
-  private Map<String, String> dropFields(DropCacheState state) {
-    String closeAt = UNSET_SENTINEL;
-    if (state.closeAt() != null) {
-      closeAt = Long.toString(state.closeAt().toEpochMilli());
-    }
-
-    String limitPerUser = UNSET_SENTINEL;
-    if (state.limitPerUser() != null) {
-      limitPerUser = Integer.toString(state.limitPerUser());
-    }
-
-    Map<String, String> fields = new HashMap<>();
-    fields.put(REMAINING_FIELD, Long.toString(state.remaining()));
-    fields.put("openAt", Long.toString(state.openAt().toEpochMilli()));
-    fields.put("closeAt", closeAt);
-    fields.put("limitPerUser", limitPerUser);
-    return fields;
-  }
-
-  private Map<String, String> buyerFields(DropCacheState state) {
-    Map<String, String> fields = new HashMap<>();
-    state
-        .buyers()
-        .forEach((buyerId, quantity) -> fields.put(buyerId.toString(), Long.toString(quantity)));
-    return fields;
+  @Override
+  public void markClosed(UUID dropId) {
+    redisTemplate.execute(
+        closeScript,
+        List.of(dropKey(dropId), buyersKey(dropId)),
+        Long.toString(properties.closeMargin().toMillis()));
   }
 
   @Override
-  public void markClosed(UUID dropId, Instant now) {
-    redisTemplate.execute(closeScript, List.of(dropKey(dropId)), Long.toString(now.toEpochMilli()));
+  public void restoreCloseAt(UUID dropId, Instant closeAt) {
+    redisTemplate.execute(
+        restoreCloseScript,
+        List.of(dropKey(dropId)),
+        nullableNumber(closeAt == null ? null : closeAt.toEpochMilli()));
   }
 
   @Override
-  public void evict(UUID dropId) {
-    redisTemplate.delete(List.of(dropKey(dropId), buyersKey(dropId)));
+  public boolean evictBeforeOpen(UUID dropId) {
+    Long evicted =
+        redisTemplate.execute(
+            evictBeforeOpenScript, List.of(dropKey(dropId), buyersKey(dropId)));
+    return Long.valueOf(1L).equals(evicted);
   }
 
   @Override
-  public StockCommandResult deduct(StockMutation mutation, Instant now) {
+  public StockCommandResult deduct(StockMutation mutation) {
     List<String> keys =
         List.of(
             dropKey(mutation.dropId()), buyersKey(mutation.dropId()), orderKey(mutation.orderId()));
@@ -132,7 +133,6 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
             keys,
             mutation.buyerId().toString(),
             Integer.toString(mutation.quantity()),
-            Long.toString(now.toEpochMilli()),
             Long.toString(properties.idempotencyTtl().toSeconds()));
     return parse(raw);
   }
@@ -155,8 +155,8 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
   }
 
   @Override
-  public void compensateDeduct(StockMutation mutation) {
-    compensate(
+  public Optional<Long> compensateDeduct(StockMutation mutation) {
+    return compensate(
         mutation.dropId(),
         orderKey(mutation.orderId()),
         mutation.buyerId(),
@@ -165,8 +165,8 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
   }
 
   @Override
-  public void compensateRollback(StockMutation mutation) {
-    compensate(
+  public Optional<Long> compensateRollback(StockMutation mutation) {
+    return compensate(
         mutation.dropId(),
         rollbackKey(mutation.orderId()),
         mutation.buyerId(),
@@ -174,14 +174,16 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
         mutation.quantity());
   }
 
-  private void compensate(
+  private Optional<Long> compensate(
       UUID dropId, String idemKey, UUID buyerId, int remainingDelta, int buyerDelta) {
-    redisTemplate.execute(
-        compensateScript,
-        List.of(dropKey(dropId), buyersKey(dropId), idemKey),
-        buyerId.toString(),
-        Integer.toString(remainingDelta),
-        Integer.toString(buyerDelta));
+    Long remaining =
+        redisTemplate.execute(
+            compensateScript,
+            List.of(dropKey(dropId), buyersKey(dropId), idemKey),
+            buyerId.toString(),
+            Integer.toString(remainingDelta),
+            Integer.toString(buyerDelta));
+    return Optional.ofNullable(remaining);
   }
 
   private StockCommandResult parse(String raw) {
@@ -200,6 +202,10 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
       return properties.closeMargin();
     }
     return ttl;
+  }
+
+  private String nullableNumber(Number value) {
+    return value == null ? UNSET_SENTINEL : value.toString();
   }
 
   private String dropKey(UUID dropId) {

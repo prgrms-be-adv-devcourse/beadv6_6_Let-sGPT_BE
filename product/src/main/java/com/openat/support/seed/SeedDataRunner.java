@@ -7,10 +7,10 @@ import com.openat.drop.domain.model.StockChangeType;
 import com.openat.drop.domain.model.StockHistory;
 import com.openat.drop.domain.repository.DropRepository;
 import com.openat.drop.domain.repository.StockHistoryRepository;
+import com.openat.product.application.usecase.SellerStoreProjectionCommandUseCase;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
 import com.openat.product.domain.repository.ProductSearchCondition;
-import com.openat.seller.application.usecase.SellerStoreCommandUseCase;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -69,12 +69,12 @@ public class SeedDataRunner implements ApplicationRunner {
   private final ProductRepository productRepository;
   private final DropRepository dropRepository;
   private final StockHistoryRepository stockHistoryRepository;
-  private final SellerStoreCommandUseCase sellerStoreCommandUseCase;
+  private final SellerStoreProjectionCommandUseCase sellerStoreProjectionCommandUseCase;
 
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
-    sellerStoreCommandUseCase.upsert(DEMO_SELLER_INFO_ID, DEMO_STORE_NAME);
+    sellerStoreProjectionCommandUseCase.upsert(DEMO_SELLER_INFO_ID, DEMO_STORE_NAME);
     if (alreadySeeded()) {
       return;
     }

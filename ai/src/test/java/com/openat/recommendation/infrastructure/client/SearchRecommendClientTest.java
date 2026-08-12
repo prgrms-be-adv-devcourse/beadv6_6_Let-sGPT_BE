@@ -19,8 +19,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -384,6 +386,52 @@ class SearchRecommendClientTest {
         .extracting(SearchRecommendClient.SimilarProductResponse::id)
         .containsExactlyElementsOf(resultIds);
     server.verify();
+  }
+
+  @Test
+  @DisplayName("permit 반납이 실패해도 이미 받은 성공 응답은 그대로 반환한다")
+  void recommend_whenPermitReleaseFails_stillReturnsSuccessfulResponse() {
+    UUID resultId = UUID.randomUUID();
+    server
+        .expect(requestTo(RECOMMEND_URI))
+        .andRespond(withSuccess(products(List.of(resultId)), MediaType.APPLICATION_JSON));
+    ThrowingOnReleaseStringRedisTemplate throwingOnReleaseTemplate =
+        new ThrowingOnReleaseStringRedisTemplate(connectionFactory);
+    SearchRecommendClient throwingOnReleaseClient =
+        new SearchRecommendClient(
+            builder.build(),
+            20,
+            1,
+            1,
+            100,
+            Duration.ofSeconds(2),
+            Duration.ofSeconds(5),
+            throwingOnReleaseTemplate,
+            Runnable::run);
+
+    var result =
+        throwingOnReleaseClient.recommend(List.of(new Seed(UUID.randomUUID(), 0.5, false)));
+
+    assertThat(result)
+        .extracting(SearchRecommendClient.SimilarProductResponse::id)
+        .containsExactly(resultId);
+    server.verify();
+  }
+
+  /** release-search-permit.lua는 permit id 인자 하나만 받으므로, args가 1개인 호출만 release로 골라 실패시킨다. */
+  private static final class ThrowingOnReleaseStringRedisTemplate extends StringRedisTemplate {
+
+    ThrowingOnReleaseStringRedisTemplate(RedisConnectionFactory connectionFactory) {
+      super(connectionFactory);
+    }
+
+    @Override
+    public <T> T execute(RedisScript<T> script, List<String> keys, Object... args) {
+      if (args.length == 1) {
+        throw new RuntimeException("simulated permit release failure");
+      }
+      return super.execute(script, keys, args);
+    }
   }
 
   private List<UUID> ids(int count) {

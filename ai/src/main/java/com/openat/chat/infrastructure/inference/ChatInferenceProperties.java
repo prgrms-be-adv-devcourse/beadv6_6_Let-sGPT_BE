@@ -10,7 +10,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class ChatInferenceProperties {
 
   private boolean enabled = true;
-  private String baseUrl = "http://127.0.0.1:11434/v1";
   private String model = "gemma4:12b-it-qat";
   private boolean localOnlyRoute;
   private String reasoningEffort = "none";
@@ -28,14 +27,6 @@ public class ChatInferenceProperties {
     this.enabled = enabled;
   }
 
-  public String getBaseUrl() {
-    return baseUrl;
-  }
-
-  public void setBaseUrl(String baseUrl) {
-    this.baseUrl = baseUrl;
-  }
-
   public String getModel() {
     return model;
   }
@@ -44,8 +35,8 @@ public class ChatInferenceProperties {
     this.model = model;
   }
 
-  public boolean isLocalOnlyRoute() {
-    return localOnlyRoute || isLoopback(baseUrl);
+  public boolean isLocalOnlyRoute(String resolvedBaseUrl) {
+    return localOnlyRoute || isLoopback(resolvedBaseUrl);
   }
 
   public void setLocalOnlyRoute(boolean localOnlyRoute) {
@@ -98,8 +89,8 @@ public class ChatInferenceProperties {
 
   @PostConstruct
   void validate() {
-    if (baseUrl == null || baseUrl.isBlank() || model == null || model.isBlank()) {
-      throw new IllegalStateException("관리자 챗봇 추론 주소와 모델이 필요해요.");
+    if (model == null || model.isBlank()) {
+      throw new IllegalStateException("관리자 챗봇 추론 모델이 필요해요.");
     }
     if (reasoningEffort == null || reasoningEffort.isBlank()) {
       throw new IllegalStateException("chat.inference.reasoning-effort가 필요해요.");
@@ -111,9 +102,17 @@ public class ChatInferenceProperties {
       throw new IllegalStateException("단계별 출력 토큰은 1 이상이어야 해요.");
     }
     context.validate();
+    int maximumOutputTokens =
+        Math.max(routingMaxTokens, Math.max(bindingMaxTokens, answerMaxTokens));
+    if (maximumOutputTokens > context.getAnswerTokenReserve()) {
+      throw new IllegalStateException("단계별 출력 토큰은 답변 예약 토큰을 넘을 수 없어요.");
+    }
   }
 
   private boolean isLoopback(String value) {
+    if (value == null || value.isBlank()) {
+      return false;
+    }
     try {
       String host = URI.create(value).getHost();
       return "localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host) || "::1".equals(host);
@@ -127,6 +126,7 @@ public class ChatInferenceProperties {
     private int inputTokenLimit = 6000;
     private int answerTokenReserve = 1500;
     private int safetyTokenReserve = 692;
+    private int contextWindowTokenLimit = 8192;
     private int maxSchemaShards = 6;
     private int previousQuestionMaxCharacters = 300;
     private int previousAnswerMaxCharacters = 800;
@@ -155,6 +155,14 @@ public class ChatInferenceProperties {
       this.safetyTokenReserve = safetyTokenReserve;
     }
 
+    public int getContextWindowTokenLimit() {
+      return contextWindowTokenLimit;
+    }
+
+    public void setContextWindowTokenLimit(int contextWindowTokenLimit) {
+      this.contextWindowTokenLimit = contextWindowTokenLimit;
+    }
+
     public int getMaxSchemaShards() {
       return maxSchemaShards;
     }
@@ -180,8 +188,15 @@ public class ChatInferenceProperties {
     }
 
     private void validate() {
-      if (inputTokenLimit < 1 || answerTokenReserve < 1 || safetyTokenReserve < 0) {
+      if (inputTokenLimit < 1
+          || answerTokenReserve < 1
+          || safetyTokenReserve < 0
+          || contextWindowTokenLimit < 1) {
         throw new IllegalStateException("chat.inference.context 토큰 예산이 올바르지 않아요.");
+      }
+      if (inputTokenLimit + answerTokenReserve + safetyTokenReserve
+          > contextWindowTokenLimit) {
+        throw new IllegalStateException("입력·답변·안전 토큰 합계가 모델 컨텍스트 창을 넘을 수 없어요.");
       }
       if (maxSchemaShards < 1 || maxSchemaShards > InternalDataDomain.values().length) {
         throw new IllegalStateException(

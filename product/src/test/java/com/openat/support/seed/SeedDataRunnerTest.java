@@ -10,12 +10,13 @@ import com.openat.drop.domain.repository.DropRepository;
 import com.openat.drop.domain.repository.StockHistoryRepository;
 import com.openat.drop.infrastructure.persistence.DropRepositoryAdaptor;
 import com.openat.drop.infrastructure.persistence.StockHistoryRepositoryAdaptor;
+import com.openat.product.application.service.SellerStoreProjectionCommandService;
+import com.openat.product.application.usecase.SellerStoreProjectionCommandUseCase;
 import com.openat.product.domain.model.Product;
 import com.openat.product.domain.repository.ProductRepository;
+import com.openat.product.infrastructure.persistence.PostgresSearchProjectionReferenceLock;
 import com.openat.product.infrastructure.persistence.ProductRepositoryAdaptor;
-import com.openat.seller.application.service.SellerStoreCommandService;
-import com.openat.seller.application.usecase.SellerStoreCommandUseCase;
-import com.openat.seller.infrastructure.persistence.SellerStoreRepositoryAdaptor;
+import com.openat.product.infrastructure.persistence.SellerStoreProjectionRepositoryAdaptor;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.List;
@@ -41,8 +42,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
   ProductRepositoryAdaptor.class,
   DropRepositoryAdaptor.class,
   StockHistoryRepositoryAdaptor.class,
-  SellerStoreRepositoryAdaptor.class,
-  SellerStoreCommandService.class,
+  SellerStoreProjectionRepositoryAdaptor.class,
+  PostgresSearchProjectionReferenceLock.class,
+  SellerStoreProjectionCommandService.class,
   QueryDslConfig.class
 })
 @TestPropertySource(
@@ -60,7 +62,7 @@ class SeedDataRunnerTest {
   @Autowired private ProductRepository productRepository;
   @Autowired private DropRepository dropRepository;
   @Autowired private StockHistoryRepository stockHistoryRepository;
-  @Autowired private SellerStoreCommandUseCase sellerStoreCommandUseCase;
+  @Autowired private SellerStoreProjectionCommandUseCase sellerStoreProjectionCommandUseCase;
   @PersistenceContext private EntityManager entityManager;
 
   private SeedDataRunner runner;
@@ -73,7 +75,7 @@ class SeedDataRunnerTest {
             productRepository,
             dropRepository,
             stockHistoryRepository,
-            sellerStoreCommandUseCase);
+            sellerStoreProjectionCommandUseCase);
     for (String name : List.of("의류", "액세서리", "문구", "전자기기", "피규어", "기타")) {
       entityManager.persist(Category.create().name(name).build());
     }
@@ -92,7 +94,7 @@ class SeedDataRunnerTest {
     assertThat(count("Product")).isEqualTo(16);
     assertThat(count("Drop")).isEqualTo(10);
     assertThat(count("StockHistory")).isEqualTo(6);
-    assertThat(count("SellerStore")).isEqualTo(1);
+    assertThat(count("SellerStoreProjection")).isEqualTo(1);
     // 오픈 구간 잔여 차감 합: (100-37)+(50-8)+(200-152)+(150-64) + (60-0)+(90-0) = 389
     assertThat(totalQuantityDelta()).isEqualTo(-389);
   }
@@ -130,7 +132,7 @@ class SeedDataRunnerTest {
     entityManager.clear();
 
     // then
-    assertThat(count("SellerStore")).isEqualTo(1);
+    assertThat(count("SellerStoreProjection")).isEqualTo(1);
     assertThat(count("Product")).isEqualTo(1);
   }
 

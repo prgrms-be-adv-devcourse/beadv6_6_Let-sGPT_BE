@@ -39,7 +39,7 @@
 | 구조화 결과 | 상세 스키마를 질문에 맞게 채운 독립 조회 단위 |
 | 사실 압축본 | 도구·DB 원문에서 최종 답변에 필요한 검증 사실만 남긴 공통 결과 |
 | 단계적 답변 | 먼저 완료된 독립 사실을 최종 조회 전 자연어로 전달하는 답변 |
-| 단계 | 의미상 처리 레벨. 8K 예산으로 같은 레벨을 병렬 분할해도 깊이는 늘지 않음 |
+| 단계 | 의미상 처리 레벨. 8K 예산의 bounded shard와 같은 레벨의 1회 형식 복구는 물리 호출을 추가할 수 있지만 깊이는 늘지 않음 |
 
 ## 3. 단계별 처리 흐름
 
@@ -141,7 +141,7 @@ loadInternalDataSchemas
 
 서버는 도구명, JSON 형식, 닫힌 카탈로그, 주문번호와 외부 전송 정책을 검증한다. 알 수 없는 도구나 잘못된 인자는 실행하지 않되 같은 응답의 다른 정상 호출은 보존한다.
 
-1차 upstream 응답은 완료까지 버퍼링한다. tool call이 없고 `content`만 있는 경우에만 일반 답변으로 확정해 SSE 조각으로 전달한다. tool call이 하나라도 있으면 같은 응답의 `content`를 폐기하고 도구·영역만 처리한다. 사용자 체감 첫 답변 시간은 upstream 첫 토큰이 아니라 검증 뒤 첫 SSE 조각을 기준으로 측정한다.
+1차 upstream 응답은 완료까지 버퍼링한다. tool call이 없고 `content`만 있으며 `finishReason=stop`인 경우에만 일반 답변으로 확정해 SSE 조각으로 전달한다. `length`처럼 완결되지 않았거나 종료 이유가 없는 content-only 응답은 노출하지 않는다. tool call이 하나라도 있으면 종료 이유와 관계없이 기존처럼 같은 응답의 `content`를 폐기하고 도구·영역만 처리한다. 사용자 체감 첫 답변 시간은 upstream 첫 토큰이 아니라 검증 뒤 첫 SSE 조각을 기준으로 측정한다.
 
 ### 5.3 완료된 검증
 
@@ -186,14 +186,16 @@ loadInternalDataSchemas
 
 2차 요청은 자동 tool 실행을 끈 단계 전용 호출로 수행한다. 각 shard는 정확히 하나의 `submitInternalQueryBindings` tool call을 반환하고, 애플리케이션이 전체 assistant 응답과 원시 arguments를 받은 뒤에만 처리한다.
 
-논리 인자는 다음 두 부분으로 구성한다.
+논리 인자는 다음 세 부분으로 구성한다.
 
 ```text
 earlyAnswer
+deliveredEvidenceIds[]
 bindings[]
 ```
 
 - `earlyAnswer`: 완료된 가벼운 사실을 사용자에게 먼저 설명하는 자연어. primary shard 하나만 생성하며 다른 shard에서는 비운다.
+- `deliveredEvidenceIds[]`: `earlyAnswer`에서 실제로 설명한 `SUCCESS`·`PARTIAL` 근거의 서버 발급 ID. 서버는 입력 근거에 존재하는 ID만 허용하고 `FAILED`·알 수 없는 ID는 제거한다. 유효 ID가 없으면 `earlyAnswer`도 전달하지 않는다.
 - `bindings[]`: 사용자가 요구한 독립 조회 단위 목록.
 
 각 binding은 다음 의미를 가진다.
@@ -259,6 +261,7 @@ failureReason: FAILED일 때만 존재
 - 개별 값 지표는 대응하는 공개 식별자 차원이 있을 때만 실행하며 결과는 최대 20행으로 제한한다.
 - 지표와 공개 식별자의 의존성은 `metricRequirements` 카탈로그로 모델에 제공하고, 모델이 필수 차원을 빠뜨리면 서버가 같은 카탈로그로 보완한 뒤 다시 검증한다.
 - 시간 필드는 사건별 의미를 카탈로그에 함께 제공한다. 별도 사건을 지정하지 않은 기간 내 주문은 생성 시각을 사용하고, 결제·완료·취소·환불 기간은 해당 사건 시각을 사용한다.
+- 기간형 `ORDER_SAGA`의 시간 필드가 누락되거나 카탈로그 밖이면 `SAGA_UPDATED_AT`으로 복구하고 해당 필드 실패를 근거에 남긴다.
 - 회원·구매자·판매자 식별정보, 배송·연락처, 결제 키와 자유 원문은 어떤 행 조회에도 넣지 않는다.
 
 결과 행 수, 지표·차원·필터 수와 문자열 길이는 서버 상한으로 제한한다.
@@ -315,7 +318,7 @@ failureReason: FAILED일 때만 존재
 | `observedAt` | 사실 기준 시각 |
 | `deliveredToUser` | 단계적 답변으로 이미 전달했는지 여부 |
 
-원시 DB 행, 외부 API 원문과 긴 운영 문서는 최종 LLM에 보내지 않는다. 최종 답변은 성공 사실을 먼저 설명하고, 실패한 범위는 그 이유가 확인된 경우에만 짧게 안내한다. 실패값을 추측하거나 다른 데이터로 대체하지 않는다.
+원시 DB 행, 외부 API 원문과 긴 운영 문서는 최종 LLM에 보내지 않는다. 최종 답변은 성공 사실을 먼저 설명하고, 실패한 범위는 그 이유가 확인된 경우에만 짧게 안내한다. `earlyAnswer`가 전송된 경우에도 모델이 함께 반환하고 서버가 검증한 `deliveredEvidenceIds`만 전달 완료로 바꾼다. 실패값을 추측하거나 다른 데이터로 대체하지 않는다.
 
 ## 10. 4단계 — 단계적·최종 자연어 답변
 
@@ -333,7 +336,7 @@ failureReason: FAILED일 때만 존재
 
 최종 요청에는 도구 스키마를 넣지 않는다. 사용자가 이미 받은 내용을 그대로 반복하지 않고, 이후 데이터가 앞선 결과의 의미를 바꾸는 경우에만 관계를 분명하게 설명한다.
 
-내부 데이터 영역이 선택됐다면 `SUCCESS` binding이 하나도 없어도 3차 LLM을 호출한다. 누적된 구조화 실패를 근거로 확인하지 못한 부분과 지원 가능한 대안을 답하고 종료한다. 3차 추론 자체를 사용할 수 없으면 서버가 검증된 고정 안내문으로 종료하되 빈 답변은 허용하지 않는다.
+내부 데이터 영역이 선택됐다면 `SUCCESS` binding이 하나도 없어도 3차 LLM을 호출한다. 누적된 구조화 실패를 근거로 확인하지 못한 부분과 지원 가능한 대안을 답하고 종료한다. 3차 추론 자체가 실패하면 이미 전달한 자연어 여부를 `partial`에 반영한 단일 `error`로 종료하며, 불완전한 모델 스트림을 고정 문구로 덮어 정상 완료하지 않는다.
 
 ## 11. 운영 문서와 외부 도구
 
@@ -392,7 +395,7 @@ started
 - 2차 `earlyAnswer`는 primary shard의 전체 구조화 응답 검증 뒤 한 번만 보낸다.
 - 일부 자연어를 보낸 뒤 실패하면 `error.partial=true`로 종료한다.
 - `done`과 `error`는 상호 배타적이다.
-- 최종 답변 스트림은 Spring AI가 노출한 terminal `finishReason=stop`을 확인한 경우에만 `done`으로 변환한다. 이유가 없거나 다른 종료 이유면 부분 오류로 끝낸다.
+- 최종 답변 스트림은 원시 OpenAI SSE transport가 `finish_reason=stop`과 실제 `data: [DONE]`을 모두 관측한 경우에만 `done`으로 변환한다. `stop` 뒤에는 usage 객체가 있는 빈 `choices`만 허용하고 추가 choice·content나 malformed protocol은 부분 오류로 끝낸다. `stop` 뒤 clean EOF, 이유 없음과 `length`도 부분 오류다. route·binding의 Spring AI 연동은 그대로 유지한다.
 - 카드, route, tool name, schema와 별도 디버그 이벤트는 추가하지 않는다.
 - 프런트는 스피너, 경과 초, 부드러운 자동 스크롤과 사용자 수동 스크롤을 유지한다.
 
@@ -414,36 +417,36 @@ heartbeat 15초, 작업 deadline 170초, emitter timeout 180초를 초기값으�
 | 2차 | 원래 질문, 가벼운 사실, 선택 상세 스키마 | 선택되지 않은 스키마, 외부·DB 원문 |
 | 3차 | 원래 질문, 누적 사실, 전달 완료 식별자 | 모든 도구 스키마와 Query Plan 설명 |
 
-문자 수 상한은 1차 방어선일 뿐이며 실제 모델 토크나이저로 요청 전 예산을 계산한다. 2차 스키마는 영역별 크기 회귀 테스트를 두고, 최악 조합도 조용히 누락하지 않는다.
+문자 수 상한은 1차 방어선일 뿐이다. 애플리케이션은 현재 제공되는 근사 토큰 추정기로 system·user·tool 정의를 합산하고 route, 각 binding shard와 형식 복구, 최종 답변의 실제 모델 호출 직전에 6,000-token 상한을 검사한다. 선택 정보인 직전 한 턴 때문에 상한을 넘으면 그 맥락만 제외해 현재 질문을 다시 검사하고, 현재 질문과 필수 근거도 넘을 때만 실패시킨다. 이 추정기는 Gemma 서버의 실제 tokenizer와 같다고 주장하지 않으며, 차이는 692-token 안전 여유와 실서버 사용량 측정으로 보정한다. 2차 스키마는 영역별 크기 회귀 테스트를 두고, 최악 조합도 조용히 누락하지 않는다.
 
 ## 14. 오류와 재시도
 
-- 1차 결과가 완결된 일반 답변도 유효한 도구·영역도 아니면 선택 실패로 종료한다.
+- 1차 content-only 결과는 `finishReason=stop`일 때만 완결된 일반 답변으로 인정한다. `length`·종료 이유 없음처럼 불완전한 결과이거나 유효한 도구·영역도 아니면 본문을 보내기 전에 `CHAT_SELECTION_FAILED`로 종료한다. 내부 영역 선택이 실패했더라도 독립적인 가벼운 성공 근거가 있으면 그 근거와 선택 실패를 함께 최종 답변에 보존한다.
 - 빈 응답이나 프로토콜 형식 오류에만 같은 단계에서 한 번 복구 요청할 수 있다.
 - 의미를 임의 추측해 다른 영역이나 도구로 대체하지 않는다.
 - 한 tool call이나 구조화 단위가 실패해도 다른 정상 결과는 계속 처리한다.
 - 내부 영역이 선택된 요청은 구조화가 모두 실패해도 실패 근거를 포함한 최종 자연어를 보장한다.
 - 도구 실행 뒤 전체 요청을 자동 재실행하지 않아 외부 비용과 중복 조회를 막는다.
-- 연결 종료, 실행기 포화와 전체 기한 초과는 예약 작업과 실행 작업을 취소한다.
+- 연결 종료는 request cancellation으로 구분하고 answer 추론 단계 지표에도 `cancelled`로 기록한다. 전체 기한 초과는 `CHAT_TIMEOUT`, 실행기 포화는 `CHAT_BUSY`로 종료하고 예약 작업과 실행 작업을 취소한다.
 
-오류 코드는 보안 거부, 추론 비활성, 선택 실패, 도구 실패, 조회 실패, 입력 예산 초과, 포화, timeout과 부분 종료를 구분한다. 사용자 문구는 내부 원인을 노출하지 않으면서 재시도 가능 여부를 알려준다.
+SSE terminal 오류는 보안 거부, 추론 비활성, `CHAT_SELECTION_FAILED`, `CHAT_INPUT_BUDGET_EXCEEDED`, `CHAT_BUSY`, `CHAT_TIMEOUT`과 예상하지 못한 `CHAT_PROCESSING_FAILED`를 구분한다. 개별 도구·조회 실패는 terminal 오류를 중복 생성하지 않고 `EvidenceSegment.FAILED`와 제한 사유로 최종 자연어에 포함한다. 일부 자연어 전달 여부는 별도 오류 코드가 아니라 `error.partial`로 표현한다.
 
 ## 15. 관측과 무저장
 
-다음 메타데이터만 측정한다.
+다음 낮은 카디널리티 메타데이터만 측정한다.
 
-- 단계별 요청 수와 지연
+- route·binding·answer 단계별 요청 수, 지연과 고정 outcome
+- 단계별 호출 직전 추정 input token
 - 첫 자연어 시간과 전체 완료 시간
 - 선택 도구·영역 수
-- 스키마와 prompt token
-- 도구·조회별 성공·부분 성공·실패
+- 초기 도구와 내부 조회 근거의 성공·부분 성공·실패
 - 활성 스트림, 취소·포화·timeout
 
 질문, 답변, 검색어, API 키와 데이터 결과 본문은 로그나 DB에 저장하지 않는다. Spring AI Chat Memory를 사용하지 않고 추론 요청은 `store=false`로 보낸다.
 
 현재 로컬 하드웨어에서 검증한 스트림 실행기 `2 threads, queue 8`을 초기값으로 사용한다. 운영 부하 표본이 쌓이면 같은 측정 방식으로 다시 조정한다.
 
-요청 접수 시 하나의 절대 deadline을 만들고 LLM shard, 외부 도구와 DB 조회에 남은 시간만 전달한다. 자식 작업의 timeout은 전체 남은 시간을 넘을 수 없다. 스트림 조정 실행기와 fan-out 작업 실행기를 분리하고 각각 동시성 상한을 둔다. terminal 이벤트나 클라이언트 취소가 발생하면 해당 요청의 모든 자식 작업을 함께 취소한다.
+요청 접수 시 하나의 절대 deadline을 만들고 LLM shard, 외부 도구와 DB 조회에 남은 시간만 전달한다. fan-out은 절대 기한과 stage timeout 중 짧은 시간을 한 번만 적용하고, timeout 전에 끝난 형제 결과를 입력 순서대로 보존한다. 최종 답변 스트림도 청크마다 timeout을 다시 시작하지 않고 단계 시작 시각부터 남은 stage timeout과 요청 deadline 중 짧은 절대 시간을 적용한다. 시간이 끝나면 upstream을 취소하고 `CHAT_TIMEOUT`으로 분류한다. stage timeout의 미완료 작업은 개별 실패 근거로 남기고, 절대 기한 만료와 interrupt는 각각 timeout과 cancellation으로 구분한다. 스트림 조정 실행기와 fan-out 작업 실행기를 분리하고 각각 동시성 상한을 둔다. terminal 이벤트나 클라이언트 취소가 발생하면 해당 요청의 모든 자식 작업을 함께 취소한다.
 
 ## 16. 구현 구조와 설정
 
@@ -464,16 +467,18 @@ heartbeat 15초, 작업 deadline 170초, emitter timeout 180초를 초기값으�
 - 첫 요청에 전체 `analyzeAdminData` 스키마를 공개하는 방식
 - 하나의 Spring AI 자동 tool loop가 전체 단계를 암묵적으로 수행하는 흐름
 - 외부 provider 자동 폴백이 가능한 `chat` 별칭을 관리자 챗봇에 사용하는 설정
+- 최종 자연어 스트림의 Spring AI SDK 경로를 원시 `[DONE]` 종료 증거를 확인하는 SSE transport로 교체
 
 추론 호출은 `AdminChatInferencePort`, 초기 도구 실행은 `AdminInitialToolPort`, 내부 조회 실행은 `AdminAnalyticsExecutionPort`로 분리했다. `AdminChatOrchestrator`는 고정 단계와 사실 누적만 담당하고, 외부 API·운영 문서·DB 세부사항은 어댑터에 둔다.
 
 주요 설정은 다음 한 경계에서 관리한다.
 
-- `chat.inference.base-url`, `model`: OpenAI 호환 추론 위치와 모델
+- `spring.ai.openai.base-url`과 선택적 `spring.ai.openai.chat.base-url`: Spring AI 우선순위로 resolve하는 단일 OpenAI 호환 추론 위치
+- `chat.inference.model`: 관리자 챗봇 모델
 - `chat.inference.local-only-route`: 원격 주소의 비폴백 계약 명시
 - `chat.inference.reasoning-effort`: 로컬 모델 추론 모드. 현재 기본값 `none`
 - 단계별 timeout과 출력 토큰
-- 입력·답변·안전 토큰 예산, 최대 schema shard 수와 직전 대화 상한
+- 컨텍스트 창과 입력·답변·안전 토큰 예산, 최대 schema shard 수와 직전 대화 상한
 
 기본 loopback 주소는 로컬 전용으로 인정한다. 원격 주소는 `local-only-route=true`가 없으면 관리자 챗봇 추론에 사용하지 않는다.
 
@@ -501,7 +506,8 @@ heartbeat 15초, 작업 deadline 170초, emitter timeout 180초를 초기값으�
 - 개별 주문 이벤트 99·100·101건과 존재하지 않는 주문을 구분하는지
 - 주문 상세에서 요청하지 않은 스냅샷·이력·사가가 노출되지 않는지
 - 최종 답변이 일부 토큰 뒤 정상 종료 증거 없이 끊기면 `done`으로 처리하지 않는지
-- 초기 도구와 선택 스키마가 입력 예산을 넘지 않는지
+- 최대 질문·직전 대화와 초기 도구, 선택 스키마, 최종 근거가 호출 직전 입력 예산을 넘지 않는지
+- selector 실패와 가벼운 성공, fan-out timeout과 형제 성공이 함께 있어도 검증된 근거를 잃지 않는지
 - 실행기 큐 대기 시간까지 절대 deadline에 포함하는지
 
 ### 최종 확인 결과

@@ -65,6 +65,30 @@ class StockHistoryRepositoryAdaptorTest {
   }
 
   @Test
+  @DisplayName("주문과 변경 유형으로 권위 있는 재고 이력을 조회한다")
+  void findByOrderIdAndChangeType_returnsMatchingHistory() {
+    // given
+    Drop drop = persistDrop();
+    UUID orderId = UUID.randomUUID();
+    UUID buyerId = UUID.randomUUID();
+    stockHistoryRepository.save(deduct(drop, orderId, buyerId, 3));
+    entityManager.flush();
+    entityManager.clear();
+
+    // when
+    StockHistory found =
+        stockHistoryRepository
+            .findByOrderIdAndChangeType(orderId, StockChangeType.DEDUCT)
+            .orElseThrow();
+
+    // then
+    assertThat(found.getOrderId()).isEqualTo(orderId);
+    assertThat(found.getDropId()).isEqualTo(drop.getId());
+    assertThat(found.getBuyerId()).isEqualTo(buyerId);
+    assertThat(found.getQuantityDelta()).isEqualTo(-3);
+  }
+
+  @Test
   @DisplayName("drop의 수량 증감 합을 집계한다 (DEDUCT 음수·ROLLBACK 양수)")
   void sumQuantityDeltaByDropId_aggregatesSignedDelta() {
     // given

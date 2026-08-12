@@ -2,6 +2,7 @@ package com.openat.product.domain.repository;
 
 import com.openat.product.domain.model.Product;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -12,6 +13,10 @@ public interface ProductRepository {
   Product save(Product product);
 
   Optional<Product> findById(UUID id);
+
+  Optional<Product> findByIdForUpdate(UUID id);
+
+  List<Product> findAllByIdForUpdate(Collection<UUID> ids);
 
   Page<Product> search(ProductSearchCondition condition, Pageable pageable);
 

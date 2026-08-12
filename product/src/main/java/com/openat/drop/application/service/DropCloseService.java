@@ -19,7 +19,7 @@ public class DropCloseService {
   private final ApplicationEventPublisher eventPublisher;
 
   public void close(UUID dropId) {
-    Drop drop = dropRepository.findById(dropId).orElse(null);
+    Drop drop = dropRepository.findByIdForUpdate(dropId).orElse(null);
     if (drop == null || drop.getStatus() == DropStatus.CLOSE) {
       return;
     }

@@ -25,6 +25,11 @@ public class InternalQuerySubmissionTools {
                   "primary shard에서 이미 확인된 가벼운 사실을 모두 설명하는 짧은 자연어. "
                       + "확인된 사실이 없거나 secondary shard이면 빈 문자열")
           String earlyAnswer,
+      @ToolParam(
+              description =
+                  "primary earlyAnswer에서 실제로 설명한 SUCCESS 또는 PARTIAL 근거의 서버 발급 id. "
+                      + "earlyAnswer가 비었거나 secondary shard이면 빈 배열")
+          List<String> deliveredEvidenceIds,
       @ToolParam(description = "질문에 필요한 독립 조회 단위. 조회별 SUCCESS 또는 FAILED")
           List<SubmittedBinding> bindings) {
     throw new UnsupportedOperationException("내부 조회 제출 도구는 정의만 사용해요.");
