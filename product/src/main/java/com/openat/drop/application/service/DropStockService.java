@@ -31,22 +31,29 @@ public class DropStockService implements DropStockUseCase {
   private final StockHistoryRepository stockHistoryRepository;
   private final DropRepository dropRepository;
   private final DropStockMetricsPort dropStockMetrics;
+  private final DropStockOperationGuard dropStockOperationGuard;
 
   @Override
   public long deduct(DropStockCommand command) {
+    return dropStockOperationGuard.execute(command.dropId(), () -> deductGuarded(command));
+  }
+
+  private long deductGuarded(DropStockCommand command) {
     StockMutation mutation = command.toMutation();
     StockCommandResult reservation = dropCacheRepository.deduct(mutation);
-    StockCommandResult completed = switch (reservation.status()) {
-      case OK ->
-          persistOrCompensate(mutation, StockChangeType.DEDUCT, reservation.remaining())
-              .orElseThrow(() -> new BusinessException(DropErrorCode.NOT_CACHED));
-      case DUPLICATE -> completedDuplicate(mutation, StockChangeType.DEDUCT, reservation.remaining());
-      case NOT_OPEN -> throw new BusinessException(DropErrorCode.NOT_OPEN);
-      case SOLD_OUT -> throw new BusinessException(DropErrorCode.SOLD_OUT);
-      case LIMIT_EXCEEDED -> throw new BusinessException(DropErrorCode.LIMIT_EXCEEDED);
-      case CLOSED -> throw new BusinessException(DropErrorCode.CLOSED);
-      case NOT_CACHED -> throw new BusinessException(DropErrorCode.NOT_CACHED);
-    };
+    StockCommandResult completed =
+        switch (reservation.status()) {
+          case OK ->
+              persistOrCompensate(mutation, StockChangeType.DEDUCT, reservation.remaining())
+                  .orElseThrow(() -> new BusinessException(DropErrorCode.NOT_CACHED));
+          case DUPLICATE ->
+              completedDuplicate(mutation, StockChangeType.DEDUCT, reservation.remaining());
+          case NOT_OPEN -> throw new BusinessException(DropErrorCode.NOT_OPEN);
+          case SOLD_OUT -> throw new BusinessException(DropErrorCode.SOLD_OUT);
+          case LIMIT_EXCEEDED -> throw new BusinessException(DropErrorCode.LIMIT_EXCEEDED);
+          case CLOSED -> throw new BusinessException(DropErrorCode.CLOSED);
+          case NOT_CACHED -> throw new BusinessException(DropErrorCode.NOT_CACHED);
+        };
     dropStockMetrics.register(mutation.dropId());
     return completed.remaining();
   }
@@ -54,6 +61,10 @@ public class DropStockService implements DropStockUseCase {
   @Override
   @Transactional
   public Optional<Long> rollback(DropStockCommand command) {
+    return dropStockOperationGuard.execute(command.dropId(), () -> rollbackGuarded(command));
+  }
+
+  private Optional<Long> rollbackGuarded(DropStockCommand command) {
     StockMutation mutation = command.toMutation();
     validateRollbackSource(mutation);
     Optional<StockHistory> completedRollback =
@@ -65,22 +76,22 @@ public class DropStockService implements DropStockUseCase {
       }
       Optional<Long> remaining =
           Optional.ofNullable(
-              dropCacheRepository
-                  .findRemaining(List.of(mutation.dropId()))
-                  .get(mutation.dropId()));
+              dropCacheRepository.findRemaining(List.of(mutation.dropId())).get(mutation.dropId()));
       remaining.ifPresent(ignored -> dropStockMetrics.register(mutation.dropId()));
       return remaining;
     }
     StockCommandResult restoration = dropCacheRepository.rollback(mutation);
-    Optional<StockCommandResult> completed = switch (restoration.status()) {
-      case OK -> persistOrCompensate(mutation, StockChangeType.ROLLBACK, restoration.remaining());
-      case DUPLICATE ->
-          Optional.of(
-              completedDuplicate(
-                  mutation, StockChangeType.ROLLBACK, restoration.remaining()));
-      case NOT_CACHED -> rollbackWithoutLiveCache(mutation);
-      default -> throw new IllegalStateException("롤백에서 허용되지 않은 캐시 결과 발생: " + restoration.status());
-    };
+    Optional<StockCommandResult> completed =
+        switch (restoration.status()) {
+          case OK ->
+              persistOrCompensate(mutation, StockChangeType.ROLLBACK, restoration.remaining());
+          case DUPLICATE ->
+              Optional.of(
+                  completedDuplicate(mutation, StockChangeType.ROLLBACK, restoration.remaining()));
+          case NOT_CACHED -> rollbackWithoutLiveCache(mutation);
+          default ->
+              throw new IllegalStateException("롤백에서 허용되지 않은 캐시 결과 발생: " + restoration.status());
+        };
     completed.ifPresent(ignored -> dropStockMetrics.register(mutation.dropId()));
     return completed.map(StockCommandResult::remaining);
   }
@@ -94,8 +105,7 @@ public class DropStockService implements DropStockUseCase {
       Optional<Long> compensated = compensateCache(mutation, changeType);
       validateCommittedHistory(mutation, changeType, conflict);
       return compensated.map(
-          actualRemaining ->
-              new StockCommandResult(StockCommandStatus.DUPLICATE, actualRemaining));
+          actualRemaining -> new StockCommandResult(StockCommandStatus.DUPLICATE, actualRemaining));
     } catch (RuntimeException persistenceFailure) {
       compensateCache(mutation, changeType);
       throw persistenceFailure;
@@ -165,8 +175,7 @@ public class DropStockService implements DropStockUseCase {
     }
   }
 
-  private Optional<Long> compensateCache(
-      StockMutation mutation, StockChangeType changeType) {
+  private Optional<Long> compensateCache(StockMutation mutation, StockChangeType changeType) {
     return switch (changeType) {
       case DEDUCT -> dropCacheRepository.compensateDeduct(mutation);
       case ROLLBACK -> dropCacheRepository.compensateRollback(mutation);

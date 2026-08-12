@@ -4,6 +4,7 @@ import com.openat.drop.domain.model.Drop;
 import com.openat.drop.domain.model.DropStatus;
 import com.openat.drop.domain.repository.DropCacheRepository;
 import com.openat.drop.domain.repository.DropRepository;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -16,6 +17,11 @@ public class DropCacheRecoveryService {
 
   private final DropRepository dropRepository;
   private final DropCacheRepository dropCacheRepository;
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+  public Optional<Drop> findActiveDrop(UUID dropId) {
+    return dropRepository.findById(dropId).filter(drop -> drop.getStatus() != DropStatus.CLOSE);
+  }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void restoreCloseAt(UUID dropId) {

@@ -7,7 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface DropCacheRepository {
-  void warm(DropCacheState state);
+  void warm(DropCacheState state, UUID recoveryOwner);
 
   Map<UUID, Long> findRemaining(Collection<UUID> dropIds);
 

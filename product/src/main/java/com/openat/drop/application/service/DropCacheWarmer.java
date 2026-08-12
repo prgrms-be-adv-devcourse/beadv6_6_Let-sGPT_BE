@@ -1,53 +1,54 @@
 package com.openat.drop.application.service;
 
-import com.openat.drop.domain.model.Drop;
-import com.openat.drop.domain.model.DropStatus;
-import com.openat.drop.domain.repository.BuyerPurchase;
-import com.openat.drop.domain.repository.DropCacheRepository;
-import com.openat.drop.domain.repository.DropCacheState;
-import com.openat.drop.domain.repository.DropRepository;
-import com.openat.drop.domain.repository.StockHistoryRepository;
-import java.util.HashMap;
-import java.util.Map;
+import com.openat.common.exception.BusinessException;
+import com.openat.drop.domain.error.DropErrorCode;
+import com.openat.drop.domain.repository.DropRecoveryRepository;
+import java.time.Duration;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
-@RequiredArgsConstructor
 public class DropCacheWarmer {
 
-  private final DropRepository dropRepository;
-  private final StockHistoryRepository stockHistoryRepository;
-  private final DropCacheRepository dropCacheRepository;
+  private final DropRecoveryRepository recoveryRepository;
+  private final DropCacheSnapshotWriter snapshotWriter;
+  private final Duration lease;
 
-  @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.REPEATABLE_READ)
-  public void warm(UUID dropId) {
-    Drop drop = dropRepository.findByIdForUpdate(dropId).orElse(null);
-    if (drop == null || drop.getStatus() == DropStatus.CLOSE) {
-      return;
+  public DropCacheWarmer(
+      DropRecoveryRepository recoveryRepository,
+      DropCacheSnapshotWriter snapshotWriter,
+      @Value("${drop.recovery.lease:30s}") Duration lease) {
+    if (lease == null || lease.toMillis() <= 0) {
+      throw new IllegalArgumentException("Recovery lease must be at least one millisecond");
     }
+    this.recoveryRepository = recoveryRepository;
+    this.snapshotWriter = snapshotWriter;
+    this.lease = lease;
+  }
 
-    long remaining =
-        drop.getTotalQuantity() + stockHistoryRepository.sumQuantityDeltaByDropId(dropId);
-
-    Map<UUID, Long> buyers = new HashMap<>();
-    for (BuyerPurchase purchase : stockHistoryRepository.sumNetQuantityByBuyer(dropId)) {
-      if (purchase.quantity() > 0) {
-        buyers.put(purchase.buyerId(), purchase.quantity());
+  /** Ledger reconstruction; no SQL snapshot is opened before admission succeeds. */
+  public void warm(UUID dropId) {
+    UUID owner = UUID.randomUUID();
+    if (!recoveryRepository.beginRecovery(dropId, owner, lease)) {
+      throw new BusinessException(DropErrorCode.STOCK_CHANGE_IN_PROGRESS);
+    }
+    try {
+      snapshotWriter.write(dropId, owner);
+    } finally {
+      try {
+        recoveryRepository.completeRecovery(dropId, owner);
+      } catch (RuntimeException releaseFailure) {
+        // The lease expires; do not hide the original failure or undo an already published
+        // snapshot.
+        log.error(
+            "Failed to release drop recovery lease. dropId={} owner={}",
+            dropId,
+            owner,
+            releaseFailure);
       }
     }
-
-    dropCacheRepository.warm(
-        new DropCacheState(
-            dropId,
-            remaining,
-            drop.getOpenAt(),
-            drop.getCloseAt(),
-            drop.getLimitPerUser(),
-            buyers));
   }
 }

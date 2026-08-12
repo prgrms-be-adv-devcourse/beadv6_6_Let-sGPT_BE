@@ -19,10 +19,12 @@ import com.openat.drop.application.service.StockHistoryRecorder;
 import com.openat.drop.domain.error.DropErrorCode;
 import com.openat.drop.domain.event.DropClosedEvent;
 import com.openat.drop.domain.event.DropDeletedEvent;
+import com.openat.drop.domain.event.DropRegisteredEvent;
 import com.openat.drop.domain.model.Drop;
 import com.openat.drop.domain.model.DropStatus;
 import com.openat.drop.domain.model.StockChangeType;
 import com.openat.drop.domain.repository.DropCacheRepository;
+import com.openat.drop.domain.repository.DropCacheState;
 import com.openat.drop.domain.repository.DropRepository;
 import com.openat.drop.domain.repository.StockHistoryRepository;
 import com.openat.drop.domain.repository.StockMutation;
@@ -31,6 +33,7 @@ import com.openat.product.domain.event.ProductDeletedEvent;
 import com.openat.product.domain.model.Product;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -44,6 +47,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -53,6 +57,7 @@ import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.annotation.Order;
@@ -111,6 +116,7 @@ class DropStockConsistencyIntegrationTest {
   @Autowired private DropRepository dropRepository;
   @Autowired private StockHistoryRepository stockHistoryRepository;
   @Autowired private DropBootstrapRunner dropBootstrapRunner;
+  @Autowired private ApplicationEventPublisher eventPublisher;
   @Autowired private StringRedisTemplate redisTemplate;
   @Autowired private TransactionTemplate transactionTemplate;
   @Autowired private LifecycleCommitFailure lifecycleCommitFailure;
@@ -180,9 +186,7 @@ class DropStockConsistencyIntegrationTest {
     dropCacheWarmer.warm(target.dropId());
 
     assertOpenBoundaryDeleteRace(
-        target,
-        openAt,
-        () -> dropCommandService.delete(target.dropId(), target.sellerId()));
+        target, openAt, () -> dropCommandService.delete(target.dropId(), target.sellerId()));
   }
 
   @Test
@@ -378,7 +382,8 @@ class DropStockConsistencyIntegrationTest {
     executor = Executors.newFixedThreadPool(3);
     DropStockCommand rollbackCommand =
         new DropStockCommand(target.dropId(), rollbackOrderId, rollbackBuyerId, 1);
-    Future<Optional<Long>> first = executor.submit(() -> dropStockService.rollback(rollbackCommand));
+    Future<Optional<Long>> first =
+        executor.submit(() -> dropStockService.rollback(rollbackCommand));
     try {
       assertThat(firstRecordEntered.await(5, TimeUnit.SECONDS)).isTrue();
       Future<Optional<Long>> second =
@@ -394,8 +399,7 @@ class DropStockConsistencyIntegrationTest {
       UUID interleavedBuyerId = UUID.randomUUID();
       assertThat(
               dropStockService.deduct(
-                  new DropStockCommand(
-                      target.dropId(), interleavedOrderId, interleavedBuyerId, 1)))
+                  new DropStockCommand(target.dropId(), interleavedOrderId, interleavedBuyerId, 1)))
           .isZero();
       assertThatThrownBy(() -> second.get(200, TimeUnit.MILLISECONDS))
           .isInstanceOf(TimeoutException.class);
@@ -436,6 +440,375 @@ class DropStockConsistencyIntegrationTest {
         .isPresent();
   }
 
+  @Test
+  @DisplayName("원장 집계 후 완료된 차감을 재워밍이 덮어쓰지 않는다")
+  void rewarm_afterSnapshot_concurrentDeductDoesNotRestoreSoldStock() throws Exception {
+    TestDrop target = persistDrop(2, Instant.now().minusSeconds(60), null);
+    dropCacheWarmer.warm(target.dropId());
+    CountDownLatch snapshotRead = new CountDownLatch(1);
+    CountDownLatch replaceCache = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              DropCacheState state = invocation.getArgument(0);
+              if (state.dropId().equals(target.dropId())) {
+                snapshotRead.countDown();
+                await(replaceCache);
+              }
+              return invocation.callRealMethod();
+            })
+        .when(dropCacheRepository)
+        .warm(any(), any());
+    executor = Executors.newSingleThreadExecutor();
+    Future<?> warming = executor.submit(() -> dropCacheWarmer.warm(target.dropId()));
+    UUID buyerId = UUID.randomUUID();
+    try {
+      assertThat(snapshotRead.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThatThrownBy(
+              () ->
+                  dropStockService.deduct(
+                      new DropStockCommand(target.dropId(), UUID.randomUUID(), buyerId, 1)))
+          .hasFieldOrPropertyWithValue("errorCode", DropErrorCode.STOCK_CHANGE_IN_PROGRESS);
+    } finally {
+      replaceCache.countDown();
+    }
+    warming.get(5, TimeUnit.SECONDS);
+    assertThat(
+            dropStockService.deduct(
+                new DropStockCommand(target.dropId(), UUID.randomUUID(), buyerId, 1)))
+        .isEqualTo(1L);
+    assertStockNotResurrected(target, buyerId, "concurrent-warm");
+  }
+
+  @Test
+  @DisplayName("오픈 경계에서 거절된 삭제의 복구가 정상 차감을 덮어쓰지 않는다")
+  void rejectedDelete_afterOpen_concurrentDeductDoesNotRestoreSoldStock() throws Exception {
+    Instant openAt = Instant.now().plusSeconds(2);
+    TestDrop target = persistDrop(2, openAt, null);
+    dropCacheWarmer.warm(target.dropId());
+    lifecycleCommitFailure.pauseDeleteBeforeCacheFence(target.dropId());
+    CountDownLatch recoveryOrDeletionFinished = new CountDownLatch(1);
+    CountDownLatch replaceCache = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              DropCacheState state = invocation.getArgument(0);
+              if (state.dropId().equals(target.dropId())) {
+                recoveryOrDeletionFinished.countDown();
+                await(replaceCache);
+              }
+              return invocation.callRealMethod();
+            })
+        .when(dropCacheRepository)
+        .warm(any(), any());
+    executor = Executors.newSingleThreadExecutor();
+    Future<?> deletion =
+        executor.submit(
+            () -> {
+              try {
+                dropCommandService.delete(target.dropId(), target.sellerId());
+              } finally {
+                recoveryOrDeletionFinished.countDown();
+              }
+            });
+    UUID buyerId = UUID.randomUUID();
+    try {
+      lifecycleCommitFailure.awaitDeleteBeforeCacheFence();
+      waitUntil(openAt.plusMillis(50));
+      lifecycleCommitFailure.releaseDelete();
+      assertThat(recoveryOrDeletionFinished.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(
+              dropStockService.deduct(
+                  new DropStockCommand(target.dropId(), UUID.randomUUID(), buyerId, 1)))
+          .isEqualTo(1L);
+    } finally {
+      lifecycleCommitFailure.releaseDelete();
+      replaceCache.countDown();
+    }
+    assertThatThrownBy(() -> deletion.get(5, TimeUnit.SECONDS))
+        .hasRootCauseInstanceOf(BusinessException.class);
+    assertStockNotResurrected(target, buyerId, "rejected-delete-recovery");
+  }
+
+  @Test
+  @DisplayName("Redis 차감 뒤 원장 커밋 중이면 재구축을 거절한다")
+  void rebuild_pendingDeduction_doesNotPublishIncompleteLedger() throws Exception {
+    TestDrop target = persistDrop(2, Instant.now().minusSeconds(60), null);
+    dropCacheWarmer.warm(target.dropId());
+    CountDownLatch recordEntered = new CountDownLatch(1);
+    CountDownLatch allowRecord = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              recordEntered.countDown();
+              await(allowRecord);
+              return invocation.callRealMethod();
+            })
+        .when(stockHistoryRecorder)
+        .record(any(), eq(StockChangeType.DEDUCT));
+    executor = Executors.newSingleThreadExecutor();
+    UUID buyerId = UUID.randomUUID();
+    Future<Long> deduction =
+        executor.submit(
+            () ->
+                dropStockService.deduct(
+                    new DropStockCommand(target.dropId(), UUID.randomUUID(), buyerId, 1)));
+    try {
+      assertThat(recordEntered.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(stockHistoryRepository.sumQuantityDeltaByDropId(target.dropId())).isZero();
+      assertThat(dropCacheRepository.findRemaining(List.of(target.dropId())).get(target.dropId()))
+          .isEqualTo(1L);
+      assertTemporarilyBusy(() -> dropCacheWarmer.warm(target.dropId()));
+    } finally {
+      allowRecord.countDown();
+    }
+    assertThat(deduction.get(5, TimeUnit.SECONDS)).isEqualTo(1L);
+    dropCacheWarmer.warm(target.dropId());
+    assertStockNotResurrected(target, buyerId, "pending-deduction");
+  }
+
+  @Test
+  @DisplayName("캐시 없이 취소 원장을 기록 중이어도 초기 적재를 거절한다")
+  void warm_pendingLedgerOnlyRollback_waitsForConfirmedHistory() throws Exception {
+    TestDrop target = persistDrop(2, Instant.now().minusSeconds(60), null);
+    UUID orderId = UUID.randomUUID();
+    UUID buyerId = UUID.randomUUID();
+    stockHistoryRecorder.record(
+        new StockMutation(target.dropId(), orderId, buyerId, 1), StockChangeType.DEDUCT);
+    CountDownLatch recordEntered = new CountDownLatch(1);
+    CountDownLatch allowRecord = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              recordEntered.countDown();
+              await(allowRecord);
+              return invocation.callRealMethod();
+            })
+        .when(stockHistoryRecorder)
+        .record(any(), eq(StockChangeType.ROLLBACK));
+    executor = Executors.newSingleThreadExecutor();
+    Future<Optional<Long>> rollback =
+        executor.submit(
+            () ->
+                dropStockService.rollback(
+                    new DropStockCommand(target.dropId(), orderId, buyerId, 1)));
+    try {
+      assertThat(recordEntered.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(redisTemplate.hasKey("drop:" + target.dropId())).isFalse();
+      assertTemporarilyBusy(() -> dropCacheWarmer.warm(target.dropId()));
+    } finally {
+      allowRecord.countDown();
+    }
+    assertThat(rollback.get(5, TimeUnit.SECONDS)).isEmpty();
+    dropCacheWarmer.warm(target.dropId());
+    assertThat(dropCacheRepository.findRemaining(List.of(target.dropId())).get(target.dropId()))
+        .isEqualTo(2L);
+    assertThat(stockHistoryRepository.sumQuantityDeltaByDropId(target.dropId())).isZero();
+    assertThat(redisTemplate.opsForHash().entries("drop:" + target.dropId() + ":buyers")).isEmpty();
+  }
+
+  @Test
+  @DisplayName("복구 lease 만료 뒤의 오래된 스냅샷은 새 차감을 덮지 못한다")
+  void rebuild_expiredLease_rejectsLateSnapshot() throws Exception {
+    TestDrop target = persistDrop(2, Instant.now().minusSeconds(60), null);
+    dropCacheWarmer.warm(target.dropId());
+    CountDownLatch snapshotRead = new CountDownLatch(1);
+    CountDownLatch publish = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              snapshotRead.countDown();
+              await(publish);
+              return invocation.callRealMethod();
+            })
+        .when(dropCacheRepository)
+        .warm(any(), any());
+    executor = Executors.newSingleThreadExecutor();
+    Future<?> rebuild = executor.submit(() -> dropCacheWarmer.warm(target.dropId()));
+    UUID buyerId = UUID.randomUUID();
+    try {
+      assertThat(snapshotRead.await(5, TimeUnit.SECONDS)).isTrue();
+      String gate = "drop:" + target.dropId() + ":recovery";
+      assertThat(redisTemplate.expire(gate, Duration.ofMillis(1))).isTrue();
+      waitUntil(Instant.now().plusMillis(30));
+      assertThat(redisTemplate.hasKey(gate)).isFalse();
+      assertThat(
+              dropStockService.deduct(
+                  new DropStockCommand(target.dropId(), UUID.randomUUID(), buyerId, 1)))
+          .isEqualTo(1L);
+    } finally {
+      publish.countDown();
+    }
+    assertThatThrownBy(() -> rebuild.get(5, TimeUnit.SECONDS))
+        .hasRootCauseInstanceOf(BusinessException.class);
+    assertStockNotResurrected(target, buyerId, "expired-recovery");
+  }
+
+  @Test
+  @DisplayName("실제 캐시 제거 후 DB 삭제가 실패하면 부재한 캐시만 복구한다")
+  void delete_evictedThenDbFailure_restoresMissingCache() {
+    TestDrop target = persistDrop(2, Instant.now().plusSeconds(600), null);
+    dropCacheWarmer.warm(target.dropId());
+    lifecycleCommitFailure.failDelete(target.dropId());
+    assertThatThrownBy(() -> dropCommandService.delete(target.dropId(), target.sellerId()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(findStatus(target.dropId())).isEqualTo(DropStatus.REGISTERED);
+    assertThat(dropCacheRepository.findRemaining(List.of(target.dropId())).get(target.dropId()))
+        .isEqualTo(2L);
+  }
+
+  @Test
+  @DisplayName("미확정 복원 표식이 남으면 기존 캐시가 있어도 일반 기동을 거절한다")
+  void bootstrap_unconfirmedRollback_doesNotApproveInflatedCache() {
+    TestDrop target = persistDrop(2, Instant.now().minusSeconds(60), null);
+    dropCacheWarmer.warm(target.dropId());
+    UUID buyerId = UUID.randomUUID();
+    UUID orderId = UUID.randomUUID();
+    DropStockCommand command = new DropStockCommand(target.dropId(), orderId, buyerId, 1);
+    dropStockService.deduct(command);
+    doAnswer(
+            invocation -> {
+              // Stop at the process-loss boundary, after real Redis restoration but before DB
+              // insertion.
+              throw new AssertionError("simulated writer termination before history commit");
+            })
+        .when(stockHistoryRecorder)
+        .record(any(), eq(StockChangeType.ROLLBACK));
+
+    assertThatThrownBy(() -> dropStockService.rollback(command)).isInstanceOf(AssertionError.class);
+    assertThat(dropCacheRepository.findRemaining(List.of(target.dropId())).get(target.dropId()))
+        .isEqualTo(2L);
+    assertThat(stockHistoryRepository.sumQuantityDeltaByDropId(target.dropId())).isEqualTo(-1L);
+    assertThat(redisTemplate.opsForSet().size("drop:" + target.dropId() + ":inflight"))
+        .isEqualTo(1L);
+    assertTemporarilyBusy(
+        () -> {
+          try {
+            dropBootstrapRunner.run(new DefaultApplicationArguments());
+          } catch (BusinessException busy) {
+            throw busy;
+          } catch (Exception unexpected) {
+            throw new IllegalStateException(unexpected);
+          }
+        });
+    assertThat(redisTemplate.opsForSet().size("drop:" + target.dropId() + ":inflight"))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  @DisplayName("등록 직후 일시 경합으로 워밍이 거절돼도 재시도와 종료 예약을 유지한다")
+  void registeredDrop_transientBusy_retriesWarmAndKeepsCloseSchedule() throws Exception {
+    Instant openAt = Instant.now().plusSeconds(5);
+    Instant closeAt = openAt.plusSeconds(2);
+    TestDrop target = persistDrop(2, openAt, closeAt);
+    CountDownLatch admitted = new CountDownLatch(1);
+    CountDownLatch allowCacheLookup = new CountDownLatch(1);
+    Future<Long> earlyOrder = pauseEarlyDeduction(target, admitted, allowCacheLookup);
+    try {
+      assertThat(admitted.await(5, TimeUnit.SECONDS)).isTrue();
+      transactionTemplate.executeWithoutResult(
+          status ->
+              eventPublisher.publishEvent(
+                  new DropRegisteredEvent(target.dropId(), openAt, closeAt)));
+      assertThat(redisTemplate.hasKey("drop:" + target.dropId())).isFalse();
+    } finally {
+      allowCacheLookup.countDown();
+    }
+    assertThatThrownBy(() -> earlyOrder.get(5, TimeUnit.SECONDS))
+        .hasRootCauseInstanceOf(BusinessException.class);
+    org.awaitility.Awaitility.await()
+        .atMost(Duration.ofSeconds(5))
+        .untilAsserted(
+            () ->
+                assertThat(
+                        dropCacheRepository
+                            .findRemaining(List.of(target.dropId()))
+                            .get(target.dropId()))
+                    .isEqualTo(2L));
+    org.awaitility.Awaitility.await()
+        .atMost(Duration.ofSeconds(8))
+        .untilAsserted(() -> assertThat(findStatus(target.dropId())).isEqualTo(DropStatus.CLOSE));
+  }
+
+  @Test
+  @DisplayName("삭제 보상 시 일시 경합이 끝나면 캐시를 다시 복구한다")
+  void deleteRollback_transientBusy_eventuallyRestoresCache() throws Exception {
+    TestDrop target = persistDrop(2, Instant.now().plusSeconds(600), null);
+    dropCacheWarmer.warm(target.dropId());
+    CountDownLatch admitted = new CountDownLatch(1);
+    CountDownLatch allowCacheLookup = new CountDownLatch(1);
+    AtomicReference<Future<Long>> earlyOrder = new AtomicReference<>();
+    lifecycleCommitFailure.failDelete(
+        target.dropId(),
+        () -> {
+          earlyOrder.set(pauseEarlyDeduction(target, admitted, allowCacheLookup));
+          await(admitted);
+        });
+    try {
+      assertThatThrownBy(() -> dropCommandService.delete(target.dropId(), target.sellerId()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(findStatus(target.dropId())).isEqualTo(DropStatus.REGISTERED);
+      assertThat(redisTemplate.hasKey("drop:" + target.dropId())).isFalse();
+    } finally {
+      allowCacheLookup.countDown();
+    }
+    assertThat(earlyOrder.get()).isNotNull();
+    assertThatThrownBy(() -> earlyOrder.get().get(5, TimeUnit.SECONDS))
+        .hasRootCauseInstanceOf(BusinessException.class);
+    org.awaitility.Awaitility.await()
+        .atMost(Duration.ofSeconds(5))
+        .untilAsserted(
+            () ->
+                assertThat(
+                        dropCacheRepository
+                            .findRemaining(List.of(target.dropId()))
+                            .get(target.dropId()))
+                    .isEqualTo(2L));
+    assertThat(stockHistoryRepository.sumQuantityDeltaByDropId(target.dropId())).isZero();
+  }
+
+  private Future<Long> pauseEarlyDeduction(
+      TestDrop target, CountDownLatch admitted, CountDownLatch allowCacheLookup) {
+    doAnswer(
+            invocation -> {
+              StockMutation mutation = invocation.getArgument(0);
+              if (mutation.dropId().equals(target.dropId())) {
+                admitted.countDown();
+                await(allowCacheLookup);
+              }
+              return invocation.callRealMethod();
+            })
+        .when(dropCacheRepository)
+        .deduct(any());
+    executor = Executors.newSingleThreadExecutor();
+    return executor.submit(
+        () ->
+            dropStockService.deduct(
+                new DropStockCommand(target.dropId(), UUID.randomUUID(), UUID.randomUUID(), 1)));
+  }
+
+  private void assertTemporarilyBusy(Runnable action) {
+    assertThatThrownBy(action::run)
+        .hasFieldOrPropertyWithValue("errorCode", DropErrorCode.STOCK_CHANGE_IN_PROGRESS);
+  }
+
+  private void assertStockNotResurrected(TestDrop target, UUID buyerId, String scenario) {
+    long cached = dropCacheRepository.findRemaining(List.of(target.dropId())).get(target.dropId());
+    long ledger = 2L + stockHistoryRepository.sumQuantityDeltaByDropId(target.dropId());
+    Object bought =
+        redisTemplate.opsForHash().get("drop:" + target.dropId() + ":buyers", buyerId.toString());
+    boolean excessAccepted = false;
+    try {
+      dropStockService.deduct(
+          new DropStockCommand(target.dropId(), UUID.randomUUID(), UUID.randomUUID(), 2));
+      excessAccepted = true;
+    } catch (BusinessException expectedRejection) {
+      assertThat(expectedRejection.getErrorCode()).isEqualTo(DropErrorCode.SOLD_OUT);
+    }
+    long finalLedger = 2L + stockHistoryRepository.sumQuantityDeltaByDropId(target.dropId());
+    org.assertj.core.api.SoftAssertions softly = new org.assertj.core.api.SoftAssertions();
+    softly.assertThat(cached).as("%s: Redis and committed ledger", scenario).isEqualTo(ledger);
+    softly.assertThat(bought).as("committed buyer quantity").isEqualTo("1");
+    softly.assertThat(excessAccepted).as("overselling rejected").isFalse();
+    softly.assertThat(finalLedger).as("ledger never negative").isGreaterThanOrEqualTo(0L);
+    softly.assertAll();
+  }
+
   private TestDrop persistDrop(int totalQuantity, Instant openAt, Instant closeAt) {
     return transactionTemplate.execute(
         status -> {
@@ -462,8 +835,8 @@ class DropStockConsistencyIntegrationTest {
         status -> dropRepository.findById(dropId).orElseThrow().getStatus());
   }
 
-  private void assertOpenBoundaryDeleteRace(
-      TestDrop target, Instant openAt, Runnable deletion) throws Exception {
+  private void assertOpenBoundaryDeleteRace(TestDrop target, Instant openAt, Runnable deletion)
+      throws Exception {
     lifecycleCommitFailure.pauseDeleteBeforeCacheFence(target.dropId());
     executor = Executors.newFixedThreadPool(2);
     Future<?> deleteRequest = executor.submit(deletion);
@@ -474,8 +847,7 @@ class DropStockConsistencyIntegrationTest {
     try {
       waitUntil(openAt.plusMillis(200));
       assertThat(
-              dropStockService.deduct(
-                  new DropStockCommand(target.dropId(), orderId, buyerId, 1)))
+              dropStockService.deduct(new DropStockCommand(target.dropId(), orderId, buyerId, 1)))
           .isZero();
     } finally {
       lifecycleCommitFailure.releaseDelete();
@@ -523,6 +895,18 @@ class DropStockConsistencyIntegrationTest {
 
   static class LifecycleCommitFailure {
 
+    private volatile UUID failedDeleteDropId;
+    private volatile Runnable afterDeleteFence = () -> {};
+
+    void failDelete(UUID dropId) {
+      failedDeleteDropId = dropId;
+    }
+
+    void failDelete(UUID dropId, Runnable action) {
+      failedDeleteDropId = dropId;
+      afterDeleteFence = action;
+    }
+
     private volatile UUID closeDropId;
     private volatile UUID delayedDeleteDropId;
     private volatile CountDownLatch deleteBeforeCacheFence = new CountDownLatch(0);
@@ -547,6 +931,8 @@ class DropStockConsistencyIntegrationTest {
     }
 
     void clear() {
+      failedDeleteDropId = null;
+      afterDeleteFence = () -> {};
       releaseDelete.countDown();
       closeDropId = null;
       delayedDeleteDropId = null;
@@ -560,6 +946,15 @@ class DropStockConsistencyIntegrationTest {
       if (event.dropId().equals(delayedDeleteDropId)) {
         deleteBeforeCacheFence.countDown();
         await(releaseDelete);
+      }
+    }
+
+    @Order(100)
+    @TransactionalEventListener(phase = TransactionPhase.BEFORE_COMMIT)
+    public void failAfterDeleteFence(DropDeletedEvent event) {
+      if (event.dropId().equals(failedDeleteDropId)) {
+        afterDeleteFence.run();
+        throw new IllegalStateException("simulated delete commit failure");
       }
     }
 

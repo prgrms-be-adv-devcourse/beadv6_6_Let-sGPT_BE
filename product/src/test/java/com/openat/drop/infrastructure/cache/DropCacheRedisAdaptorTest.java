@@ -44,6 +44,7 @@ class DropCacheRedisAdaptorTest {
   static LettuceConnectionFactory connectionFactory;
   static StringRedisTemplate redisTemplate;
   static DropCacheRedisAdaptor adaptor;
+  static DropRecoveryRedisAdapter recoveryAdaptor;
 
   @BeforeAll
   static void init() {
@@ -59,6 +60,7 @@ class DropCacheRedisAdaptorTest {
             Duration.ofHours(1),
             Duration.ofSeconds(10));
     adaptor = new DropCacheRedisAdaptor(redisTemplate, properties);
+    recoveryAdaptor = new DropRecoveryRedisAdapter(redisTemplate);
   }
 
   @AfterAll
@@ -81,7 +83,7 @@ class DropCacheRedisAdaptorTest {
   void deduct_openWithStock_decrements() {
     // given
     UUID dropId = UUID.randomUUID();
-    adaptor.warm(openState(dropId, 10, null));
+    warm(openState(dropId, 10, null));
 
     // when
     StockCommandResult result = deduct(dropId, UUID.randomUUID(), UUID.randomUUID(), 3);
@@ -98,7 +100,7 @@ class DropCacheRedisAdaptorTest {
     UUID dropId = UUID.randomUUID();
     UUID orderId = UUID.randomUUID();
     UUID buyerId = UUID.randomUUID();
-    adaptor.warm(openState(dropId, 10, null));
+    warm(openState(dropId, 10, null));
     deduct(dropId, orderId, buyerId, 3);
 
     // when
@@ -125,7 +127,7 @@ class DropCacheRedisAdaptorTest {
     // given
     UUID dropId = UUID.randomUUID();
     Instant openAt = Instant.now().plusSeconds(600);
-    adaptor.warm(new DropCacheState(dropId, 10, openAt, null, null, Map.of()));
+    warm(new DropCacheState(dropId, 10, openAt, null, null, Map.of()));
 
     // when
     StockCommandResult result = deduct(dropId, UUID.randomUUID(), UUID.randomUUID(), 1);
@@ -141,7 +143,7 @@ class DropCacheRedisAdaptorTest {
     UUID dropId = UUID.randomUUID();
     Instant openAt = Instant.now().minusSeconds(120);
     Instant closeAt = Instant.now().minusSeconds(60);
-    adaptor.warm(new DropCacheState(dropId, 10, openAt, closeAt, null, Map.of()));
+    warm(new DropCacheState(dropId, 10, openAt, closeAt, null, Map.of()));
 
     // when
     StockCommandResult result = deduct(dropId, UUID.randomUUID(), UUID.randomUUID(), 1);
@@ -156,7 +158,7 @@ class DropCacheRedisAdaptorTest {
     // given
     UUID dropId = UUID.randomUUID();
     UUID buyerId = UUID.randomUUID();
-    adaptor.warm(openState(dropId, 10, 1));
+    warm(openState(dropId, 10, 1));
     deduct(dropId, UUID.randomUUID(), buyerId, 1);
 
     // when
@@ -171,7 +173,7 @@ class DropCacheRedisAdaptorTest {
   void deduct_insufficientStock_returnsSoldOut() {
     // given
     UUID dropId = UUID.randomUUID();
-    adaptor.warm(openState(dropId, 1, null));
+    warm(openState(dropId, 1, null));
 
     // when
     StockCommandResult result = deduct(dropId, UUID.randomUUID(), UUID.randomUUID(), 2);
@@ -188,7 +190,7 @@ class DropCacheRedisAdaptorTest {
     UUID dropId = UUID.randomUUID();
     UUID orderId = UUID.randomUUID();
     UUID buyerId = UUID.randomUUID();
-    adaptor.warm(openState(dropId, 5, null));
+    warm(openState(dropId, 5, null));
     deduct(dropId, orderId, buyerId, 2);
 
     // when
@@ -209,7 +211,7 @@ class DropCacheRedisAdaptorTest {
     UUID orderId = UUID.randomUUID();
     UUID buyerId = UUID.randomUUID();
     StockMutation mutation = new StockMutation(dropId, orderId, buyerId, 2);
-    adaptor.warm(openState(dropId, 5, null));
+    warm(openState(dropId, 5, null));
     adaptor.deduct(mutation);
 
     // when
@@ -228,7 +230,7 @@ class DropCacheRedisAdaptorTest {
     UUID orderId = UUID.randomUUID();
     UUID buyerId = UUID.randomUUID();
     StockMutation mutation = new StockMutation(dropId, orderId, buyerId, 2);
-    adaptor.warm(openState(dropId, 5, null));
+    warm(openState(dropId, 5, null));
     adaptor.deduct(mutation);
     adaptor.rollback(mutation);
 
@@ -247,7 +249,7 @@ class DropCacheRedisAdaptorTest {
     UUID dropId = UUID.randomUUID();
     int stock = 100;
     int requests = 300;
-    adaptor.warm(openState(dropId, stock, null));
+    warm(openState(dropId, stock, null));
     ExecutorService executor = Executors.newFixedThreadPool(32);
     CountDownLatch done = new CountDownLatch(requests);
     AtomicInteger success = new AtomicInteger();
@@ -283,7 +285,7 @@ class DropCacheRedisAdaptorTest {
     UUID dropId = UUID.randomUUID();
     UUID inflightOrder = UUID.randomUUID();
     UUID buyer = UUID.randomUUID();
-    adaptor.warm(openState(dropId, 10, null));
+    warm(openState(dropId, 10, null));
     deduct(dropId, inflightOrder, buyer, 1);
 
     // when
@@ -306,7 +308,7 @@ class DropCacheRedisAdaptorTest {
     UUID newBuyer = UUID.randomUUID();
     Instant openAt = now().minusSeconds(60);
     Instant closeAt = now().plusSeconds(3600);
-    adaptor.warm(
+    warm(
         new DropCacheState(
             dropId,
             1,
@@ -316,7 +318,7 @@ class DropCacheRedisAdaptorTest {
             Map.of(retainedBuyer, 4L, removedBuyer, 2L)));
 
     // when
-    adaptor.warm(
+    warm(
         new DropCacheState(dropId, 8, openAt, closeAt, 3, Map.of(retainedBuyer, 1L, newBuyer, 2L)));
 
     // then
@@ -339,12 +341,12 @@ class DropCacheRedisAdaptorTest {
   void warm_emptyBuyers_removesExistingHash() {
     // given
     UUID dropId = UUID.randomUUID();
-    adaptor.warm(
+    warm(
         new DropCacheState(
             dropId, 9, now().minusSeconds(60), null, null, Map.of(UUID.randomUUID(), 1L)));
 
     // when
-    adaptor.warm(openState(dropId, 10, null));
+    warm(openState(dropId, 10, null));
 
     // then
     assertThat(redisTemplate.hasKey("drop:" + dropId + ":buyers")).isFalse();
@@ -359,7 +361,7 @@ class DropCacheRedisAdaptorTest {
     UUID buyerB = UUID.randomUUID();
     DropCacheState stateA = state(dropId, 10, Map.of(buyerA, 1L));
     DropCacheState stateB = state(dropId, 20, Map.of(buyerB, 2L));
-    adaptor.warm(stateA);
+    warm(stateA);
     RedisScript<Long> observeScript =
         RedisScript.of(
             "local r=redis.call('HGET',KEYS[1],'remaining');"
@@ -379,7 +381,7 @@ class DropCacheRedisAdaptorTest {
             () -> {
               await(start);
               for (int index = 0; index < 200; index++) {
-                adaptor.warm(index % 2 == 0 ? stateB : stateA);
+                warm(index % 2 == 0 ? stateB : stateA);
               }
             });
     Future<?> reader =
@@ -414,7 +416,7 @@ class DropCacheRedisAdaptorTest {
     // given
     UUID dropId = UUID.randomUUID();
     UUID buyerId = UUID.randomUUID();
-    adaptor.warm(state(dropId, 8, Map.of(buyerId, 2L)));
+    warm(state(dropId, 8, Map.of(buyerId, 2L)));
     redisTemplate.expire("drop:" + dropId, Duration.ofSeconds(2));
     redisTemplate.expire("drop:" + dropId + ":buyers", Duration.ofSeconds(2));
 
@@ -433,7 +435,7 @@ class DropCacheRedisAdaptorTest {
   void evictBeforeOpen_preOpen_evictsSnapshot() {
     UUID dropId = UUID.randomUUID();
     UUID buyerId = UUID.randomUUID();
-    adaptor.warm(
+    warm(
         new DropCacheState(
             dropId, 8, Instant.now().plusSeconds(60), null, null, Map.of(buyerId, 2L)));
 
@@ -448,7 +450,7 @@ class DropCacheRedisAdaptorTest {
   @DisplayName("캐시 차단 시점에 이미 오픈됐으면 스냅샷을 보존하고 삭제를 거절한다")
   void evictBeforeOpen_opened_retainsSnapshot() {
     UUID dropId = UUID.randomUUID();
-    adaptor.warm(openState(dropId, 10, null));
+    warm(openState(dropId, 10, null));
 
     boolean evicted = adaptor.evictBeforeOpen(dropId);
 
@@ -464,7 +466,7 @@ class DropCacheRedisAdaptorTest {
     // given
     UUID dropId = UUID.randomUUID();
     UUID buyerId = UUID.randomUUID();
-    adaptor.warm(state(dropId, 8, Map.of(buyerId, 2L)));
+    warm(state(dropId, 8, Map.of(buyerId, 2L)));
     adaptor.markClosed(dropId);
     rollback(dropId, UUID.randomUUID(), buyerId, 1);
 
@@ -485,8 +487,8 @@ class DropCacheRedisAdaptorTest {
     UUID warmedA = UUID.randomUUID();
     UUID warmedB = UUID.randomUUID();
     UUID missing = UUID.randomUUID();
-    adaptor.warm(openState(warmedA, 10, null));
-    adaptor.warm(openState(warmedB, 3, null));
+    warm(openState(warmedA, 10, null));
+    warm(openState(warmedB, 3, null));
 
     // when
     Map<UUID, Long> remaining = adaptor.findRemaining(List.of(warmedA, warmedB, missing));
@@ -501,6 +503,17 @@ class DropCacheRedisAdaptorTest {
   @DisplayName("빈 목록이면 빈 맵을 반환한다")
   void findRemaining_empty_returnsEmptyMap() {
     assertThat(adaptor.findRemaining(List.of())).isEmpty();
+  }
+
+  private void warm(DropCacheState state) {
+    UUID owner = UUID.randomUUID();
+    assertThat(recoveryAdaptor.beginRecovery(state.dropId(), owner, Duration.ofSeconds(30)))
+        .isTrue();
+    try {
+      adaptor.warm(state, owner);
+    } finally {
+      recoveryAdaptor.completeRecovery(state.dropId(), owner);
+    }
   }
 
   private DropCacheState openState(UUID dropId, long remaining, Integer limitPerUser) {

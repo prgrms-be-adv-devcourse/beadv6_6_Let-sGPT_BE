@@ -1,5 +1,7 @@
 package com.openat.drop.infrastructure.cache;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -8,18 +10,25 @@ import static org.mockito.Mockito.never;
 
 import com.openat.common.exception.BusinessException;
 import com.openat.drop.application.service.DropCacheRecoveryService;
-import com.openat.drop.application.service.DropCacheWarmer;
 import com.openat.drop.domain.error.DropErrorCode;
 import com.openat.drop.domain.event.DropClosedEvent;
 import com.openat.drop.domain.event.DropDeletedEvent;
+import com.openat.drop.domain.model.Drop;
 import com.openat.drop.domain.repository.DropCacheRepository;
+import com.openat.drop.infrastructure.schedule.DropScheduler;
+import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("드롭 생명주기 캐시 동기화")
@@ -28,7 +37,17 @@ class DropLifecycleCacheSynchronizerTest {
   @InjectMocks private DropLifecycleCacheSynchronizer synchronizer;
   @Mock private DropCacheRepository dropCacheRepository;
   @Mock private DropCacheRecoveryService dropCacheRecoveryService;
-  @Mock private DropCacheWarmer dropCacheWarmer;
+  @Mock private DropScheduler dropScheduler;
+
+  @BeforeEach
+  void initSynchronization() {
+    TransactionSynchronizationManager.initSynchronization();
+  }
+
+  @AfterEach
+  void clearSynchronization() {
+    TransactionSynchronizationManager.clearSynchronization();
+  }
 
   @Test
   @DisplayName("종료 커밋 전 캐시에서 신규 선점을 차단한다")
@@ -52,6 +71,8 @@ class DropLifecycleCacheSynchronizerTest {
 
     then(dropCacheRepository).should().evictBeforeOpen(preOpenDropId);
     then(dropCacheRepository).should(never()).evictBeforeOpen(drainDropId);
+    assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
+    then(dropScheduler).shouldHaveNoInteractions();
   }
 
   @Test
@@ -60,10 +81,13 @@ class DropLifecycleCacheSynchronizerTest {
     UUID dropId = UUID.randomUUID();
     given(dropCacheRepository.evictBeforeOpen(dropId)).willReturn(false);
 
-    assertThatThrownBy(
-            () -> synchronizer.evictBeforeCommit(new DropDeletedEvent(dropId, true)))
+    assertThatThrownBy(() -> synchronizer.evictBeforeCommit(new DropDeletedEvent(dropId, true)))
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", DropErrorCode.OPEN_EXISTS);
+    assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
+    afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+    then(dropScheduler).shouldHaveNoInteractions();
+    then(dropCacheRecoveryService).shouldHaveNoInteractions();
   }
 
   @Test
@@ -77,13 +101,62 @@ class DropLifecycleCacheSynchronizerTest {
   }
 
   @Test
-  @DisplayName("오픈 전 삭제 트랜잭션 롤백 뒤 원장 스냅샷으로 재워밍한다")
-  void restoreAfterDeleteRollback_warmsEvictedDrop() {
+  @DisplayName("캐시를 제거한 삭제의 롤백은 현재 메타로 재시도 가능한 원장 복구를 예약한다")
+  void deleteRollback_restoresCacheFromLedgerAfterRemoval() {
     UUID dropId = UUID.randomUUID();
+    given(dropCacheRepository.evictBeforeOpen(dropId)).willReturn(true);
+    Drop drop = givenActiveDrop(dropId);
 
-    synchronizer.restoreAfterDeleteRollback(new DropDeletedEvent(dropId, true));
+    synchronizer.evictBeforeCommit(new DropDeletedEvent(dropId, true));
+    then(dropScheduler).shouldHaveNoInteractions();
+    then(dropCacheRecoveryService).shouldHaveNoInteractions();
+    afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
 
-    then(dropCacheWarmer).should().warm(dropId);
+    then(dropCacheRecoveryService).should().findActiveDrop(dropId);
+    then(dropScheduler).should().recoverAfterRollback(dropId, drop.getCloseAt());
+  }
+
+  @Test
+  @DisplayName("삭제 커밋 성공과 알 수 없는 완료 상태는 캐시를 복구하지 않는다")
+  void deleteCompleted_withoutRollback_doesNotRecover() {
+    UUID dropId = UUID.randomUUID();
+    given(dropCacheRepository.evictBeforeOpen(dropId)).willReturn(true);
+
+    synchronizer.evictBeforeCommit(new DropDeletedEvent(dropId, true));
+    afterCompletion(TransactionSynchronization.STATUS_COMMITTED);
+    afterCompletion(TransactionSynchronization.STATUS_UNKNOWN);
+
+    then(dropScheduler).shouldHaveNoInteractions();
+    then(dropCacheRecoveryService).shouldHaveNoInteractions();
+  }
+
+  @Test
+  @DisplayName("drain 캐시 삭제는 제거도 롤백 복구 등록도 하지 않는다")
+  void deleteDrain_doesNotRegisterRecovery() {
+    synchronizer.evictBeforeCommit(new DropDeletedEvent(UUID.randomUUID(), false));
+
+    assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
+    afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+    then(dropCacheRepository).shouldHaveNoInteractions();
+    then(dropScheduler).shouldHaveNoInteractions();
+    then(dropCacheRecoveryService).shouldHaveNoInteractions();
+  }
+
+  @Test
+  @DisplayName("제거 응답 유실은 원래 예외를 보존하고 롤백 때만 원장 복구를 요청한다")
+  void uncertainRemoval_registersRollbackRecovery() {
+    UUID dropId = UUID.randomUUID();
+    IllegalStateException failure = new IllegalStateException("eviction response lost");
+    given(dropCacheRepository.evictBeforeOpen(dropId)).willThrow(failure);
+    Drop drop = givenActiveDrop(dropId);
+
+    assertThatThrownBy(() -> synchronizer.evictBeforeCommit(new DropDeletedEvent(dropId, true)))
+        .isSameAs(failure);
+
+    assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
+    then(dropScheduler).shouldHaveNoInteractions();
+    afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+    then(dropScheduler).should().recoverAfterRollback(dropId, drop.getCloseAt());
   }
 
   @Test
@@ -93,12 +166,66 @@ class DropLifecycleCacheSynchronizerTest {
     willThrow(new IllegalStateException("redis unavailable"))
         .given(dropCacheRecoveryService)
         .restoreCloseAt(dropId);
-    willThrow(new IllegalStateException("redis unavailable")).given(dropCacheWarmer).warm(dropId);
+    Drop drop = givenActiveDrop(dropId);
+    willThrow(new IllegalStateException("redis unavailable"))
+        .given(dropScheduler)
+        .recoverAfterRollback(dropId, drop.getCloseAt());
+    given(dropCacheRepository.evictBeforeOpen(dropId)).willReturn(true);
 
-    synchronizer.restoreAfterCloseRollback(new DropClosedEvent(dropId));
-    synchronizer.restoreAfterDeleteRollback(new DropDeletedEvent(dropId, true));
+    assertThatCode(() -> synchronizer.restoreAfterCloseRollback(new DropClosedEvent(dropId)))
+        .doesNotThrowAnyException();
+    synchronizer.evictBeforeCommit(new DropDeletedEvent(dropId, true));
+    assertThatCode(() -> afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK))
+        .doesNotThrowAnyException();
 
     then(dropCacheRecoveryService).should().restoreCloseAt(dropId);
-    then(dropCacheWarmer).should().warm(dropId);
+    then(dropScheduler).should().recoverAfterRollback(dropId, drop.getCloseAt());
+  }
+
+  @Test
+  @DisplayName("현재 활성 드롭이 없으면 삭제 롤백 후 복구를 재예약하지 않는다")
+  void deleteRollback_withoutActiveDrop_doesNotReschedule() {
+    UUID dropId = UUID.randomUUID();
+    given(dropCacheRepository.evictBeforeOpen(dropId)).willReturn(true);
+    given(dropCacheRecoveryService.findActiveDrop(dropId)).willReturn(Optional.empty());
+
+    synchronizer.evictBeforeCommit(new DropDeletedEvent(dropId, true));
+    afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+    then(dropCacheRecoveryService).should().findActiveDrop(dropId);
+    then(dropScheduler).shouldHaveNoInteractions();
+  }
+
+  @Test
+  @DisplayName("삭제 롤백 뒤 메타 조회 실패도 원래 트랜잭션 예외를 덮지 않는다")
+  void deleteRollback_metadataFailure_isContained() {
+    UUID dropId = UUID.randomUUID();
+    given(dropCacheRepository.evictBeforeOpen(dropId)).willReturn(true);
+    given(dropCacheRecoveryService.findActiveDrop(dropId))
+        .willThrow(new IllegalStateException("database unavailable"));
+
+    synchronizer.evictBeforeCommit(new DropDeletedEvent(dropId, true));
+    assertThatCode(() -> afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK))
+        .doesNotThrowAnyException();
+
+    then(dropScheduler).shouldHaveNoInteractions();
+  }
+
+  private Drop givenActiveDrop(UUID dropId) {
+    Drop drop =
+        Drop.schedule()
+            .product(null)
+            .dropPrice(10_000L)
+            .totalQuantity(10)
+            .openAt(Instant.parse("2026-08-12T00:00:00Z"))
+            .closeAt(Instant.parse("2026-08-13T00:00:00Z"))
+            .build();
+    given(dropCacheRecoveryService.findActiveDrop(dropId)).willReturn(Optional.of(drop));
+    return drop;
+  }
+
+  private void afterCompletion(int status) {
+    TransactionSynchronizationManager.getSynchronizations()
+        .forEach(synchronization -> synchronization.afterCompletion(status));
   }
 }

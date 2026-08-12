@@ -42,6 +42,8 @@ drop:
   null-close-ttl: 7d # closeAt 미지정 드롭의 기본 캐시 TTL
   idempotency-ttl: 1h # order 멱등키 TTL
   close-retry-delay: 10s # 예약 종료 DB·캐시 동기화 실패 재시도 간격
+  recovery:
+    lease: 30s # 만료된 소유자의 스냅샷 게시·새 소유자 잠금 해제는 거절
 
 product:
   search-projection-refresh:

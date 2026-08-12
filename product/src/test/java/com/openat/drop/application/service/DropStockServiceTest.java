@@ -8,6 +8,8 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 
 import com.openat.common.exception.BusinessException;
@@ -20,6 +22,7 @@ import com.openat.drop.domain.model.StockChangeType;
 import com.openat.drop.domain.model.StockCommandStatus;
 import com.openat.drop.domain.model.StockHistory;
 import com.openat.drop.domain.repository.DropCacheRepository;
+import com.openat.drop.domain.repository.DropRecoveryRepository;
 import com.openat.drop.domain.repository.DropRepository;
 import com.openat.drop.domain.repository.StockCommandResult;
 import com.openat.drop.domain.repository.StockHistoryRepository;
@@ -35,13 +38,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
-import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -50,12 +54,13 @@ import org.springframework.dao.DataIntegrityViolationException;
 @DisplayName("드롭 재고 서비스")
 class DropStockServiceTest {
 
-  @InjectMocks private DropStockService dropStockService;
+  private DropStockService dropStockService;
   @Mock private DropCacheRepository dropCacheRepository;
   @Mock private StockHistoryRecorder stockHistoryRecorder;
   @Mock private StockHistoryRepository stockHistoryRepository;
   @Mock private DropRepository dropRepository;
   @Mock private DropStockMetricsPort dropStockMetrics;
+  @Mock private DropRecoveryRepository dropRecoveryRepository;
 
   private final UUID dropId = UUID.randomUUID();
   private final UUID orderId = UUID.randomUUID();
@@ -63,9 +68,54 @@ class DropStockServiceTest {
   private final DropStockCommand command = new DropStockCommand(dropId, orderId, buyerId, 2);
   private final StockMutation mutation = new StockMutation(dropId, orderId, buyerId, 2);
 
+  @BeforeEach
+  void setUp() {
+    lenient().when(dropRecoveryRepository.beginChange(any(), any())).thenReturn(true);
+    dropStockService =
+        new DropStockService(
+            dropCacheRepository,
+            stockHistoryRecorder,
+            stockHistoryRepository,
+            dropRepository,
+            dropStockMetrics,
+            new DropStockOperationGuard(dropRecoveryRepository));
+  }
+
   @Nested
   @DisplayName("차감")
   class Deduct {
+
+    @Test
+    @DisplayName("복구 중 차감은 Redis 재고 변경과 원장 접근 전에 거절한다")
+    void deduct_recoveryBusy_rejectsBeforeStockWork() {
+      given(dropRecoveryRepository.beginChange(eq(dropId), any())).willReturn(false);
+
+      assertThatThrownBy(() -> dropStockService.deduct(command))
+          .isInstanceOf(BusinessException.class)
+          .hasFieldOrPropertyWithValue("errorCode", DropErrorCode.STOCK_CHANGE_IN_PROGRESS);
+
+      then(dropCacheRepository).shouldHaveNoInteractions();
+      then(stockHistoryRepository).shouldHaveNoInteractions();
+      then(stockHistoryRecorder).shouldHaveNoInteractions();
+    }
+
+    @Test
+    @DisplayName("원장 커밋 뒤 마커 정리 실패는 차감 성공을 보존하고 역보상하지 않는다")
+    void deduct_cleanupFailure_doesNotCompensateCommittedDeduction() {
+      givenDeduct(StockCommandStatus.OK, 7);
+      willThrow(new IllegalStateException("cleanup unavailable"))
+          .given(dropRecoveryRepository)
+          .completeChange(eq(dropId), any());
+
+      assertThat(dropStockService.deduct(command)).isEqualTo(7L);
+
+      InOrder order = inOrder(dropRecoveryRepository, dropCacheRepository, stockHistoryRecorder);
+      order.verify(dropRecoveryRepository).beginChange(eq(dropId), any());
+      order.verify(dropCacheRepository).deduct(mutation);
+      order.verify(stockHistoryRecorder).record(mutation, StockChangeType.DEDUCT);
+      order.verify(dropRecoveryRepository).completeChange(eq(dropId), any());
+      then(dropCacheRepository).should(never()).compensateDeduct(any());
+    }
 
     @Test
     @DisplayName("OK면 이력을 기록하고 잔여를 반환한다")
@@ -148,8 +198,7 @@ class DropStockServiceTest {
       // given
       givenDeduct(StockCommandStatus.DUPLICATE, 7);
       givenHistory(
-          StockChangeType.DEDUCT,
-          Optional.of(deduction(dropId, orderId, UUID.randomUUID(), 2)));
+          StockChangeType.DEDUCT, Optional.of(deduction(dropId, orderId, UUID.randomUUID(), 2)));
 
       // when & then
       assertThatThrownBy(() -> dropStockService.deduct(command))
@@ -212,6 +261,21 @@ class DropStockServiceTest {
   class Rollback {
 
     @Test
+    @DisplayName("복구 중 롤백은 선행 차감 원장 잠금보다 먼저 거절한다")
+    void rollback_recoveryBusy_rejectsBeforeLedgerLock() {
+      given(dropRecoveryRepository.beginChange(eq(dropId), any())).willReturn(false);
+
+      assertThatThrownBy(() -> dropStockService.rollback(command))
+          .isInstanceOf(BusinessException.class)
+          .hasFieldOrPropertyWithValue("errorCode", DropErrorCode.STOCK_CHANGE_IN_PROGRESS);
+
+      then(dropCacheRepository).shouldHaveNoInteractions();
+      then(stockHistoryRepository).shouldHaveNoInteractions();
+      then(stockHistoryRecorder).shouldHaveNoInteractions();
+      then(dropRepository).shouldHaveNoInteractions();
+    }
+
+    @Test
     @DisplayName("OK면 이력을 기록하고 잔여를 반환한다")
     void rollback_ok_recordsAndReturns() {
       // given
@@ -234,8 +298,7 @@ class DropStockServiceTest {
       // given
       givenValidDeduction();
       givenCompletedHistory(StockChangeType.ROLLBACK);
-      given(dropCacheRepository.findRemaining(List.of(dropId)))
-          .willReturn(Map.of(dropId, 5L));
+      given(dropCacheRepository.findRemaining(List.of(dropId))).willReturn(Map.of(dropId, 5L));
 
       // when
       Optional<Long> remaining = dropStockService.rollback(command);
@@ -277,8 +340,7 @@ class DropStockServiceTest {
           .record(mutation, StockChangeType.DEDUCT);
       given(dropCacheRepository.compensateDeduct(mutation)).willReturn(Optional.of(9L));
       givenHistory(
-          StockChangeType.DEDUCT,
-          Optional.of(deduction(UUID.randomUUID(), orderId, buyerId, 2)));
+          StockChangeType.DEDUCT, Optional.of(deduction(UUID.randomUUID(), orderId, buyerId, 2)));
 
       // when & then
       assertThatThrownBy(() -> dropStockService.deduct(command))
@@ -295,9 +357,7 @@ class DropStockServiceTest {
       DataIntegrityViolationException conflict =
           new DataIntegrityViolationException("unexpected constraint");
       givenDeduct(StockCommandStatus.OK, 7);
-      willThrow(conflict)
-          .given(stockHistoryRecorder)
-          .record(mutation, StockChangeType.DEDUCT);
+      willThrow(conflict).given(stockHistoryRecorder).record(mutation, StockChangeType.DEDUCT);
       given(dropCacheRepository.compensateDeduct(mutation)).willReturn(Optional.of(9L));
       givenHistory(StockChangeType.DEDUCT, Optional.empty());
 
@@ -388,8 +448,7 @@ class DropStockServiceTest {
           .record(any(), eq(StockChangeType.ROLLBACK));
       given(dropCacheRepository.compensateRollback(mutation)).willReturn(Optional.of(3L));
       givenHistoryAfterPrecheck(
-          StockChangeType.ROLLBACK,
-          history(dropId, orderId, buyerId, 2, StockChangeType.ROLLBACK));
+          StockChangeType.ROLLBACK, history(dropId, orderId, buyerId, 2, StockChangeType.ROLLBACK));
 
       // when
       Optional<Long> remaining = dropStockService.rollback(command);
@@ -457,6 +516,13 @@ class DropStockServiceTest {
       // then
       assertThat(remaining).isEmpty();
       then(stockHistoryRecorder).should().record(mutation, StockChangeType.ROLLBACK);
+      InOrder order = inOrder(dropRecoveryRepository, stockHistoryRepository, stockHistoryRecorder);
+      order.verify(dropRecoveryRepository).beginChange(eq(dropId), any());
+      order
+          .verify(stockHistoryRepository)
+          .findByOrderIdAndChangeTypeForUpdate(orderId, StockChangeType.DEDUCT);
+      order.verify(stockHistoryRecorder).record(mutation, StockChangeType.ROLLBACK);
+      order.verify(dropRecoveryRepository).completeChange(eq(dropId), any());
     }
   }
 
@@ -480,9 +546,7 @@ class DropStockServiceTest {
   }
 
   private void givenCompletedHistory(StockChangeType changeType) {
-    givenHistory(
-        changeType,
-        Optional.of(history(dropId, orderId, buyerId, 2, changeType)));
+    givenHistory(changeType, Optional.of(history(dropId, orderId, buyerId, 2, changeType)));
   }
 
   private void givenHistory(StockChangeType changeType, Optional<StockHistory> history) {
@@ -508,11 +572,7 @@ class DropStockServiceTest {
   }
 
   private StockHistory history(
-      UUID dropId,
-      UUID orderId,
-      UUID buyerId,
-      int quantity,
-      StockChangeType changeType) {
+      UUID dropId, UUID orderId, UUID buyerId, int quantity, StockChangeType changeType) {
     return StockHistory.record()
         .dropId(dropId)
         .orderId(orderId)

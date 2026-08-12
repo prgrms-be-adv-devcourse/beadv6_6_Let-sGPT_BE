@@ -1,6 +1,8 @@
 package com.openat.drop.infrastructure.cache;
 
+import com.openat.common.exception.BusinessException;
 import com.openat.config.DropProperties;
+import com.openat.drop.domain.error.DropErrorCode;
 import com.openat.drop.domain.model.StockCommandStatus;
 import com.openat.drop.domain.repository.DropCacheRepository;
 import com.openat.drop.domain.repository.DropCacheState;
@@ -49,13 +51,14 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
       RedisScript.of(new ClassPathResource("redis/evict_before_open.lua"), Long.class);
 
   @Override
-  public void warm(DropCacheState state) {
+  public void warm(DropCacheState state, UUID recoveryOwner) {
     List<String> arguments = new ArrayList<>();
     arguments.add(Long.toString(state.remaining()));
     arguments.add(Long.toString(state.openAt().toEpochMilli()));
     arguments.add(nullableNumber(state.closeAt() == null ? null : state.closeAt().toEpochMilli()));
     arguments.add(nullableNumber(state.limitPerUser()));
     arguments.add(Long.toString(warmingTtl(state.closeAt()).toMillis()));
+    arguments.add(recoveryOwner.toString());
     state.buyers().entrySet().stream()
         .sorted(Map.Entry.comparingByKey())
         .forEach(
@@ -63,10 +66,17 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
               arguments.add(entry.getKey().toString());
               arguments.add(Long.toString(entry.getValue()));
             });
-    redisTemplate.execute(
-        warmScript,
-        List.of(dropKey(state.dropId()), buyersKey(state.dropId())),
-        arguments.toArray());
+    String result =
+        redisTemplate.execute(
+            warmScript,
+            List.of(
+                dropKey(state.dropId()),
+                buyersKey(state.dropId()),
+                DropRecoveryRedisAdapter.recoveryKey(state.dropId())),
+            arguments.toArray());
+    if (!"OK".equals(result)) {
+      throw new BusinessException(DropErrorCode.STOCK_CHANGE_IN_PROGRESS);
+    }
   }
 
   @Override
@@ -117,8 +127,7 @@ public class DropCacheRedisAdaptor implements DropCacheRepository {
   @Override
   public boolean evictBeforeOpen(UUID dropId) {
     Long evicted =
-        redisTemplate.execute(
-            evictBeforeOpenScript, List.of(dropKey(dropId), buyersKey(dropId)));
+        redisTemplate.execute(evictBeforeOpenScript, List.of(dropKey(dropId), buyersKey(dropId)));
     return Long.valueOf(1L).equals(evicted);
   }
 

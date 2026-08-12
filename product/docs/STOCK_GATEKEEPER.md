@@ -68,9 +68,9 @@
   - **TaskScheduler 오픈 적재(정상):** 집계가 사실상 불필요하다 — 오픈 전엔 캐시가 없어 차감이 불가(Lua 거절)하므로 이력이 **항상 0건**이고, `SUM=0`이라 `remaining = total`(최초 등록 수량이 곧 재고)이 된다. `REGISTERED → 오픈`은 생애 1회.
   - **복구 적재(콜드부팅·캐시 장애):** 라이브 캐시가 유실된 상태라 집계가 **반드시 필요**하다 — `remaining = total + SUM(이력)`으로 잔여를 복원하고 `buyers`는 `buyer_id` GROUP BY로 재구성한다.
   - 구현(`DropCacheWarmer`)은 두 경로를 분기하지 않고 항상 집계식을 쓴다 — 정상 오픈 땐 이력이 0건이라 결과가 `total`과 같고, "최초인지 복구인지"를 코드로 식별하려면 어차피 이력 조회가 필요해 분기보다 단일 식이 단순·안전하다.
-- **권위 스냅샷:** 워밍 트랜잭션은 drop 행의 비관적 쓰기 잠금과 PostgreSQL `REPEATABLE_READ`로 생명주기 변경 및 두 원장 집계의 관측 시점을 고정한다. Redis는 단일 `warm.lua`가 drop·buyers 두 해시를 삭제 후 전체 재작성하고 같은 TTL을 부여해 유령 buyer와 부분 적재를 남기지 않는다. 이 계약은 오픈 전 예약 워밍, 단일 replica 기동 복구, 신규 차감이 막힌 삭제 롤백 복구 경로를 대상으로 하며 live 다중 replica 재워밍까지 보장하지 않는다.
+- **워밍 경계:** 진행 토큰이 없을 때 복구 lease를 획득한 뒤 DropCacheSnapshotWriter의 새 REQUIRES_NEW·REPEATABLE_READ 트랜잭션을 연다. 드롭 행 잠금은 원장 집계부터 Redis 게시까지 유지하고, warm.lua는 소유자 UUID가 일치할 때만 drop·buyers를 원자적으로 교체한다.
 - **스케줄러 = TaskScheduler(예약 기반):** 등록 시 워밍 예약(`openAt-5m`) + 종료 예약(`closeAt`, nullable이라 있을 때만)을 `schedule`. 부팅 시 DB의 모든 `REGISTERED` 드롭을 다시 등록하고, `Map<dropId, ScheduledFuture>`로 수정·취소를 관리. 콜드부팅 복구는 `ApplicationRunner`로 부팅 시 1회 재워밍한다. 예약 종료의 DB·캐시 동기화가 실패하면 설정 간격 뒤 다시 시도한다. (정밀 타이밍은 Lua 시각판정이 책임지므로 스케줄러 지연·중복은 무해)
-- **다중 인스턴스:** 워밍 중복 방지는 필요해지면 도입(워밍 `SET NX` 멱등 가드 또는 Redis ZSET 원자 pop).
+- **예약 재시도·적용 조건:** 예약 워밍의 일시적인 진입 거절은 종료 시각 전에만 1초 후 재시도한다. 취소·재등록된 예약은 다시 실행하지 않는다. 기동 복구가 거절되면 기동 실패를 전파한다. 구버전 전환과 미확정 작업 처리는 [CACHE_RECOVERY.md](CACHE_RECOVERY.md)를 따른다.
 
 ---
 
@@ -99,7 +99,7 @@
 
 ## 8. 종료
 - **트리거 2가지:** ① 판매자 삭제(오픈 후 → `DELETE`가 `CLOSE`를 겸함, §11·DECISIONS 2026-06-26 #1) ② `closeAt` 종료 예약(TaskScheduler). 둘 다 **`status = CLOSE` + 캐시 `markClosed`** — 드롭 해시 `closeAt = now`로 신규 선점만 거절하고(Lua 시각판정), **이미 선점한 in-flight는 캐시 TTL(drain 창) 동안 유지**한다(`evict` 즉시 아님). evict는 **오픈 전 삭제**(soft delete) 정리에만 쓴다.
-- **커밋 경계:** close와 오픈 전 soft delete는 drop 행 잠금을 잡은 트랜잭션의 `BEFORE_COMMIT`에서 각각 `markClosed`·`evict`를 완료한다. delete fence Lua는 실행 시점의 Redis 시각과 캐시 `openAt`을 차감과 같은 원자 경계에서 비교한다. 이미 오픈 경계를 지났으면 evict를 거절해 직접 삭제와 상품 하향 삭제 트랜잭션을 모두 롤백하고, 그 사이 성공한 차감과 buyers를 보존한다. Redis 실패도 DB 커밋을 막아 DB만 CLOSE/삭제되고 캐시가 판매 가능한 상태로 남는 구간을 만들지 않는다. DB 롤백 시 close는 원래 `closeAt`만 복구해 drain 중 `remaining`·buyers 변경을 보존하고, delete는 원장 스냅샷으로 재워밍한다. 프로세스 중단 등 롤백 복구도 실패하면 다음 기동의 `REGISTERED` 워밍이 수렴시키며, `AFTER_COMMIT` 리스너는 인메모리 예약 취소만 담당한다.
+- **커밋 경계:** close와 오픈 전 soft delete는 drop 행 잠금을 잡은 트랜잭션의 `BEFORE_COMMIT`에서 각각 `markClosed`·`evict`를 완료한다. delete fence Lua는 실행 시점의 Redis 시각과 캐시 `openAt`을 차감과 같은 원자 경계에서 비교한다. 이미 오픈 경계를 지났으면 evict를 거절해 직접 삭제와 상품 하향 삭제 트랜잭션을 모두 롤백하고, 그 사이 성공한 차감과 buyers를 보존한다. Redis 실패도 DB 커밋을 막아 DB만 CLOSE/삭제되고 캐시가 판매 가능한 상태로 남는 구간을 만들지 않는다. DB 롤백 시 close는 원래 `closeAt`만 복구해 drain 중 `remaining`·buyers 변경을 보존하고, delete는 제거가 허용됐거나 응답이 불명확한 경우에만 해당 트랜잭션 롤백 뒤 보호된 재워밍을 수행한다. 삭제 fence가 오픈을 확인해 거절했다면 복구를 등록하지 않는다. 미확정 작업이 남아 있는 재워밍은 자동 진행하지 않으며, `AFTER_COMMIT` 리스너는 인메모리 예약 취소만 담당한다.
 - **drain TTL:** `markClosed`는 drop과 buyers의 남은 TTL이 `close-margin`보다 짧을 때만 최소 drain 여유까지 연장한다. 더 긴 TTL과 무기한 TTL은 줄이지 않는다.
 - **선점 완료 주문은 close와 무관하게 결제까지 진행**됨 — close는 "신규 선점만 차단", in-flight 완료·취소는 drain 창 안에서 허용(상세한 취소 컷은 주문 사가 책임 — §7). product는 close 시점에 해당 드롭의 재고 책임을 종료함.
 - **매진은 종료가 아님**(가역) — closeAt 도래 또는 판매자 취소로만 종료.
@@ -128,7 +128,7 @@
 ## 11. 장애·복구
 - **콜드부팅:** `DropBootstrapRunner`가 모든 `REGISTERED` 드롭을 다시 스케줄한다. 워밍 시점이 이미 지났으면 즉시 `total + SUM(이력)`과 buyer GROUP BY의 동일 DB 스냅샷을 Redis에 완전 교체한다. 커밋 전 cache fence 뒤 프로세스가 중단돼 DB가 `REGISTERED`로 남은 경우 stale close·evict 상태도 이 경로로 복구한다.
 - **런타임 캐시 유실:** 현재 요청 경로에는 자동 lazy 재워밍이 없다. 열린 드롭도 `DROP_NOT_CACHED`로 거절되고, active 롤백은 DB 원장만 보정한다. 재기동 또는 별도 운영 재워밍이 필요하다.
-- **유령 차감**(Redis 차감 후 이력 INSERT 전 크래시): 보수적 거절 상태로 남고, 재워밍 시 이력 기준으로 사라져 자가 치유됨. 해당 주문은 order가 타임아웃 처리.
+- **미확정 차감·복원:** Redis 변경 뒤 원장 기록 전 중단되면 진행 토큰을 유지해 재구축을 차단한다. 원장·캐시·진행 작업을 확인하지 않은 자동 자가 치유는 제공하지 않는다. 원장 없는 기존 주문 멱등키도 별도 확인 대상이다.
 - **`closeAt=null` 드롭:** 현재 캐시 TTL은 7일 고정이며 활동 기반 갱신이나 만료 시 lazy 복구가 없다. 7일을 넘겨 계속 판매할 드롭은 운영 재워밍 또는 구현 보강이 필요하다.
 
 ---
